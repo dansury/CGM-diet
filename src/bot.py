@@ -69,6 +69,14 @@ async def run_polling(settings: Settings | None = None) -> None:
 def main() -> None:
     setup_logging()
     settings = load_settings()
+    if not settings.telegram_bot_token:
+        # A bare traceback here is the first thing a new operator sees; say what
+        # to do instead.
+        log.error(
+            "TELEGRAM_BOT_TOKEN is not set. Copy .env.example to .env and put the "
+            "token from @BotFather there, or export TELEGRAM_BOT_TOKEN."
+        )
+        raise SystemExit(1)
     if settings.bot_mode == "webhook":
         import uvicorn
 

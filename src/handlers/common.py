@@ -1,0 +1,169 @@
+"""Onboarding, menu and settings."""
+
+from __future__ import annotations
+
+from aiogram import F, Router
+from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.types import Message
+
+from src.db import repo
+from src.handlers.deps import local_now, session_scope
+from src.keyboards import main_menu
+from src.reporting import DISCLAIMER
+
+router = Router(name="common")
+
+WELCOME = """👋 Это дневник <b>еда → сахар → самочувствие</b>.
+
+<b>Что можно присылать — в любом виде:</b>
+🍽 фото еды или текстом «съела овсянку с бананом»
+🩸 скриншот CGM/глюкометра или просто «сахар 8.2»
+🏷 фото этикетки (можно две стороны подряд — лицевую и оборотную)
+🧪 анализы: фото, PDF или текст
+🎤 голосовое — распознаю и разберу
+
+<b>Что я делаю:</b>
+• связываю приёмы пищи с сахаром по времени (45–90 мин и 90–150 мин);
+• считаю, после каких <i>компонентов</i> сахар поднимается чаще и выше;
+• показываю это графиком и цифрами с уровнем достоверности;
+• спрашиваю о самочувствии и сопоставляю симптомы с сахаром.
+
+<b>Чего я не делаю:</b> не ставлю диагнозы, не назначаю лекарства и не считаю дозы.
+
+Команды: /today /stats /graph /wellbeing /health /export /delete /help"""
+
+HELP = """<b>Как пользоваться</b>
+
+📷 <b>Фото</b> — просто пришлите. Я сам определю, что это: еда, экран CGM,
+этикетка или анализы. Если ошибусь — нажмите «Это не еда» и выберите тип.
+
+🛒 <b>Проверить перед покупкой</b> — нажмите «🛒 Проверить продукт» и пришлите
+фото упаковки. Отвечу по вашей собственной статистике, ничего не записывая
+в дневник как съеденное.
+
+🏷 <b>Две стороны упаковки</b> — отправьте оба фото одним альбомом (или нажмите
+«➕ Вторая сторона»), я соберу их в одну карточку продукта.
+
+✍️ <b>Текст</b> — «сахар 8», «глюкоза 4.5 ммоль натощак», «вес 72,3»,
+«вчера в 21:00 сахар 9.1». Понимаю время и единицы.
+
+🙂 <b>Самочувствие</b> — оценка 1–5; если не 5, предложу симптомы кнопками из
+вашего личного глоссария. Можно добавить свои или наговорить голосом.
+
+📊 /stats — статистика по компонентам · /graph — график · /today — сегодня
+📤 /export — выгрузка CSV · 🗑 /delete — удалить все данные
+⌚️ /health — подключение Samsung Health
+
+""" + DISCLAIMER
+
+
+@router.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(
+            session,
+            message.from_user.id,
+            username=message.from_user.username,
+            first_name=message.from_user.first_name,
+        )
+        if user.consent_at is None:
+            user.consent_at = local_now(user)
+        user.onboarded = True
+    await message.answer(WELCOME, reply_markup=main_menu())
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    await message.answer(HELP, reply_markup=main_menu())
+
+
+@router.message(Command("menu"))
+@router.message(F.text == "◀️ Меню")
+async def cmd_menu(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    await message.answer("Главное меню", reply_markup=main_menu())
+
+
+@router.message(Command("settings"))
+async def cmd_settings(message: Message) -> None:
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, message.from_user.id)
+        text = (
+            "⚙️ <b>Настройки</b>\n"
+            f"Часовой пояс: <code>{user.tz}</code>\n"
+            f"Единицы глюкозы: <code>{user.glucose_unit}</code>\n"
+            f"Окно «через 1 час»: {user.window_1h_start}–{user.window_1h_end} мин\n"
+            f"Окно «через 2 часа»: {user.window_2h_start}–{user.window_2h_end} мин\n"
+            f"Базовая линия до еды: {user.baseline_window} мин\n\n"
+            "Изменить: <code>/set tz Europe/Moscow</code>, "
+            "<code>/set unit mg/dL</code>, <code>/set window1 45-90</code>, "
+            "<code>/set window2 90-150</code>, <code>/set baseline 20</code>"
+        )
+    await message.answer(text)
+
+
+@router.message(Command("set"))
+async def cmd_set(message: Message) -> None:
+    parts = (message.text or "").split(maxsplit=2)
+    if len(parts) < 3:
+        await message.answer("Формат: <code>/set tz Europe/Moscow</code>")
+        return
+    key, value = parts[1].lower(), parts[2].strip()
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, message.from_user.id)
+        try:
+            applied = _apply_setting(user, key, value)
+        except ValueError as exc:
+            await message.answer(f"Не понял значение: {exc}")
+            return
+    await message.answer(f"✅ {applied}")
+
+
+def _apply_setting(user, key: str, value: str) -> str:
+    """Validate and apply one setting; raises ValueError with a readable reason."""
+    if key == "tz":
+        try:
+            from zoneinfo import ZoneInfo
+
+            ZoneInfo(value)
+        except Exception as exc:
+            raise ValueError(f"неизвестный часовой пояс {value}") from exc
+        user.tz = value
+        return f"часовой пояс: {value}"
+    if key == "unit":
+        from src.ingest.units import MGDL, MMOL, canonical_unit
+
+        unit = canonical_unit(value)
+        if unit not in (MMOL, MGDL):
+            raise ValueError("нужно mmol/L или mg/dL")
+        user.glucose_unit = unit
+        return f"единицы: {unit}"
+    if key in {"window1", "window2"}:
+        start, end = _parse_window(value)
+        if key == "window1":
+            user.window_1h_start, user.window_1h_end = start, end
+        else:
+            user.window_2h_start, user.window_2h_end = start, end
+        return f"окно {key}: {start}–{end} мин"
+    if key == "baseline":
+        minutes = int(value)
+        if not 5 <= minutes <= 60:
+            raise ValueError("базовая линия — от 5 до 60 минут")
+        user.baseline_window = minutes
+        return f"базовая линия: {minutes} мин"
+    raise ValueError(f"неизвестный параметр {key}")
+
+
+def _parse_window(value: str) -> tuple[int, int]:
+    parts = value.replace(" ", "").split("-")
+    if len(parts) != 2:
+        raise ValueError("формат окна: 45-90")
+    start, end = int(parts[0]), int(parts[1])
+    if not 0 <= start < end <= 360:
+        raise ValueError("окно должно быть от 0 до 360 минут и start < end")
+    return start, end
+
+
+__all__ = ["HELP", "WELCOME", "router"]

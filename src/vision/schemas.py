@@ -20,6 +20,7 @@ class ItemDraft:
     carbs_g: float | None = None
     fiber_g: float | None = None
     tags: list[str] = field(default_factory=list)
+    estimated: bool = False   # numbers came from the reference table, not the model
 
 
 @dataclass(slots=True)
@@ -137,6 +138,7 @@ def meal_to_dict(draft: MealDraft) -> dict:
                 "carbs_g": i.carbs_g,
                 "fiber_g": i.fiber_g,
                 "tags": i.tags,
+                "estimated": i.estimated,
             }
             for i in draft.items
         ],

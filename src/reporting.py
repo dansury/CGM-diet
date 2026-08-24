@@ -64,14 +64,23 @@ def format_meal_draft(
     if eaten_at:
         lines.append(f"🕒 {eaten_at:%d.%m %H:%M}")
     for item in draft.items:
-        portion = f" — {item.portion_g:.0f} г" if item.portion_g else ""
+        about = "≈ " if item.estimated else ""
+        portion = f" — {about}{item.portion_g:.0f} г" if item.portion_g else ""
         carbs = f", угл {item.carbs_g:.0f} г" if item.carbs_g is not None else ""
         lines.append(f"• {item.name}{portion}{carbs}")
     lines.append("")
-    lines.append(
-        f"Итого: {totals['kcal']:.0f} ккал · Б {totals['protein_g']:.0f} · "
-        f"Ж {totals['fat_g']:.0f} · У {totals['carbs_g']:.0f} · клетчатка {totals['fiber_g']:.0f} г"
-    )
+    if any(totals[k] for k in ("kcal", "protein_g", "fat_g", "carbs_g")):
+        about = "≈ " if any(i.estimated for i in draft.items) else ""
+        lines.append(
+            f"Итого: {about}{totals['kcal']:.0f} ккал · Б {totals['protein_g']:.0f} · "
+            f"Ж {totals['fat_g']:.0f} · У {totals['carbs_g']:.0f} · "
+            f"клетчатка {totals['fiber_g']:.0f} г"
+        )
+    else:
+        # Нули вместо чисел выглядели бы как измерение — честнее попросить вес.
+        lines.append(
+            "Итого: оценить не удалось. Напишите вес порции или уточните блюдо — пересчитаю."
+        )
     if draft.confidence is not None:
         lines.append(f"Уверенность распознавания: {draft.confidence * 100:.0f}%")
     if draft.notes:

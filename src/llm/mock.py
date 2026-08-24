@@ -170,6 +170,25 @@ FIXTURES: dict[str, Any] = {
         ],
         "notes": "",
     },
+    # Деградировавший ответ модели: название есть, чисел нет. Через него
+    # проверяется добор нутриентов (`src/ingest/nutrition.py`).
+    "text_meal_bare": {
+        "title": "Наггетсы",
+        "confidence": 0.8,
+        "items": [
+            {
+                "name": "Наггетсы",
+                "portion_g": None,
+                "kcal": None,
+                "protein_g": None,
+                "fat_g": None,
+                "carbs_g": None,
+                "fiber_g": None,
+                "tags": [],
+            }
+        ],
+        "notes": "",
+    },
     "classify_photo": {"kind": "food", "confidence": 0.77},
     "symptom_extract": {"score": None, "symptoms": ["сонливость", "потливость"], "note": ""},
 }

@@ -11,6 +11,7 @@ from datetime import date, datetime, time, timedelta
 from typing import Any
 
 from src.analytics.tags import normalize_tags
+from src.ingest.nutrition import fill_meal
 from src.ingest.units import canonical_unit, guess_unit, is_plausible, to_mmol
 from src.llm import ChatMessage, ImagePart, LLMClient, extract_json, get_client, model_selection
 from src.llm.base import LLMError
@@ -127,7 +128,7 @@ def _meal_from_payload(payload: dict, *, source: str, raw_text: str | None = Non
                 tags=normalize_tags(raw.get("tags"), name=name),
             )
         )
-    return MealDraft(
+    draft = MealDraft(
         title=str(payload.get("title") or "").strip(),
         items=items,
         confidence=_f(payload.get("confidence")),
@@ -135,6 +136,10 @@ def _meal_from_payload(payload: dict, *, source: str, raw_text: str | None = Non
         source=source,
         raw_text=raw_text,
     )
+    # The model regularly returns a name with every macro `null`; without this
+    # the card would print «0 ккал · Б 0 · Ж 0 · У 0» as if it were measured.
+    fill_meal(draft)
+    return draft
 
 
 async def recognize_meal_photo(

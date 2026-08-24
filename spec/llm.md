@@ -31,7 +31,8 @@ POST `/chat/completions` (OpenAI-совместимый). Заголовки `HT
   бэкофф `0.5·2^n` (cap 8 с) с джиттером; для 429 — `2·2^n` (cap 20 с) и
   уважение `Retry-After`.
 - `transcribe` — отдельный OpenAI-совместимый `/audio/transcriptions`
-  (`STT_BASE_URL`/`STT_API_KEY`/`STT_MODEL`).
+  (`STT_BASE_URL`/`STT_API_KEY`/`STT_MODEL`); **фолбэк** для голосовых, основной
+  путь — Yandex SpeechKit (`spec/ingest.md` § Голос).
 - Ответ может прийти списком content-частей — `_parse` склеивает их.
 
 ## Mock mode (`src/llm/mock.py`)

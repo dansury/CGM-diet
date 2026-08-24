@@ -126,6 +126,98 @@ _KCAL_PER_G = {"protein_g": 4.0, "fat_g": 9.0, "carbs_g": 4.0}
 _MACROS = ("protein_g", "fat_g", "carbs_g")
 
 ESTIMATE_NOTE = "БЖУ для части позиций оценены по справочным таблицам, не измерены."
+MEMORY_NOTE = "БЖУ для части позиций подставлены из ваших сохранённых значений."
+
+#: what one portion is assumed to be when the user typed macros for an item
+#: whose weight is unknown — the numbers are then read as per-100 g.
+DEFAULT_BASIS_G = 100.0
+
+
+@dataclass(frozen=True, slots=True)
+class Remembered:
+    """Per-100 g numbers the user once entered for a dish; `None` = not stated."""
+
+    kcal: float | None = None
+    protein_g: float | None = None
+    fat_g: float | None = None
+    carbs_g: float | None = None
+    fiber_g: float | None = None
+    portion_g: float | None = None
+
+    @property
+    def empty(self) -> bool:
+        return all(
+            getattr(self, f) is None for f in (*_MACROS, "fiber_g", "kcal")
+        )
+
+
+def per_100(item: ItemDraft) -> Remembered:
+    """An item's absolute numbers → per-100 g, using its portion as the basis."""
+    basis = item.portion_g if item.portion_g and item.portion_g > 0 else DEFAULT_BASIS_G
+    factor = 100.0 / basis
+
+    def scaled(value: float | None) -> float | None:
+        return None if value is None else round(value * factor, 1)
+
+    return Remembered(
+        kcal=scaled(item.kcal),
+        protein_g=scaled(item.protein_g),
+        fat_g=scaled(item.fat_g),
+        carbs_g=scaled(item.carbs_g),
+        fiber_g=scaled(item.fiber_g),
+        portion_g=item.portion_g or None,
+    )
+
+
+def match_memory(name: str, memory: dict[str, Remembered]) -> Remembered | None:
+    """Exact normalised name first, then the longest remembered key inside it."""
+    norm = normalize_name(name)
+    if not norm or not memory:
+        return None
+    exact = memory.get(norm)
+    if exact is not None:
+        return exact
+    best: tuple[int, Remembered] | None = None
+    for key, value in memory.items():
+        if key and (key in norm or norm in key) and (best is None or len(key) > best[0]):
+            best = (len(key), value)
+    return best[1] if best else None
+
+
+def apply_memory(draft: MealDraft, memory: dict[str, Remembered]) -> list[str]:
+    """Overwrite machine estimates with the user's remembered БЖУ.
+
+    Returns the names of the items that were filled. Values the user typed for
+    *this* draft (`macros_source == "user"`) are never touched — the newer word
+    of the user wins over the older one.
+    """
+    filled: list[str] = []
+    for item in draft.items:
+        if item.macros_source == "user":
+            continue
+        remembered = match_memory(item.name, memory)
+        if remembered is None or remembered.empty:
+            continue
+        portion = item.portion_g or remembered.portion_g
+        factor = (portion or DEFAULT_BASIS_G) / 100.0
+        for field in (*_MACROS, "fiber_g", "kcal"):
+            value = getattr(remembered, field)
+            if value is not None:
+                setattr(item, field, round(value * factor, 1))
+        if _blank(item.portion_g) and portion:
+            item.portion_g = portion
+        if _blank(item.kcal):
+            kcal = sum(
+                (getattr(item, f) or 0.0) * per_g for f, per_g in _KCAL_PER_G.items()
+            )
+            if kcal > 0:
+                item.kcal = round(kcal)
+        item.estimated = False  # a user's number is not an estimate
+        item.macros_source = "memory"
+        filled.append(item.name)
+    if filled and MEMORY_NOTE not in draft.notes:
+        draft.notes = f"{draft.notes} {MEMORY_NOTE}".strip()
+    return filled
 
 
 def lookup(name: str) -> Ref | None:
@@ -173,7 +265,9 @@ def fill_item(item: ItemDraft) -> bool:
         if kcal > 0:
             item.kcal = round(kcal)
             changed = True
-    if changed:
+    if changed and not item.macros_source:
+        # An item whose numbers the user typed (or that came from their memory)
+        # is not an estimate just because the fibre was backfilled.
         item.estimated = True
     return changed
 
@@ -183,9 +277,23 @@ def fill_meal(draft: MealDraft) -> bool:
     changed = False
     for item in draft.items:
         changed = fill_item(item) or changed
-    if changed and ESTIMATE_NOTE not in draft.notes:
+    estimated = any(item.estimated for item in draft.items)
+    if changed and estimated and ESTIMATE_NOTE not in draft.notes:
         draft.notes = f"{draft.notes} {ESTIMATE_NOTE}".strip()
     return changed
 
 
-__all__ = ["ESTIMATE_NOTE", "TABLE", "Ref", "fill_item", "fill_meal", "lookup"]
+__all__ = [
+    "DEFAULT_BASIS_G",
+    "ESTIMATE_NOTE",
+    "MEMORY_NOTE",
+    "TABLE",
+    "Ref",
+    "Remembered",
+    "apply_memory",
+    "fill_item",
+    "fill_meal",
+    "lookup",
+    "match_memory",
+    "per_100",
+]

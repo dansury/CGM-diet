@@ -6,7 +6,7 @@ row only after the user taps “Верно” or edits it (see `spec/ingest.md`)
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 
 
@@ -21,6 +21,7 @@ class ItemDraft:
     fiber_g: float | None = None
     tags: list[str] = field(default_factory=list)
     estimated: bool = False   # numbers came from the reference table, not the model
+    macros_source: str = ""   # ""|user|memory — who put the БЖУ here (see nutrition.py)
 
 
 @dataclass(slots=True)
@@ -121,6 +122,11 @@ __all__ = [
 # Drafts live in the FSM store between the recognition message and the user's
 # tap, so they must survive a JSON round-trip.
 
+#: fields an FSM payload may set — an older stored draft simply lacks the newer
+#: ones, and an unknown key must not crash the restore.
+_ITEM_FIELDS = frozenset(f.name for f in fields(ItemDraft))
+
+
 def meal_to_dict(draft: MealDraft) -> dict:
     return {
         "title": draft.title,
@@ -139,6 +145,7 @@ def meal_to_dict(draft: MealDraft) -> dict:
                 "fiber_g": i.fiber_g,
                 "tags": i.tags,
                 "estimated": i.estimated,
+                "macros_source": i.macros_source,
             }
             for i in draft.items
         ],
@@ -152,7 +159,10 @@ def meal_from_dict(data: dict) -> MealDraft:
         notes=data.get("notes") or "",
         source=data.get("source") or "photo",
         raw_text=data.get("raw_text"),
-        items=[ItemDraft(**item) for item in data.get("items") or []],
+        items=[
+            ItemDraft(**{k: v for k, v in item.items() if k in _ITEM_FIELDS})
+            for item in data.get("items") or []
+        ],
     )
 
 

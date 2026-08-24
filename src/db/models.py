@@ -261,6 +261,38 @@ class DictionaryEntry(Base, TimestampMixin):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class NutritionMemory(Base, TimestampMixin):
+    """БЖУ the user typed for a dish, kept per 100 g so portions rescale.
+
+    A number the user entered outranks both the model's guess and the reference
+    table for good (constitution, III): once it is here, every later sighting of
+    that dish is filled from this row instead of being re-estimated.
+    See `spec/dictionary.md` § Память БЖУ.
+    """
+
+    __tablename__ = "user_nutrition"
+    __table_args__ = (
+        UniqueConstraint("user_id", "key_norm", name="uq_nutrition_user_key"),
+        Index("ix_nutrition_lookup", "user_id", "key_norm"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    key_norm: Mapped[str] = mapped_column(String(128), nullable=False)
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    # per 100 g
+    kcal: Mapped[float | None] = mapped_column(Float)
+    protein_g: Mapped[float | None] = mapped_column(Float)
+    fat_g: Mapped[float | None] = mapped_column(Float)
+    carbs_g: Mapped[float | None] = mapped_column(Float)
+    fiber_g: Mapped[float | None] = mapped_column(Float)
+    portion_g: Mapped[float | None] = mapped_column(Float)  # portion it was entered for
+    hits: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class SettingsKV(Base):
     """Owner-level runtime settings (model selection). One row per key."""
 

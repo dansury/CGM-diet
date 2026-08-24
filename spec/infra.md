@@ -8,7 +8,8 @@
 ```
 telegram_bot_token:str  owner_tg_ids:tuple[int]  database_url:str
 openrouter_api_key:str  openrouter_base_url:str  vision_model:str  text_model:str  llm_mock:bool
-stt_base_url:str  stt_api_key:str  stt_model:str
+yandex_speechkit_api_key:str  yandex_folder_id:str  speechkit_lang:str  (SpeechKit, основной STT)
+stt_base_url:str  stt_api_key:str  stt_model:str                          (OpenAI-совместимый STT, фолбэк)
 app_env:str  bot_mode:polling|webhook  webhook_base_url:str  webhook_secret:str  web_host:str  web_port:int
 default_glucose_unit:str  window_1h:(int,int)  window_2h:(int,int)  baseline_window:int  min_observations:int
 health_sync_secret:str
@@ -20,6 +21,8 @@ health_sync_secret:str
 - `ensure_sqlite_parent_dir(url)` — SQLite не создаёт родительскую директорию.
 - `_read_window("45-90")->(45,90)`; `start >= end` → `ConfigError`.
 - `vision_available` / `stt_available` — mock считается доступным провайдером.
+- `speechkit_available` — есть и `YANDEX_SPEECHKIT_API_KEY` (либо `YANDEX_API_KEY`),
+  и `YANDEX_FOLDER_ID`; без folder-id SpeechKit отвечает 403.
 
 ## Logging (`src/logging_setup.py`)
 

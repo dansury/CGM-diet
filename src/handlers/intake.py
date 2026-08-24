@@ -19,6 +19,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from src.config import load_settings
 from src.db import repo
 from src.handlers import views
 from src.handlers.deps import (
@@ -321,28 +322,74 @@ async def on_document(message: Message, state: FSMContext, bot: Bot) -> None:
 @router.message(F.voice | F.audio)
 async def on_voice(message: Message, state: FSMContext, bot: Bot) -> None:
     voice = message.voice or message.audio
-    client = get_client()
     buffer = await bot.download(voice.file_id)
     data = buffer.read() if hasattr(buffer, "read") else bytes(buffer)
+    text = await _transcribe(message, data, mime=voice.mime_type or "audio/ogg")
+    if text is None:
+        return
+    await message.answer(f"🎤 Расслышал: «{text}»")
+    if await _route_voice(message, state, text):
+        return
+    await handle_text(message, state, text_override=text)
+
+
+async def _transcribe(message: Message, data: bytes, *, mime: str) -> str | None:
+    """Voice → text: SpeechKit when configured, the LLM endpoint otherwise.
+
+    Returns `None` when nothing usable came back — the user has already been
+    told why (`spec/ingest.md` § Голос).
+    """
+    settings = load_settings()
+    if settings.speechkit_available:
+        from src.ingest import speechkit
+
+        try:
+            result = await speechkit.recognize_voice(
+                data,
+                api_key=settings.yandex_speechkit_api_key,
+                folder_id=settings.yandex_folder_id,
+                lang=settings.speechkit_lang,
+            )
+        except speechkit.UnsupportedFormat:
+            # Telegram `voice` is always OGG/Opus; an `audio` attachment is not.
+            log.info("speechkit: unsupported format %s, falling back", mime)
+            return await _transcribe_via_llm(message, data, mime=mime)
+        except speechkit.SpeechKitQuotaExceeded:
+            await message.answer(
+                "Распознавание голоса сейчас перегружено. Попробуйте через минуту "
+                "или напишите текстом."
+            )
+            return None
+        except speechkit.SpeechKitAuthError:
+            log.error("speechkit key rejected — check YANDEX_SPEECHKIT_API_KEY / YANDEX_FOLDER_ID")
+            return await _transcribe_via_llm(message, data, mime=mime)
+        except Exception as exc:
+            log.warning("speechkit failed: %s", exc)
+            return await _transcribe_via_llm(message, data, mime=mime)
+        text = result.text.strip()
+        if not text:
+            await message.answer("Ничего не расслышал, попробуйте ещё раз.")
+            return None
+        return text
+    return await _transcribe_via_llm(message, data, mime=mime)
+
+
+async def _transcribe_via_llm(message: Message, data: bytes, *, mime: str) -> str | None:
     try:
-        text = await client.transcribe(
-            data,
-            mime=voice.mime_type or "audio/ogg",
-            model=model_selection.current("stt"),
+        text = await get_client().transcribe(
+            data, mime=mime, model=model_selection.current("stt")
         )
     except Exception as exc:
         log.warning("stt failed: %s", exc)
         await message.answer(
             "Распознавание голоса сейчас недоступно. Напишите, пожалуйста, текстом."
         )
-        return
+        return None
+    text = (text or "").strip()
     if not text:
         await message.answer("Ничего не расслышал, попробуйте ещё раз.")
-        return
-    await message.answer(f"🎤 Расслышал: «{text}»")
-    if await _route_voice(message, state, text):
-        return
-    await handle_text(message, state, text_override=text)
+        return None
+    return text
 
 
 async def _route_voice(message: Message, state: FSMContext, text: str) -> bool:

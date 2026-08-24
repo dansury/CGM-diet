@@ -29,6 +29,7 @@ from src.db.models import (
     MealItem,
     MediaFile,
     Medication,
+    NutritionMemory,
     Product,
     ProductPhoto,
     SettingsKV,
@@ -38,6 +39,7 @@ from src.db.models import (
     WellbeingCheckin,
     utcnow,
 )
+from src.ingest.nutrition import Remembered, per_100
 from src.vision.schemas import (
     GlucoseDraft,
     LabDraft,
@@ -694,6 +696,81 @@ async def remember_meal(session: AsyncSession, user: User, draft: MealDraft) -> 
         await bump_dictionary(session, user, kind="item", label=item.name)
 
 
+# ------------------------------------------------------------------ nutrition memory
+
+async def remember_nutrition(
+    session: AsyncSession, user: User, *, name: str, values: Remembered
+) -> NutritionMemory | None:
+    """Store the user's БЖУ for a dish, per 100 g. Re-entering it overwrites.
+
+    Constitution III: what the user typed is theirs and outranks every later
+    machine estimate — see `spec/dictionary.md` § Память БЖУ.
+    """
+    label = (name or "").strip()
+    key = normalize_name(label)
+    if not key or values.empty:
+        return None
+    row = await session.scalar(
+        select(NutritionMemory).where(
+            NutritionMemory.user_id == user.id, NutritionMemory.key_norm == key
+        )
+    )
+    if row is None:
+        row = NutritionMemory(user_id=user.id, key_norm=key, label=label[:128], hits=1)
+        session.add(row)
+    else:
+        row.hits += 1
+        row.label = label[:128]
+    for column in ("kcal", "protein_g", "fat_g", "carbs_g", "fiber_g", "portion_g"):
+        value = getattr(values, column)
+        if value is not None:
+            setattr(row, column, value)
+    row.last_used_at = utcnow()
+    await session.flush()
+    return row
+
+
+async def load_nutrition_memory(
+    session: AsyncSession, user: User, names: Iterable[str] | None = None
+) -> dict[str, Remembered]:
+    """`{key_norm: Remembered}` — everything remembered, or just what `names` needs."""
+    stmt = select(NutritionMemory).where(NutritionMemory.user_id == user.id)
+    rows = list(await session.scalars(stmt))
+    keys = {normalize_name(n) for n in names} if names is not None else None
+    out: dict[str, Remembered] = {}
+    for row in rows:
+        # Substring matching happens in `nutrition.match_memory`, so a narrowing
+        # filter here must keep any key that overlaps one of the names.
+        if keys is not None and not any(
+            key and (key == row.key_norm or key in row.key_norm or row.key_norm in key)
+            for key in keys
+        ):
+            continue
+        out[row.key_norm] = Remembered(
+            kcal=row.kcal,
+            protein_g=row.protein_g,
+            fat_g=row.fat_g,
+            carbs_g=row.carbs_g,
+            fiber_g=row.fiber_g,
+            portion_g=row.portion_g,
+        )
+    return out
+
+
+async def remember_meal_macros(
+    session: AsyncSession, user: User, draft: MealDraft
+) -> list[str]:
+    """Persist БЖУ the user typed on this draft. Returns the dishes remembered."""
+    saved: list[str] = []
+    for item in draft.items:
+        if item.macros_source != "user":
+            continue
+        row = await remember_nutrition(session, user, name=item.name, values=per_100(item))
+        if row is not None:
+            saved.append(item.name)
+    return saved
+
+
 # ------------------------------------------------------------------ settings kv
 
 async def get_setting(session: AsyncSession, key: str) -> Any:
@@ -822,6 +899,7 @@ async def delete_user_data(session: AsyncSession, user: User, *, drop_user: bool
         MediaFile,
         Correction,
         DictionaryEntry,
+        NutritionMemory,
     ):
         if model is CheckinSymptom:
             checkin_ids = select(WellbeingCheckin.id).where(WellbeingCheckin.user_id == user.id)

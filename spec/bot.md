@@ -5,13 +5,18 @@
 `BOT_MODE=polling` (по умолчанию) → `dispatcher.start_polling`.
 `BOT_MODE=webhook` → uvicorn с `src.web.app:create_app`.
 `build_bot(settings)` — `ParseMode.HTML` по умолчанию.
-`COMMANDS` — 11 команд, регистрируются в меню Telegram при старте.
+`COMMANDS` — 13 команд, регистрируются в меню Telegram при старте.
+`prepare_runtime(bot, settings)` до первого апдейта (и в polling, и в webhook):
+`wire_error_reporter` → `load_active_models` → каталог свободных моделей.
+Каждый шаг деградирует молча — ни один не мешает боту стартовать.
 
 ## Команды
 
 | Команда | Что делает | Файл |
 |---|---|---|
 | `/start` | регистрация, согласие, онбординг | `handlers/common.py` |
+| `/my` | личный словарь: запись одной кнопкой | `handlers/dictionary.py` |
+| `/meds` | журнал лекарств + справка по побочкам | `handlers/meds.py` |
 | `/help` | подробная справка | `handlers/common.py` |
 | `/menu` | вернуть клавиатуру | `handlers/common.py` |
 | `/settings`, `/set` | пояс, единицы, окна, базовая линия | `handlers/common.py` |
@@ -23,18 +28,25 @@
 | `/export` | ZIP с CSV | `handlers/reports.py` |
 | `/delete` | удаление с подтверждением | `handlers/reports.py` |
 | `/health` | инструкция и токен Samsung Health | `handlers/reports.py` |
+| `/model`, `/models`, `/errors`, `/whereami` | только владелец, только в личке | `handlers/admin.py` |
 
 ## Клавиатуры (`src/keyboards.py`)
 
 Reply-меню: `🍽 Записать еду`, `🩸 Записать сахар`, `🛒 Проверить продукт`,
-`🙂 Самочувствие`, `📊 Статистика`, `📈 График`.
+`🙂 Самочувствие`, `📊 Статистика`, `📈 График`, `⭐️ Мой словарь`, `💊 Лекарства`.
+
+На каждой карточке распознавания — расшифровка текстом и две кнопки:
+`✅ Подтвердить` и `✏️ Скорректировать` (правку принимаем текстом **и голосом**).
 
 Callback-грамматика `<domain>:<action>[:<arg>]` (лимит Telegram — 64 байта):
 
 ```
 meal:ok|edit|time|drop         glu:ok|edit|unit|drop
 prod:eat|save|more|drop        lab:ok|drop
-kind:food|glucose_screen|food_label|lab_report|drop      photo:reroute
+kind:food|glucose_screen|food_label|lab_report|medication|drop   photo:reroute
+med:ok|edit|time|drop         prod:edit   lab:edit
+dict:use:<id>|rm:<id>|new|page:<kind>:<n>|mode:<kind>:<use|del>|close
+mdl:lvl:<global|slot|free> | mdl:slot:<slot> | mdl:set:<target>:<idx> | mdl:close
 wb:score:<1..5> | wb:sym:<id> | wb:other | wb:voice | wb:done
 stats:w:<1h|2h> | stats:k:<tag|item> | stats:chart
 del:yes|no
@@ -48,19 +60,24 @@ del:yes|no
 ```
 MealFlow.confirming|editing|retiming
 GlucoseFlow.confirming|editing
-ProductFlow.confirming|awaiting_second_side
-LabFlow.confirming
+ProductFlow.confirming|awaiting_second_side|editing
+LabFlow.confirming|editing
+MedicationFlow.confirming|editing|retiming
 WellbeingFlow.scoring|picking|free_text
 SettingsFlow.editing
 ```
 
-Ключи данных: `draft`, `draft_files`, `eaten_at`, `draft_mode`,
-`pending_mode`, `pending_photos`, `wb_selected`, `wb_score`, `wb_extra`, `wb_note`.
+Ключи данных: `draft`, `draft_files`, `eaten_at`, `taken_at`, `draft_mode`,
+`pending_mode`, `pending_photos`, `wb_selected`, `wb_score`, `wb_extra`,
+`wb_note`, `dict_pending`, `mdl_candidates`, `mdl_target`.
 
 ## Порядок роутеров (`src/handlers/__init__.py`)
 
-`common → reports → wellbeing → confirm → intake`. `intake` последний: он ловит
-любой текст и любое фото.
+`admin → common → reports → wellbeing → dictionary → meds → confirm → intake → errors`.
+`admin` первый и полностью отфильтрован (владелец + личка): чужому апдейту он
+просто не соответствует и тот идёт дальше. `intake` предпоследний: он ловит
+любой текст и любое фото. `errors` — наблюдатель `router.errors`, обработчиков
+сообщений не содержит.
 
 ## Плумбинг (`src/handlers/deps.py`)
 
@@ -89,8 +106,16 @@ sha256(data)
 **Анализы:** фото/PDF/текст → `recognize_labs` → карточка с пометками
 `🔺/🔻/✅` → `lab:ok`.
 
+**Лекарство:** фото упаковки → `recognize_medication` → карточка `med:*` →
+`repo.save_medication_draft` (журнал + личный словарь). `spec/meds.md`.
+
 **Свободный текст:** `parse_text` пишет сахар/вес/лекарства/самочувствие сразу
-(они однозначны), остаток уходит в `parse_meal_text` и требует подтверждения.
+(они однозначны). Остаток сначала идёт в личный словарь
+(`dictionary.offer_suggestions` — подсказки по первым буквам, запись одной
+кнопкой, модель не зовётся) и только потом в `parse_meal_text`.
+
+**Правка:** любая карточка → `✏️ Скорректировать` → текст или голосовое →
+слияние с распознаванием (`spec/ingest.md` § Корректировки).
 
 ## Отчёты (`src/handlers/reports.py`)
 

@@ -26,7 +26,11 @@ meal_items         id meal_id product_id? name name_norm portion_g kcal protein_
 glucose_readings   id user_id measured_at value_mmol unit_input
                    source(manual|text|screenshot|cgm_api) device trend raw_text media_id confirmed
 weights            id user_id measured_at weight_kg note
-medications        id user_id taken_at name dose_text note      -- журнал, не назначения
+medications        id user_id taken_at name slug cid dose_text form
+                   source(text|photo|dictionary) media_id note   -- журнал, не назначения
+user_dictionary    id user_id kind(meal|item|medication) key_norm label payload
+                   hits pinned is_active last_used_at   -- uq(user_id,kind,key_norm)
+settings_kv        key value(JSON) updated_at           -- выбор модели владельцем
 analysis_results   id user_id taken_at panel marker value value_text unit
                    ref_low ref_high flag(low|normal|high) media_id raw_text
 symptoms           id user_id? slug label hits is_active last_used_at   -- uq(user_id,slug)
@@ -40,7 +44,8 @@ food_stats         id user_id key_type(item|tag|product) key window n
 corrections        id user_id entity_type entity_id field old_value new_value created_at
 ```
 
-Индексы: `meals(user_id, eaten_at)`, `glucose_readings(user_id, measured_at)`,
+Индексы: `medications(user_id, taken_at)`, `user_dictionary(user_id, kind, key_norm)`,
+`meals(user_id, eaten_at)`, `glucose_readings(user_id, measured_at)`,
 `wellbeing_checkins(user_id, at)`, `activity_samples(user_id, start_at)`,
 `meal_items(name_norm)`, `products(user_id, name_norm)`.
 
@@ -59,7 +64,19 @@ seed_symptoms / list_symptoms(limit=12) / upsert_symptom(label)
 save_checkin(session, user, at, score, symptom_labels, note?, source) -> WellbeingCheckin
 load_checkins -> [(WellbeingCheckin, labels)] ; load_checkin_likes -> [CheckinLike]
 load_activity / load_activity_buckets / upsert_activity(samples) -> int
-save_weight / save_medication / save_labs / save_correction
+save_weight / save_labs / save_correction
+save_medication(session, user, taken_at, name, dose_text?, form?, note?, source, media_id?)
+  # slug/cid резолвятся здесь: любой путь записи даёт один ключ справочника
+save_medication_draft(session, user, draft, taken_at, media_id?, source) -> Medication
+load_medications / load_medication_likes -> [MedicationLike]
+
+bump_dictionary(session, user, kind, label, payload?, hits=1) -> DictionaryEntry?
+suggest_dictionary(session, user, prefix, kinds?, limit=6)   # префикс → подстрока
+list_dictionary / get_dictionary_entry / touch_dictionary / hide_dictionary
+remember_meal(session, user, draft)      # заголовок + состав, по одному «замечен»
+MIN_HITS = {meal: 2, item: 2, medication: 1}
+
+get_setting / set_setting / all_settings                     # settings_kv
 counts(session, user) -> dict[str,int]
 delete_user_data(session, user, drop_user=False)
 ```
@@ -67,6 +84,9 @@ delete_user_data(session, user, drop_user=False)
 `SEED_SYMPTOMS` — 12 стартовых симптомов (сонливость, потливость, туман в
 голове, сильный голод, жажда, сердцебиение, дрожь, головная боль,
 раздражительность, приливы, слабость, тошнота).
+
+`delete_user_data` чистит и `user_dictionary`; `settings_kv` к пользователю не
+относится и переживает `/delete`.
 
 `delete_user_data` делает явные `DELETE` по таблицам: SQLite не выполняет
 каскады без `PRAGMA foreign_keys=ON`, а строка пользователя должна пережить

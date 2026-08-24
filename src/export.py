@@ -20,6 +20,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.models import (
     ActivitySample,
     AnalysisResult,
+    BodyGoal,
+    BodyProfile,
     DictionaryEntry,
     GlucoseReading,
     Meal,
@@ -31,6 +33,7 @@ from src.db.models import (
     User,
     Weight,
     WellbeingCheckin,
+    Workout,
 )
 
 _TABLES: tuple[tuple[str, Any, tuple[str, ...]], ...] = (
@@ -51,7 +54,31 @@ _TABLES: tuple[tuple[str, Any, tuple[str, ...]], ...] = (
         GlucoseReading,
         ("id", "measured_at", "value_mmol", "unit_input", "source", "device", "trend"),
     ),
-    ("weights", Weight, ("id", "measured_at", "weight_kg", "note")),
+    (
+        "weights",
+        Weight,
+        ("id", "measured_at", "weight_kg", "body_fat_pct", "muscle_mass_kg", "water_pct",
+         "bone_mass_kg", "visceral_fat", "bmr_kcal", "source", "note"),
+    ),
+    (
+        "body_profile",
+        BodyProfile,
+        ("id", "height_cm", "birth_year", "sex", "activity", "weight_prompt_days",
+         "last_weight_prompt_at", "updated_at"),
+    ),
+    (
+        "body_goals",
+        BodyGoal,
+        ("id", "kind", "target_weight_kg", "start_weight_kg", "rate_kg_week", "target_kcal",
+         "target_date", "started_at", "is_active"),
+    ),
+    (
+        "workouts",
+        Workout,
+        ("id", "started_at", "ended_at", "kind", "title", "duration_min", "intensity",
+         "distance_m", "steps", "avg_hr", "rpe", "sweat", "kcal", "kcal_source", "met",
+         "source", "note"),
+    ),
     (
         "medications",
         Medication,

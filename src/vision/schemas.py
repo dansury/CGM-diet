@@ -69,6 +69,59 @@ class MedicationDraft:
 
 
 @dataclass(slots=True)
+class WorkoutDraft:
+    """Одна тренировка до подтверждения. Энергозатраты считаются отдельно
+    (`analytics/workout.py`) — модель их не придумывает."""
+
+    kind: str = "other"                 # слаг из analytics.workout.KINDS
+    title: str = ""
+    duration_min: float | None = None
+    intensity: str | None = None        # low|moderate|high
+    distance_m: float | None = None
+    steps: int | None = None
+    avg_hr: float | None = None
+    rpe: int | None = None
+    sweat: str | None = None            # yes|light|no
+    kcal: float | None = None           # названо пользователем или прочитано с экрана
+    kcal_source: str = "estimated"      # estimated|user|device
+    met: float | None = None
+    started_at: datetime | None = None
+    note: str = ""
+    source: str = "text"
+    confidence: float | None = None
+    raw_text: str | None = None
+
+
+@dataclass(slots=True)
+class MeasurementDraft:
+    """Взвешивание: вес обязателен, биоимпеданс — как получится."""
+
+    weight_kg: float | None = None
+    body_fat_pct: float | None = None
+    muscle_mass_kg: float | None = None
+    water_pct: float | None = None
+    bone_mass_kg: float | None = None
+    visceral_fat: float | None = None
+    bmr_kcal: float | None = None
+    confidence: float | None = None
+    source: str = "photo"
+
+    @property
+    def has_composition(self) -> bool:
+        return any(
+            value is not None
+            for value in (
+                self.body_fat_pct,
+                self.muscle_mass_kg,
+                self.water_pct,
+                self.bone_mass_kg,
+                self.visceral_fat,
+                self.bmr_kcal,
+            )
+        )
+
+
+@dataclass(slots=True)
 class GlucoseDraft:
     measured_at: datetime
     value_mmol: float
@@ -113,8 +166,10 @@ __all__ = [
     "LabDraft",
     "MarkerDraft",
     "MealDraft",
+    "MeasurementDraft",
     "MedicationDraft",
     "ProductDraft",
+    "WorkoutDraft",
 ]
 
 
@@ -204,6 +259,32 @@ def med_from_dict(data: dict) -> MedicationDraft:
     return MedicationDraft(**data)
 
 
+_WORKOUT_FIELDS = frozenset(f.name for f in fields(WorkoutDraft)) - {"started_at"}
+_MEASUREMENT_FIELDS = frozenset(f.name for f in fields(MeasurementDraft))
+
+
+def workout_to_dict(draft: WorkoutDraft) -> dict:
+    data = {name: getattr(draft, name) for name in _WORKOUT_FIELDS}
+    data["started_at"] = draft.started_at.isoformat() if draft.started_at else None
+    return data
+
+
+def workout_from_dict(data: dict) -> WorkoutDraft:
+    kwargs = {k: v for k, v in data.items() if k in _WORKOUT_FIELDS}
+    stamp = data.get("started_at")
+    return WorkoutDraft(
+        started_at=datetime.fromisoformat(stamp) if stamp else None, **kwargs
+    )
+
+
+def measurement_to_dict(draft: MeasurementDraft) -> dict:
+    return {name: getattr(draft, name) for name in _MEASUREMENT_FIELDS}
+
+
+def measurement_from_dict(data: dict) -> MeasurementDraft:
+    return MeasurementDraft(**{k: v for k, v in data.items() if k in _MEASUREMENT_FIELDS})
+
+
 def glucose_to_dicts(drafts: list[GlucoseDraft]) -> list[dict]:
     return [
         {
@@ -260,6 +341,10 @@ def lab_from_dict(data: dict) -> LabDraft:
 
 __all__ += [
     "glucose_from_dicts",
+    "measurement_from_dict",
+    "measurement_to_dict",
+    "workout_from_dict",
+    "workout_to_dict",
     "glucose_to_dicts",
     "lab_from_dict",
     "lab_to_dict",

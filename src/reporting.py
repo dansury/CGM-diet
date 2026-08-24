@@ -421,12 +421,279 @@ def format_med_side_effects(links: list) -> str | None:
     return "\n".join(lines)
 
 
+# ------------------------------------------------------------------ body & workouts
+
+BODY_DISCLAIMER = (
+    "⚠️ Коридор калорий — ориентир, посчитанный из ваших же цифр, а не назначение. "
+    "При беременности, заболеваниях почек и печени, диабете и приёме лекарств "
+    "согласуйте его с врачом."
+)
+
+WEIGHT_PROMPT = (
+    "⚖️ <b>Пора взвеситься</b>\n\n"
+    "Прошло две недели с последнего замера. Встаньте на весы утром, натощак, "
+    "и пришлите число — «вес 82,4». Если весы умеют состав тела, можно добавить "
+    "«жир 24% мышцы 58 кг вода 55%» или просто прислать фото экрана."
+)
+
+BAR_WIDTH = 10
+
+
+def progress_bar(share: float, *, width: int = BAR_WIDTH) -> str:
+    """Полоса из 10 клеток: съедено / остаток / перебор."""
+    share = max(share, 0.0)
+    filled = min(int(round(share * width)), width)
+    if share > 1.0:
+        over = min(int(round((share - 1.0) * width)), width)
+        return "▒" * over + "▓" * max(width - over, 0)
+    return "▓" * filled + "░" * (width - filled)
+
+
+def format_day_progress(balance, *, goal=None, trend=None) -> str:
+    """Дневной коридор после приёма пищи (`spec/body.md` § Дневной коридор)."""
+    share = balance.share
+    lines = ["📊 <b>Сегодня</b>"]
+    if goal is not None and goal.target_weight_kg:
+        rate = f" · {goal.rate_kg_week:g} кг/нед" if goal.rate_kg_week else ""
+        lines.append(f"🎯 цель {goal.target_weight_kg:g} кг{rate}")
+    lines.append(
+        f"{progress_bar(share)} {share * 100:.0f}% "
+        f"({balance.consumed_kcal:.0f} из {balance.allowance_kcal:.0f} ккал)"
+    )
+    if balance.burned_kcal:
+        lines.append(
+            f"Ориентир {balance.target_kcal:.0f} ккал + тренировки ≈ {balance.burned_kcal:.0f} ккал"
+        )
+    if balance.over:
+        lines.append(f"Сверх ориентира: <b>{-balance.available_kcal:.0f} ккал</b>")
+    else:
+        lines.append(f"Осталось на сегодня: <b>{balance.available_kcal:.0f} ккал</b>")
+    if balance.carbs_g:
+        lines.append(f"Углеводы за день: {balance.carbs_g:.0f} г")
+    if trend is not None and trend.rate_kg_week is not None:
+        lines.append(
+            f"Вес за {trend.days:.0f} дн.: {trend.first_kg:g} → {trend.last_kg:g} кг "
+            f"({trend.change_kg:+g} кг, {trend.rate_kg_week:+g} кг/нед)"
+        )
+    return "\n".join(lines)
+
+
+def format_goal_plan(plan, *, kind: str, target_weight_kg: float | None) -> str:
+    """Из чего получился ориентир — и что в цели пришлось урезать."""
+    words = {"lose": "снижение", "gain": "набор", "maintain": "удержание"}
+    lines = [f"🎯 <b>Цель: {words.get(kind, kind)} веса</b>"]
+    if target_weight_kg:
+        lines.append(f"Целевой вес: <b>{target_weight_kg:g} кг</b>")
+    if plan.bmr_kcal:
+        lines.append(f"Основной обмен (BMR): ≈ {plan.bmr_kcal:.0f} ккал")
+    if plan.tdee_kcal:
+        lines.append(f"Суточный расход (TDEE): ≈ {plan.tdee_kcal:.0f} ккал")
+    if kind != "maintain":
+        word = "дефицит" if plan.delta_kcal < 0 else "профицит"
+        lines.append(
+            f"Темп: {plan.rate_kg_week:g} кг/нед → {word} {abs(plan.delta_kcal):.0f} ккал в день"
+        )
+    lines.append(f"<b>Ориентир на день: {plan.target_kcal:.0f} ккал</b>")
+    if plan.weeks and plan.eta:
+        lines.append(f"При таком темпе — около {plan.weeks:g} нед., ориентир {plan.eta:%d.%m.%Y}")
+    if plan.estimated:
+        lines.append(
+            "<i>Рост и возраст не заполнены — расход посчитан грубо. "
+            "Добавьте их в /body, и ориентир станет точнее.</i>"
+        )
+    if plan.capped:
+        lines.append("")
+        lines.append("<b>Что пришлось поправить в цели:</b>")
+        lines.extend(f"• {reason}" for reason in plan.capped)
+    lines.append("")
+    lines.append(BODY_DISCLAIMER)
+    return "\n".join(lines)
+
+
+def format_body_card(
+    *,
+    profile=None,
+    last=None,
+    goal=None,
+    plan=None,
+    trend=None,
+    bmi_value: float | None = None,
+    bmi_note: str | None = None,
+    age: int | None = None,
+) -> str:
+    from src.analytics.body import ACTIVITY_LABELS
+
+    lines = ["⚖️ <b>Тело и цель</b>", ""]
+    if last is not None:
+        lines.append(f"Вес: <b>{last.weight_kg:g} кг</b> ({last.measured_at:%d.%m})")
+        composition = _composition_line(last)
+        if composition:
+            lines.append(composition)
+    else:
+        lines.append("Вес: — · напишите «вес 82,4» или пришлите фото весов")
+    if profile is not None:
+        details = []
+        if profile.height_cm:
+            details.append(f"рост {profile.height_cm:g} см")
+        if age:
+            details.append(f"возраст {age}")
+        if profile.sex:
+            details.append("мужской" if profile.sex == "m" else "женский")
+        if details:
+            lines.append("Профиль: " + ", ".join(details))
+        lines.append(f"Активность: {ACTIVITY_LABELS.get(profile.activity, profile.activity)}")
+    if bmi_value:
+        note = f" — по классификации ВОЗ это {bmi_note}" if bmi_note else ""
+        lines.append(f"ИМТ: {bmi_value:g}{note}")
+    if trend is not None and trend.rate_kg_week is not None:
+        lines.append(
+            f"Динамика: {trend.first_kg:g} → {trend.last_kg:g} кг за {trend.days:.0f} дн. "
+            f"({trend.rate_kg_week:+g} кг/нед)"
+        )
+    lines.append("")
+    if goal is not None and plan is not None:
+        lines.append(format_goal_plan(plan, kind=goal.kind, target_weight_kg=goal.target_weight_kg))
+    elif goal is not None:
+        lines.append(f"🎯 Цель: {goal.target_weight_kg:g} кг")
+    else:
+        lines.append(
+            "🎯 Цель не задана. Задайте её — и после каждого приёма пищи "
+            "буду показывать полосу дневного коридора."
+        )
+    return "\n".join(lines)
+
+
+def _composition_line(row) -> str:
+    parts = []
+    for label, value, suffix in (
+        ("жир", row.body_fat_pct, "%"),
+        ("мышцы", row.muscle_mass_kg, " кг"),
+        ("вода", row.water_pct, "%"),
+        ("кости", row.bone_mass_kg, " кг"),
+        ("висцеральный", row.visceral_fat, ""),
+    ):
+        if value is not None:
+            parts.append(f"{label} {value:g}{suffix}")
+    return "Состав тела: " + " · ".join(parts) if parts else ""
+
+
+def format_measurement_draft(draft) -> str:
+    lines = ["⚖️ <b>Показания весов</b>", ""]
+    if draft.weight_kg:
+        lines.append(f"Вес: <b>{draft.weight_kg:g} кг</b>")
+    else:
+        lines.append("Вес не разобрал — допишите его текстом.")
+    for label, value, suffix in (
+        ("Жир", draft.body_fat_pct, "%"),
+        ("Мышечная масса", draft.muscle_mass_kg, " кг"),
+        ("Вода", draft.water_pct, "%"),
+        ("Костная масса", draft.bone_mass_kg, " кг"),
+        ("Висцеральный жир", draft.visceral_fat, ""),
+        ("Основной обмен", draft.bmr_kcal, " ккал"),
+    ):
+        if value is not None:
+            lines.append(f"{label}: {value:g}{suffix}")
+    if draft.confidence is not None:
+        lines.append(f"Уверенность распознавания: {draft.confidence * 100:.0f}%")
+    lines.append("")
+    lines.append("Записать этот замер?")
+    return "\n".join(lines)
+
+
+def format_weight_saved(row, *, previous=None, goal=None) -> str:
+    lines = [f"⚖️ Записал: <b>{row.weight_kg:g} кг</b> ({row.measured_at:%d.%m %H:%M})"]
+    composition = _composition_line(row)
+    if composition:
+        lines.append(composition)
+    if previous is not None:
+        delta = row.weight_kg - previous.weight_kg
+        days = max((row.measured_at - previous.measured_at).days, 0)
+        since = f" за {days} дн." if days else ""
+        lines.append(f"С прошлого замера: {delta:+.1f} кг{since}")
+    if goal is not None and goal.target_weight_kg:
+        left = goal.target_weight_kg - row.weight_kg
+        lines.append(f"До цели {goal.target_weight_kg:g} кг: {left:+.1f} кг")
+    return "\n".join(lines)
+
+
+def format_workout_draft(
+    draft,
+    *,
+    estimate=None,
+    started_at: datetime | None = None,
+    applied: list[str] | None = None,
+) -> str:
+    from src.analytics.workout import INTENSITY_LABELS, SWEAT_LABELS, kind_label
+
+    lines = [f"🏃 <b>{draft.title or kind_label(draft.kind)}</b>"]
+    if started_at:
+        lines.append(f"🕒 {started_at:%d.%m %H:%M}")
+    if draft.duration_min:
+        lines.append(f"Длительность: {draft.duration_min:.0f} мин")
+    if draft.distance_m:
+        lines.append(f"Расстояние: {draft.distance_m / 1000:g} км")
+    if draft.steps:
+        lines.append(f"Шаги: {draft.steps}")
+    if draft.intensity:
+        lines.append(f"Интенсивность: {INTENSITY_LABELS.get(draft.intensity, draft.intensity)}")
+    if draft.avg_hr:
+        lines.append(f"Средний пульс: {draft.avg_hr:.0f}")
+    if draft.sweat:
+        lines.append(f"Пот: {SWEAT_LABELS.get(draft.sweat, draft.sweat)}")
+    if draft.note:
+        lines.append(f"<i>{draft.note}</i>")
+    lines.append("")
+    if draft.kcal and draft.kcal_source != "estimated":
+        source = "с экрана" if draft.kcal_source == "device" else "с ваших слов"
+        lines.append(f"Энергозатраты: <b>{draft.kcal:.0f} ккал</b> ({source})")
+    elif estimate is not None:
+        tail = ", вес взят как 70 кг" if estimate.assumed_weight else ""
+        lines.append(
+            f"Энергозатраты: <b>≈ {estimate.kcal:.0f} ккал</b> "
+            f"(MET {estimate.met:g}, {estimate.minutes:.0f} мин{tail})"
+        )
+        lines.append("<i>Это оценка по общепринятым коэффициентам, а не измерение.</i>")
+    else:
+        lines.append("Энергозатраты оценю, как только будет известна длительность.")
+    lines.extend(_applied_block(applied))
+    lines.append("")
+    lines.append("Записать тренировку?")
+    lines.append("<i>Поправить можно текстом или голосовым — «было 50 минут».</i>")
+    return "\n".join(lines)
+
+
+def format_workouts(rows: list[tuple[datetime, str, float | None, float | None]], *, days: int = 7) -> str:
+    """`rows` — (локальное время, название, минуты, ккал)."""
+    if not rows:
+        return (
+            "🏃 <b>Тренировки</b>\n\nПока пусто. Напишите «бегал 40 минут», наговорите "
+            "голосом или пришлите фото трекера — посчитаю примерные энергозатраты."
+        )
+    lines = [f"🏃 <b>Тренировки за {days} дн.</b>", ""]
+    total = 0.0
+    for at, title, minutes, kcal in rows[-30:]:
+        duration = f" · {minutes:.0f} мин" if minutes else ""
+        energy = f" · ≈ {kcal:.0f} ккал" if kcal else ""
+        total += kcal or 0.0
+        lines.append(f"• {at:%d.%m %H:%M} {title}{duration}{energy}")
+    if total:
+        lines.append("")
+        lines.append(f"Итого ≈ {total:.0f} ккал")
+    return "\n".join(lines)
+
+
 __all__ = [
+    "BODY_DISCLAIMER",
     "CONFIDENCE_LABEL",
     "CORRECTION_HINT",
     "DISCLAIMER",
+    "WEIGHT_PROMPT",
     "format_activity",
+    "format_body_card",
     "format_cgm_summary",
+    "format_day_progress",
+    "format_goal_plan",
+    "format_measurement_draft",
     "format_labs",
     "format_meal_draft",
     "format_med_coverage",
@@ -440,4 +707,8 @@ __all__ = [
     "format_remembered_macros",
     "format_stats",
     "format_symptoms",
+    "format_weight_saved",
+    "format_workout_draft",
+    "format_workouts",
+    "progress_bar",
 ]

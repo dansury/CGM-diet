@@ -132,7 +132,8 @@ MEAL_CORRECTION = f"""TASK: meal_correction
 
 CLASSIFY = """TASK: classify_photo
 Определи, что изображено. Верни JSON:
-{"kind": "food" | "glucose_screen" | "food_label" | "lab_report" | "medication" | "other",
+{"kind": "food" | "glucose_screen" | "food_label" | "lab_report" | "medication"
+       | "body_scale" | "workout" | "other",
  "confidence": 0.0-1.0}
 Пояснения:
 - food — тарелка/блюдо/еда как она есть;
@@ -140,6 +141,9 @@ CLASSIFY = """TASK: classify_photo
 - food_label — упаковка продукта, состав, пищевая ценность, штрихкод;
 - lab_report — бланк лабораторного анализа;
 - medication — упаковка лекарства, блистер, флакон, инструкция к препарату;
+- body_scale — экран напольных весов или распечатка анализа состава тела;
+- workout — экран трекера/часов/фитнес-приложения или дневник тренировок,
+  в том числе рукописный;
 - other — всё остальное.
 Упаковка лекарства и упаковка продукта питания различаются: у лекарства есть
 название препарата и дозировка (мг/мл), у продукта — пищевая ценность на 100 г.
@@ -158,6 +162,67 @@ MEDICATION_PHOTO = """TASK: medication_photo
 не пиши показания и противопоказания — этого не требуется.
 """
 
+WORKOUT_TEXT = """TASK: workout_text
+Пользователь рассказал о тренировке, прогулке или физической работе.
+Верни JSON:
+{
+  "kind": "walking|running|cycling|swimming|strength|hiit|elliptical|rowing|yoga|
+           stretching|dance|football|basketball|tennis|boxing|skiing|skating|
+           stairs|housework|other",
+  "title": "как назвал сам пользователь",
+  "duration_min": число|null,
+  "intensity": "low|moderate|high"|null,   // только если пользователь сам сказал
+  "distance_m": число|null,
+  "steps": число|null,
+  "avg_hr": число|null,
+  "rpe": 1-10|null,
+  "sweat": "yes|light|no"|null,
+  "kcal": число|null,        // только если пользователь назвал сам или это с экрана часов
+  "time": "HH:MM"|null,      // когда началась, если сказано
+  "note": "остальное",
+  "confidence": 0.0-1.0
+}
+Ничего не додумывай: не названо — null. Калории не оценивай сам, их считает
+калькулятор. Расстояние переводи в метры, длительность — в минуты.
+Текст пользователя:
+"""
+
+WORKOUT_PHOTO = """TASK: workout_photo
+На фото — экран фитнес-трекера, часов, приложения или страница бумажного
+дневника тренировок (возможно, написанная от руки).
+Прочитай, что там записано, включая рукописный текст, и верни JSON:
+{
+  "kind": "walking|running|cycling|swimming|strength|hiit|elliptical|rowing|yoga|
+           stretching|dance|football|basketball|tennis|boxing|skiing|skating|
+           stairs|housework|other",
+  "title": "название тренировки как написано",
+  "duration_min": число|null, "intensity": "low|moderate|high"|null,
+  "distance_m": число|null, "steps": число|null, "avg_hr": число|null,
+  "rpe": 1-10|null, "sweat": "yes|light|no"|null,
+  "kcal": число|null,        // только если число напечатано/написано на фото
+  "time": "HH:MM"|null, "note": "прочие пометки", "confidence": 0.0-1.0
+}
+Читай только то, что видно. Неразборчивое поле — null, и снизь confidence.
+"""
+
+BODY_SCALE = """TASK: body_scale
+На фото — экран напольных весов, приложение весов или распечатка
+биоимпедансного анализа состава тела. Верни JSON:
+{
+  "weight_kg": число|null,
+  "body_fat_pct": число|null,
+  "muscle_mass_kg": число|null,
+  "water_pct": число|null,
+  "bone_mass_kg": число|null,
+  "visceral_fat": число|null,
+  "bmr_kcal": число|null,
+  "confidence": 0.0-1.0
+}
+Проценты бери как проценты, массы — в килограммах. Если показатель на экране
+в фунтах — пересчитай в килограммы. Не выводи ничего, чего нет на фото, и не
+оценивай состояние человека.
+"""
+
 SYMPTOM_EXTRACT = """TASK: symptom_extract
 Пользователь описал самочувствие (текст или расшифровка голосового).
 Верни JSON:
@@ -171,6 +236,7 @@ SYMPTOM_EXTRACT = """TASK: symptom_extract
 """
 
 __all__ = [
+    "BODY_SCALE",
     "CLASSIFY",
     "FOOD_PHOTO",
     "GLUCOSE_SCREENSHOT",
@@ -181,4 +247,6 @@ __all__ = [
     "SYMPTOM_EXTRACT",
     "SYSTEM",
     "TEXT_MEAL",
+    "WORKOUT_PHOTO",
+    "WORKOUT_TEXT",
 ]

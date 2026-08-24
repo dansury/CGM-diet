@@ -89,6 +89,10 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
         await repo.remember_meal_macros(session, user, draft, source="label")
         title = meal.title or "приём пищи"
         shortcut = await repo.suggest_dictionary(session, user, title, kinds=("meal",), limit=1)
+        # Полоса дневного коридора — только если цель задана (`spec/body.md`).
+        from src.handlers.body import day_progress_text
+
+        progress = await day_progress_text(session, user, now=local_now(user))
     await state.clear()
     await callback.answer("Записано")
     tail = (
@@ -99,6 +103,7 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.edit_text(
         f"✅ Записано: <b>{title}</b> в {eaten_local:%H:%M}.\n"
         f"Через час-полтора пришлите сахар — и приём попадёт в статистику.{tail}"
+        + (f"\n\n{progress}" if progress else "")
     )
 
 

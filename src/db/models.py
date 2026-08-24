@@ -200,7 +200,11 @@ class GlucoseReading(Base, TimestampMixin):
 
 
 class Weight(Base, TimestampMixin):
+    """One weighing. Bioimpedance columns are optional: a scale that reports
+    nothing but kilograms still gives a complete row (`spec/body.md`)."""
+
     __tablename__ = "weights"
+    __table_args__ = (Index("ix_weights_user_measured", "user_id", "measured_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(
@@ -208,6 +212,96 @@ class Weight(Base, TimestampMixin):
     )
     measured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     weight_kg: Mapped[float] = mapped_column(Float, nullable=False)
+    body_fat_pct: Mapped[float | None] = mapped_column(Float)
+    muscle_mass_kg: Mapped[float | None] = mapped_column(Float)
+    water_pct: Mapped[float | None] = mapped_column(Float)
+    bone_mass_kg: Mapped[float | None] = mapped_column(Float)
+    visceral_fat: Mapped[float | None] = mapped_column(Float)
+    bmr_kcal: Mapped[float | None] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(16), default="manual", nullable=False)
+    # manual|text|voice|photo|scale
+    note: Mapped[str | None] = mapped_column(Text)
+
+
+class BodyProfile(Base, TimestampMixin):
+    """Height, age and sex — the constants an energy estimate needs.
+
+    Kept out of `users` on purpose: that table is about how the bot talks to a
+    chat, this one is about a body, and `/delete` wipes it like any other data.
+    """
+
+    __tablename__ = "body_profile"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_body_profile_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    height_cm: Mapped[float | None] = mapped_column(Float)
+    birth_year: Mapped[int | None] = mapped_column(Integer)
+    sex: Mapped[str | None] = mapped_column(String(1))  # m|f
+    activity: Mapped[str] = mapped_column(String(16), default="light", nullable=False)
+    # how often the bot asks for a weighing, days
+    weight_prompt_days: Mapped[int] = mapped_column(Integer, default=14, nullable=False)
+    last_weight_prompt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class BodyGoal(Base, TimestampMixin):
+    """The active weight goal and the daily kcal corridor derived from it.
+
+    `rate_kg_week` and `target_kcal` are already clamped to the dietetic bounds
+    in `analytics/body.build_plan` — nothing here is taken from the user raw.
+    """
+
+    __tablename__ = "body_goals"
+    __table_args__ = (Index("ix_body_goals_active", "user_id", "is_active"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(8), default="lose", nullable=False)
+    # lose|maintain|gain
+    target_weight_kg: Mapped[float | None] = mapped_column(Float)
+    start_weight_kg: Mapped[float | None] = mapped_column(Float)
+    rate_kg_week: Mapped[float | None] = mapped_column(Float)
+    target_kcal: Mapped[float | None] = mapped_column(Float)
+    target_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class Workout(Base, TimestampMixin):
+    """A workout the user reported. Phone-side samples live in
+    `activity_samples`; these two are merged for the daily burn without
+    double-counting (`spec/workout.md`)."""
+
+    __tablename__ = "workouts"
+    __table_args__ = (Index("ix_workouts_user_start", "user_id", "started_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    kind: Mapped[str] = mapped_column(String(24), default="other", nullable=False)
+    title: Mapped[str | None] = mapped_column(String(128))
+    duration_min: Mapped[float | None] = mapped_column(Float)
+    intensity: Mapped[str | None] = mapped_column(String(8))  # low|moderate|high
+    distance_m: Mapped[float | None] = mapped_column(Float)
+    steps: Mapped[int | None] = mapped_column(Integer)
+    avg_hr: Mapped[float | None] = mapped_column(Float)
+    rpe: Mapped[int | None] = mapped_column(Integer)
+    sweat: Mapped[str | None] = mapped_column(String(8))  # yes|light|no
+    kcal: Mapped[float | None] = mapped_column(Float)
+    kcal_source: Mapped[str] = mapped_column(String(12), default="estimated", nullable=False)
+    met: Mapped[float | None] = mapped_column(Float)
+    source: Mapped[str] = mapped_column(String(12), default="text", nullable=False)
+    media_id: Mapped[int | None] = mapped_column(ForeignKey("media_files.id", ondelete="SET NULL"))
     note: Mapped[str | None] = mapped_column(Text)
 
 
@@ -453,6 +547,8 @@ __all__ = [
     "ActivitySample",
     "AnalysisResult",
     "Base",
+    "BodyGoal",
+    "BodyProfile",
     "CheckinSymptom",
     "Correction",
     "FoodStat",
@@ -467,5 +563,6 @@ __all__ = [
     "User",
     "WellbeingCheckin",
     "Weight",
+    "Workout",
     "utcnow",
 ]

@@ -97,6 +97,8 @@ def test_router_tree_builds():
         "common",
         "reports",
         "wellbeing",
+        "body",
+        "workout",
         "dictionary",
         "meds",
         "confirm",

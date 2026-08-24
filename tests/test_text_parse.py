@@ -78,3 +78,34 @@ def test_leftover_is_the_meal_description():
 
 def test_fasting_flag():
     assert parse_text("глюкоза 5.1 натощак", now=NOW).fasting is True
+
+
+# ------------------------------------------------------------------ тело
+
+
+def test_body_facts_are_parsed_without_a_model():
+    parsed = parse_text("вес 82,4 жир 24% мышцы 58.6 кг вода 55% рост 178 мне 44 пол мужской")
+    assert parsed.weight_kg == 82.4
+    body = parsed.body
+    assert (body.height_cm, body.age, body.sex) == (178.0, 44, "m")
+    assert body.composition == {
+        "body_fat_pct": 24.0,
+        "muscle_mass_kg": 58.6,
+        "water_pct": 55.0,
+    }
+
+
+def test_a_target_weight_is_told_apart_from_a_current_one():
+    parsed = parse_text("хочу весить 75")
+    assert parsed.weight_kg is None
+    assert parsed.body.target_weight_kg == 75.0
+
+
+def test_food_words_never_become_body_measurements():
+    for text in ("творог 200 г жирность 5%", "выпил воды 500 мл", "суп с костями 300 г"):
+        assert parse_text(text).body.is_empty, text
+
+
+def test_implausible_body_numbers_are_dropped():
+    parsed = parse_text("рост 17 жир 240% возраст 900")
+    assert parsed.body.is_empty

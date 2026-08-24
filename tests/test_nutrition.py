@@ -84,3 +84,33 @@ def test_estimated_flag_survives_the_fsm_round_trip():
     nutrition.fill_meal(draft)
     restored = meal_from_dict(meal_to_dict(draft))
     assert restored.items[0].estimated is True
+
+
+def test_zero_macros_still_get_calories_from_the_table():
+    # Meat: the model reports an honest 0 carbs and names no other macro, so the
+    # Atwater sum is 0 and the card would have shown a dish with no calories.
+    item = ItemDraft(name="Мясо на гриле", portion_g=400, carbs_g=0.0)
+    assert nutrition.fill_item(item) is True
+    assert item.kcal > 0
+
+
+def test_card_shows_calories_for_every_item():
+    draft = MealDraft(
+        title="Мясо на гриле с огурцами",
+        items=[
+            ItemDraft(name="Мясо на гриле", portion_g=400, kcal=1000, protein_g=100,
+                      fat_g=60, carbs_g=0),
+            ItemDraft(name="Огурцы", portion_g=300, kcal=45, carbs_g=10),
+        ],
+        confidence=0.9,
+    )
+    text = format_meal_draft(draft)
+    assert "1000 ккал" in text
+    assert "45 ккал" in text
+    assert "· 0 ккал" not in text
+
+
+def test_card_omits_calories_it_could_not_estimate():
+    draft = MealDraft(items=[ItemDraft(name="нечто неопознанное", portion_g=100)])
+    line = [ln for ln in format_meal_draft(draft).splitlines() if ln.startswith("•")][0]
+    assert "ккал" not in line

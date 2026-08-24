@@ -40,6 +40,10 @@ TABLE: tuple[tuple[str, Ref], ...] = (
     ("куриц", Ref(190, 25.0, 9.0, 1.0, 0.0, 150)),
     ("котлет", Ref(250, 15.0, 18.0, 8.0, 0.5, 120)),
     ("шашлык", Ref(240, 22.0, 17.0, 1.0, 0.0, 200)),
+    ("стейк", Ref(250, 26.0, 16.0, 0.0, 0.0, 200)),
+    ("отбивн", Ref(280, 22.0, 21.0, 3.0, 0.0, 150)),
+    ("баранин", Ref(250, 24.0, 17.0, 0.0, 0.0, 150)),
+    ("мясо", Ref(250, 25.0, 17.0, 0.0, 0.0, 150)),
     ("говядин", Ref(220, 26.0, 13.0, 0.0, 0.0, 150)),
     ("свинин", Ref(280, 22.0, 21.0, 0.0, 0.0, 150)),
     ("индейк", Ref(160, 28.0, 5.0, 0.0, 0.0, 150)),
@@ -262,6 +266,11 @@ def fill_item(item: ItemDraft) -> bool:
         kcal = sum(
             (getattr(item, field) or 0.0) * per_g for field, per_g in _KCAL_PER_G.items()
         )
+        if kcal <= 0 and ref is not None:
+            # Macros the model reported as honest zeros (meat has no carbs) give
+            # an Atwater sum of 0. A dish that exists never has zero calories —
+            # fall back to the table's own kcal for the portion.
+            kcal = ref.kcal * ((item.portion_g or ref.portion_g) / 100.0)
         if kcal > 0:
             item.kcal = round(kcal)
             changed = True

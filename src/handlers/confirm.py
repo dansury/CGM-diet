@@ -16,9 +16,8 @@ from aiogram.types import CallbackQuery, Message
 from src.db import repo
 from src.handlers.deps import local_now, session_scope, to_utc
 from src.handlers.states import GlucoseFlow, LabFlow, MealFlow, ProductFlow
-from src.handlers.views import DRAFT_KEY, EATEN_AT_KEY, FILES_KEY, MODE_KEY_VIEW
+from src.handlers.views import DRAFT_KEY, EATEN_AT_KEY, FILES_KEY
 from src.ingest.units import MGDL, MMOL, format_value
-from src.keyboards import main_menu
 from src.logging_setup import get_logger
 from src.vision.schemas import (
     ItemDraft,

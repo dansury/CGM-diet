@@ -139,7 +139,7 @@ class OpenRouterClient:
         for attempt in range(1, _MAX_ATTEMPTS + 1):
             try:
                 resp = await self._client.post(path, json=payload, headers=self._headers)
-            except httpx.TimeoutException as exc:
+            except httpx.TimeoutException:
                 last_exc = LLMTimeoutError(f"{model}: timeout")
                 await self._sleep(attempt)
                 continue

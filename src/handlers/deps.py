@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import AsyncIterator, Callable, Awaitable
+from datetime import UTC, datetime
 
 from aiogram import Bot
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,11 +44,11 @@ async def session_scope() -> AsyncIterator[AsyncSession]:
 
 def user_tz(user: User | None):
     if user is None or ZoneInfo is None:
-        return timezone.utc
+        return UTC
     try:
         return ZoneInfo(user.tz)
     except Exception:
-        return timezone.utc
+        return UTC
 
 
 def local_now(user: User | None) -> datetime:
@@ -59,12 +59,12 @@ def to_utc(value: datetime, user: User | None) -> datetime:
     """Interpret a naive datetime as the user's local time, return UTC."""
     if value.tzinfo is None:
         value = value.replace(tzinfo=user_tz(user))
-    return value.astimezone(timezone.utc)
+    return value.astimezone(UTC)
 
 
 def to_local(value: datetime, user: User | None) -> datetime:
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
+        value = value.replace(tzinfo=UTC)
     return value.astimezone(user_tz(user))
 
 

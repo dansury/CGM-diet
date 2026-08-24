@@ -10,7 +10,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
 from src.analytics import activity as activity_mod
-from src.analytics import cgm_metrics, symptoms as symptoms_mod
+from src.analytics import cgm_metrics
+from src.analytics import symptoms as symptoms_mod
 from src.analytics.stats import KeyStats, aggregate
 from src.analytics.tags import normalize_name
 from src.analytics.windows import GlucosePoint, build_excursions
@@ -142,7 +143,7 @@ async def _send_stats(message: Message, *, window: str, key_type: str, edit: boo
         points = await repo.load_points(
             session, user, since=local_now(user) - timedelta(days=DEFAULT_PERIOD_DAYS)
         )
-        checkins = await repo.load_checkins(
+        checkins = await repo.load_checkin_likes(
             session, user, since=local_now(user) - timedelta(days=DEFAULT_PERIOD_DAYS)
         )
         meals = await repo.load_meal_likes(
@@ -155,12 +156,7 @@ async def _send_stats(message: Message, *, window: str, key_type: str, edit: boo
         blocks.append(format_cgm_summary(cgm_metrics.summarize(points), unit=unit))
     if checkins:
         contexts = symptoms_mod.build_context(
-            [
-                symptoms_mod.CheckinLike(at=c.at, score=c.score, symptoms=labels)
-                for c, labels in checkins
-            ],
-            points,
-            [(m.eaten_at, m.tags) for m in meals],
+            checkins, points, [(m.eaten_at, m.tags) for m in meals]
         )
         blocks.append(format_symptoms(symptoms_mod.aggregate_symptoms(contexts), unit=unit))
     blocks.append(format_recommendations(stats, unit=unit))
@@ -287,14 +283,7 @@ async def cmd_health(message: Message) -> None:
                 meals, points, window_1h=window_1h, window_2h=window_2h,
                 baseline_window=user.baseline_window,
             )
-            buckets = [
-                activity_mod.ActivityBucket(
-                    start_at=s.start_at,
-                    end_at=s.end_at or s.start_at + timedelta(minutes=15),
-                    steps=s.steps or 0,
-                )
-                for s in await repo.load_activity(session, user, since=since)
-            ]
+            buckets = await repo.load_activity_buckets(session, user, since=since)
             contrast_text = "\n\n" + format_activity(
                 activity_mod.contrast_by_activity(meals, excursions["1h"], buckets),
                 unit=user.glucose_unit,

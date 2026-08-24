@@ -10,8 +10,9 @@ from __future__ import annotations
 import csv
 import io
 import zipfile
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,8 +27,8 @@ from src.db.models import (
     Product,
     Symptom,
     User,
-    WellbeingCheckin,
     Weight,
+    WellbeingCheckin,
 )
 
 _TABLES: tuple[tuple[str, Any, tuple[str, ...]], ...] = (

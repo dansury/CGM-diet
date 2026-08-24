@@ -172,7 +172,7 @@ def summarize(points: list[GlucosePoint]) -> CGMSummary:
     ordered = sorted(points, key=lambda p: p.at)
     values = [p.value for p in ordered]
     if not values:
-        return CGMSummary(0, 0.0, 0.0, *([None] * 12))
+        return CGMSummary(0, 0.0, 0.0, *([None] * 13))
     span: timedelta = ordered[-1].at - ordered[0].at
     low, high = lbgi_hbgi(ordered)
     return CGMSummary(

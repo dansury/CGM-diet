@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import hmac
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any
 
@@ -49,7 +49,7 @@ def verify_token(tg_id: int, token: str, secret: str) -> bool:
 def _parse_stamp(raw: Any) -> datetime:
     if isinstance(raw, (int, float)):  # epoch millis or seconds
         seconds = raw / 1000.0 if raw > 1e11 else float(raw)
-        return datetime.fromtimestamp(seconds, tz=timezone.utc)
+        return datetime.fromtimestamp(seconds, tz=UTC)
     if not isinstance(raw, str) or not raw.strip():
         raise HealthSyncError("timestamp is required")
     text = raw.strip().replace("Z", "+00:00")
@@ -57,7 +57,7 @@ def _parse_stamp(raw: Any) -> datetime:
         stamp = datetime.fromisoformat(text)
     except ValueError as exc:
         raise HealthSyncError(f"bad timestamp: {raw}") from exc
-    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)
 
 
 def _int(value: Any) -> int | None:

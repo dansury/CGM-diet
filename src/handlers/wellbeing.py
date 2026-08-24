@@ -16,7 +16,7 @@ from aiogram.types import CallbackQuery, Message
 from src.db import repo
 from src.handlers.deps import local_now, session_scope, to_utc
 from src.handlers.states import WellbeingFlow
-from src.keyboards import main_menu, symptom_picker, wellbeing_score
+from src.keyboards import symptom_picker, wellbeing_score
 from src.vision import recognize
 
 router = Router(name="wellbeing")

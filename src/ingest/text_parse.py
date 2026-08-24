@@ -27,7 +27,7 @@ _GLUCOSE_RE = re.compile(
 _BARE_UNIT_RE = re.compile(rf"{_NUM}\s*{_UNIT}", re.IGNORECASE | re.UNICODE)
 
 _WEIGHT_RE = re.compile(
-    rf"(?:вес|весы|weight)\s*[:=\-—]?\s*(\d{{2,3}}(?:[.,]\d{{1,2}})?)\s*(?:кг|kg)?",
+    r"(?:вес|весы|weight)\s*[:=\-—]?\s*(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:кг|kg)?",
     re.IGNORECASE,
 )
 _WELLBEING_RE = re.compile(

@@ -6,12 +6,14 @@ handler needs several writes to land together. See `spec/data_model.md`.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.analytics.activity import ActivityBucket
+from src.analytics.symptoms import CheckinLike
 from src.analytics.tags import normalize_name
 from src.analytics.windows import GlucosePoint, MealLike
 from src.db.models import (
@@ -28,8 +30,8 @@ from src.db.models import (
     ProductPhoto,
     Symptom,
     User,
-    WellbeingCheckin,
     Weight,
+    WellbeingCheckin,
     utcnow,
 )
 from src.vision.schemas import GlucoseDraft, LabDraft, MealDraft, ProductDraft
@@ -150,6 +152,9 @@ async def save_meal(
             )
         )
     await session.flush()
+    # Populate `meal.items` eagerly: callers read totals straight after saving,
+    # and a lazy load outside the async context raises MissingGreenlet.
+    await session.refresh(meal, attribute_names=["items"])
     return meal
 
 
@@ -388,6 +393,32 @@ async def load_checkins(
 
 # ------------------------------------------------------------------ misc rows
 
+async def load_checkin_likes(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[CheckinLike]:
+    """Check-ins reshaped for analytics, with timestamps forced to UTC-aware.
+
+    SQLite hands back naive datetimes; the analytics layer compares them against
+    tz-aware glucose points, so the conversion has to happen at the boundary.
+    """
+    return [
+        CheckinLike(at=_aware(c.at), score=c.score, symptoms=labels)
+        for c, labels in await load_checkins(session, user, since=since)
+    ]
+
+
+async def load_activity_buckets(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[ActivityBucket]:
+    """Step samples reshaped for `analytics.activity`, timestamps UTC-aware."""
+    out: list[ActivityBucket] = []
+    for sample in await load_activity(session, user, since=since):
+        start = _aware(sample.start_at)
+        end = _aware(sample.end_at) if sample.end_at else start + timedelta(minutes=15)
+        out.append(ActivityBucket(start_at=start, end_at=end, steps=sample.steps or 0))
+    return out
+
+
 async def save_weight(
     session: AsyncSession, user: User, *, measured_at: datetime, weight_kg: float
 ) -> Weight:
@@ -545,7 +576,7 @@ async def delete_user_data(session: AsyncSession, user: User, *, drop_user: bool
 
 def _aware(value: datetime) -> datetime:
     """SQLite hands back naive datetimes; the analytics layer needs tz-aware."""
-    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 async def counts(session: AsyncSession, user: User) -> dict[str, int]:
@@ -581,6 +612,8 @@ __all__ = [
     "get_user",
     "list_symptoms",
     "load_activity",
+    "load_activity_buckets",
+    "load_checkin_likes",
     "load_checkins",
     "load_glucose",
     "load_meal_likes",

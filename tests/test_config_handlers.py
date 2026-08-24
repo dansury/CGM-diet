@@ -84,7 +84,8 @@ def test_manual_edit_rescales_nutrients_to_the_new_portion():
     assert rice.tags == ["white_rice"]  # tags survive the correction
     chicken = next(i for i in new.items if i.name == "курица")
     assert chicken.portion_g == 120
-    assert new.notes == "учтена ваша правка"
+    assert chicken.kcal  # добавленная позиция получает числа, а не нули
+    assert new.notes.startswith("учтена ваша правка")
 
 
 def test_router_tree_builds():

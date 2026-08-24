@@ -16,6 +16,7 @@ import re
 from dataclasses import dataclass, field
 
 from src.analytics.tags import infer_tags, normalize_name
+from src.ingest.nutrition import fill_meal
 from src.vision.schemas import ItemDraft, MealDraft
 
 NUTRIENTS = ("kcal", "protein_g", "fat_g", "carbs_g", "fiber_g")
@@ -141,6 +142,7 @@ def _clone(draft: MealDraft) -> MealDraft:
                 carbs_g=i.carbs_g,
                 fiber_g=i.fiber_g,
                 tags=list(i.tags or []),
+                estimated=i.estimated,
             )
             for i in draft.items
         ],
@@ -259,6 +261,9 @@ def apply_meal_correction(draft: MealDraft, instruction: str) -> CorrectionResul
             result.draft.title = result.draft.title or "Приём пищи"
         elif not result.draft.title:
             result.draft.title = result.draft.items[0].name
+        # A newly added item arrives as a bare name + portion: give it numbers,
+        # otherwise the correction would zero out the meal's totals.
+        fill_meal(result.draft)
     return result
 
 

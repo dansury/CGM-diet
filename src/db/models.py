@@ -236,8 +236,9 @@ class Medication(Base, TimestampMixin):
 class DictionaryEntry(Base, TimestampMixin):
     """Personal shortcut list: what this user records over and over.
 
-    Meals earn a place on the *second* sighting, medications on the first —
-    a drug the user photographed once is one they take on a schedule.
+    Meals and their items earn a place on the *second* sighting; a package, a
+    medication and a symptom on the first — a drug photographed once is one the
+    user takes on a schedule. Every list rotates: last entered, first shown.
     See `spec/dictionary.md`.
     """
 
@@ -251,7 +252,8 @@ class DictionaryEntry(Base, TimestampMixin):
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # meal|item|medication
+    # meal|item|product|medication|symptom — все именованные сущности, см. spec
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
     key_norm: Mapped[str] = mapped_column(String(128), nullable=False)
     label: Mapped[str] = mapped_column(String(128), nullable=False)
     payload: Mapped[dict | None] = mapped_column(JSON)

@@ -34,6 +34,7 @@ COMMANDS = [
     BotCommand(command="health", description="Подключить Samsung Health"),
     BotCommand(command="export", description="Выгрузить данные (CSV)"),
     BotCommand(command="delete", description="Удалить все данные"),
+    BotCommand(command="cancel", description="Отменить текущий ввод"),
     BotCommand(command="settings", description="Настройки"),
     BotCommand(command="help", description="Справка"),
 ]

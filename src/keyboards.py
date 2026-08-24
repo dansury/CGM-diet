@@ -17,6 +17,23 @@ from aiogram.types import (
 
 from src.analytics.tags import tag_label
 
+CANCEL_DATA = "x:cancel"
+CANCEL_TEXT = "❌ Отменить"
+
+
+def cancel_button() -> InlineKeyboardButton:
+    """Единый крестик: отменяет любой ввод, на какой бы стадии он ни был.
+
+    Одна и та же кнопка на всех карточках и во всех подсказках — человек не
+    должен вспоминать, как называется отмена именно здесь.
+    """
+    return InlineKeyboardButton(text=CANCEL_TEXT, callback_data=CANCEL_DATA)
+
+
+def cancel_only() -> InlineKeyboardMarkup:
+    """Клавиатура для приглашений «напишите текстом» — только отмена."""
+    return InlineKeyboardMarkup(inline_keyboard=[[cancel_button()]])
+
 
 def main_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
@@ -42,7 +59,7 @@ def confirm_meal() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="✏️ БЖУ", callback_data="meal:macros"),
                 InlineKeyboardButton(text="🕒 Другое время", callback_data="meal:time"),
             ],
-            [InlineKeyboardButton(text="🗑 Отменить", callback_data="meal:drop")],
+            [cancel_button()],
             [InlineKeyboardButton(text="🤖 Это не еда", callback_data="photo:reroute")],
         ]
     )
@@ -57,7 +74,7 @@ def confirm_glucose() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="🔁 Сменить единицы", callback_data="glu:unit"),
-                InlineKeyboardButton(text="🗑 Отменить", callback_data="glu:drop"),
+                cancel_button(),
             ],
         ]
     )
@@ -70,7 +87,7 @@ def confirm_labs() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="✅ Подтвердить", callback_data="lab:ok"),
                 InlineKeyboardButton(text="✏️ Скорректировать", callback_data="lab:edit"),
             ],
-            [InlineKeyboardButton(text="🗑 Отменить", callback_data="lab:drop")],
+            [cancel_button()],
         ]
     )
 
@@ -84,7 +101,7 @@ def confirm_medication() -> InlineKeyboardMarkup:
             ],
             [
                 InlineKeyboardButton(text="🕒 Другое время", callback_data="med:time"),
-                InlineKeyboardButton(text="🗑 Отменить", callback_data="med:drop"),
+                cancel_button(),
             ],
             [InlineKeyboardButton(text="🤖 Это не лекарство", callback_data="photo:reroute")],
         ]
@@ -114,7 +131,7 @@ def product_actions(*, mode: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="✏️ Скорректировать", callback_data="prod:edit"),
         ]
     )
-    rows.append([InlineKeyboardButton(text="🗑 Отменить", callback_data="prod:drop")])
+    rows.append([cancel_button()])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -132,7 +149,22 @@ def health_setup(*, step: str = "menu") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-KIND_ICONS = {"meal": "🍽", "item": "🥄", "medication": "💊"}
+KIND_ICONS = {
+    "meal": "🍽",
+    "item": "🥄",
+    "product": "🛒",
+    "medication": "💊",
+    "symptom": "🙂",
+}
+
+#: разделы словаря в том порядке, в каком они листаются в `/my`.
+KIND_TABS: tuple[tuple[str, str], ...] = (
+    ("meal", "🍽 Блюда"),
+    ("item", "🥄 Продукты"),
+    ("product", "🛒 Упаковки"),
+    ("medication", "💊 Лекарства"),
+    ("symptom", "🙂 Самочувствие"),
+)
 
 
 def dictionary_suggestions(entries: list[tuple[int, str, str]]) -> InlineKeyboardMarkup:
@@ -150,7 +182,12 @@ def dictionary_suggestions(entries: list[tuple[int, str, str]]) -> InlineKeyboar
         ]
         for entry_id, kind, label in entries
     ]
-    rows.append([InlineKeyboardButton(text="➕ Разобрать как новое", callback_data="dict:new")])
+    rows.append(
+        [
+            InlineKeyboardButton(text="➕ Разобрать как новое", callback_data="dict:new"),
+            cancel_button(),
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -168,17 +205,15 @@ def dictionary_page(
         ]
         for entry_id, k, label in entries
     ]
-    switch = [
+    tabs = [
         InlineKeyboardButton(
-            text="🍽 Блюда" if kind != "meal" else "• 🍽 Блюда",
-            callback_data="dict:page:meal:0",
-        ),
-        InlineKeyboardButton(
-            text="💊 Лекарства" if kind != "medication" else "• 💊 Лекарства",
-            callback_data="dict:page:medication:0",
-        ),
+            text=title if tab != kind else f"• {title}",
+            callback_data=f"dict:page:{tab}:0",
+        )
+        for tab, title in KIND_TABS
     ]
-    rows.append(switch)
+    for start in range(0, len(tabs), 2):
+        rows.append(tabs[start : start + 2])
     rows.append(
         [
             InlineKeyboardButton(
@@ -211,7 +246,7 @@ def photo_kind() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🧪 Анализы", callback_data="kind:lab_report"),
             ],
             [InlineKeyboardButton(text="💊 Лекарство", callback_data="kind:medication")],
-            [InlineKeyboardButton(text="🗑 Отменить", callback_data="kind:drop")],
+            [cancel_button()],
         ]
     )
 
@@ -225,6 +260,7 @@ def wellbeing_score() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=labels[3], callback_data="wb:score:3")],
             [InlineKeyboardButton(text=labels[2], callback_data="wb:score:2")],
             [InlineKeyboardButton(text=labels[1], callback_data="wb:score:1")],
+            [cancel_button()],
         ]
     )
 
@@ -251,7 +287,12 @@ def symptom_picker(
             InlineKeyboardButton(text="🎤 Голосом", callback_data="wb:voice"),
         ]
     )
-    rows.append([InlineKeyboardButton(text="✅ Готово", callback_data="wb:done")])
+    rows.append(
+        [
+            InlineKeyboardButton(text="✅ Готово", callback_data="wb:done"),
+            cancel_button(),
+        ]
+    )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -288,7 +329,12 @@ def tag_button_label(tag: str) -> str:
 
 
 __all__ = [
+    "CANCEL_DATA",
+    "CANCEL_TEXT",
     "KIND_ICONS",
+    "KIND_TABS",
+    "cancel_button",
+    "cancel_only",
     "confirm_delete",
     "confirm_glucose",
     "confirm_labs",

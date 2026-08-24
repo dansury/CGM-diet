@@ -21,6 +21,7 @@ from src.handlers.views import DRAFT_KEY, EATEN_AT_KEY, FILES_KEY
 from src.ingest.correction import apply_meal_correction
 from src.ingest.nutrition import Remembered
 from src.ingest.units import MGDL, MMOL, format_value
+from src.keyboards import cancel_only
 from src.logging_setup import get_logger
 from src.reporting import format_remembered_label
 from src.vision import recognize
@@ -108,7 +109,8 @@ async def meal_edit(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.answer(
         "Напишите, что поправить — например:\n"
         "<code>гречка 250, курица 100, салат 150</code>\n"
-        "Формат: продукт и граммы через запятую."
+        "Формат: продукт и граммы через запятую.",
+        reply_markup=cancel_only(),
     )
 
 
@@ -189,7 +191,7 @@ async def meal_macros(callback: CallbackQuery, state: FSMContext) -> None:
     """«✏️ БЖУ» — отдельный вход для чисел: карточка не пересобирается."""
     await state.set_state(MealFlow.editing_macros)
     await callback.answer()
-    await callback.message.answer(MACROS_PROMPT)
+    await callback.message.answer(MACROS_PROMPT, reply_markup=cancel_only())
 
 
 @router.message(MealFlow.editing_macros)
@@ -227,7 +229,10 @@ async def meal_apply_macros(
 async def meal_time(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(MealFlow.retiming)
     await callback.answer()
-    await callback.message.answer("Во сколько это было? Например <code>13:40</code> или «вчера в 21:00».")
+    await callback.message.answer(
+        "Во сколько это было? Например <code>13:40</code> или «вчера в 21:00».",
+        reply_markup=cancel_only(),
+    )
 
 
 @router.message(MealFlow.retiming)
@@ -319,7 +324,8 @@ async def glucose_edit(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await callback.message.answer(
         "Напишите правильные значения: <code>8.2 в 9:15</code> "
-        "(можно несколько строк)."
+        "(можно несколько строк).",
+        reply_markup=cancel_only(),
     )
 
 
@@ -425,7 +431,8 @@ async def product_more(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(ProductFlow.awaiting_second_side)
     await callback.answer()
     await callback.message.answer(
-        "Пришлите фото второй стороны упаковки (состав и пищевая ценность) — объединю."
+        "Пришлите фото второй стороны упаковки (состав и пищевая ценность) — объединю.",
+        reply_markup=cancel_only(),
     )
 
 
@@ -433,7 +440,7 @@ async def product_more(callback: CallbackQuery, state: FSMContext) -> None:
 async def product_macros(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(ProductFlow.editing_macros)
     await callback.answer()
-    await callback.message.answer(PRODUCT_MACROS_PROMPT)
+    await callback.message.answer(PRODUCT_MACROS_PROMPT, reply_markup=cancel_only())
 
 
 @router.message(ProductFlow.editing_macros)
@@ -495,7 +502,8 @@ async def product_edit(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await callback.message.answer(
         "Напишите или наговорите, что поправить на карточке:\n"
-        "<code>это творог 5%</code> · <code>углеводы 12</code> · <code>ккал 86</code>"
+        "<code>это творог 5%</code> · <code>углеводы 12</code> · <code>ккал 86</code>",
+        reply_markup=cancel_only(),
     )
 
 
@@ -648,7 +656,8 @@ async def lab_edit(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await callback.message.answer(
         "Напишите или наговорите правильные значения — маркер и число:\n"
-        "<code>глюкоза 6.1, HbA1c 5.8</code>"
+        "<code>глюкоза 6.1, HbA1c 5.8</code>",
+        reply_markup=cancel_only(),
     )
 
 

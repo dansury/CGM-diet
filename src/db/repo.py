@@ -47,6 +47,7 @@ from src.vision.schemas import (
     MedicationDraft,
     ProductDraft,
     meal_to_dict,
+    product_to_dict,
 )
 
 # Seeded symptom glossary — the starting buttons before the user's own
@@ -323,6 +324,15 @@ async def save_product(
     for media_id, side in media_ids:
         session.add(ProductPhoto(product_id=product.id, media_id=media_id, side=side))
     await session.flush()
+    # Упаковка, прочитанная один раз, — уже кнопка: людям свойственно покупать
+    # одно и то же (`spec/dictionary.md`).
+    await bump_dictionary(
+        session,
+        user,
+        kind="product",
+        label=product_item_name(draft),
+        payload=product_to_dict(draft),
+    )
     return product
 
 
@@ -335,11 +345,16 @@ async def seed_symptoms(session: AsyncSession, user: User) -> None:
 
 
 async def list_symptoms(session: AsyncSession, user: User, *, limit: int = 12) -> list[Symptom]:
-    """Glossary buttons: the user's most-used symptoms first."""
+    """Glossary buttons, rotated: the symptom named last comes first.
+
+    A symptom the user has just typed under «➕ Другое» is the one they are
+    most likely to tap again, so it heads the list before it has any hits;
+    seeded rows that were never used keep their original order behind it.
+    """
     stmt = (
         select(Symptom)
         .where(Symptom.user_id == user.id, Symptom.is_active.is_(True))
-        .order_by(Symptom.hits.desc(), Symptom.id)
+        .order_by(*_rotation(Symptom.last_used_at, Symptom.hits, Symptom.id))
         .limit(limit)
     )
     return list(await session.scalars(stmt))
@@ -359,10 +374,29 @@ async def upsert_symptom(session: AsyncSession, user: User, label: str) -> Sympt
     existing = await session.scalars(select(Symptom).where(Symptom.user_id == user.id))
     for symptom in existing:
         if normalize_name(symptom.label) == norm or symptom.slug == norm.replace(" ", "_"):
+            # Названное сейчас — последнее: ротация поднимает его к первой кнопке.
+            symptom.last_used_at = utcnow()
+            await session.flush()
+            await bump_dictionary(
+                session,
+                user,
+                kind="symptom",
+                label=symptom.label,
+                payload={"slug": symptom.slug},
+            )
             return symptom
-    found = Symptom(user_id=user.id, slug=norm.replace(" ", "_")[:64], label=label.strip()[:128])
+    found = Symptom(
+        user_id=user.id,
+        slug=norm.replace(" ", "_")[:64],
+        label=label.strip()[:128],
+        # just named by hand — it must open the picker, not wait for its hits
+        last_used_at=utcnow(),
+    )
     session.add(found)
     await session.flush()
+    await bump_dictionary(
+        session, user, kind="symptom", label=found.label, payload={"slug": found.slug}
+    )
     return found
 
 
@@ -387,6 +421,7 @@ async def save_checkin(
         symptom.hits += 1
         symptom.last_used_at = utcnow()
         session.add(CheckinSymptom(checkin_id=checkin.id, symptom_id=symptom.id))
+        # словарную запись симптома ведёт `upsert_symptom` — она одна на все пути
     await session.flush()
     return checkin
 
@@ -547,10 +582,17 @@ async def load_medication_likes(
 
 #: how many sightings a kind needs before it is offered as a shortcut.
 #: Meals must be seen twice ("блюда, которые встретились более 1 раза");
-#: a medication photographed once is already a routine.
-MIN_HITS: dict[str, int] = {"meal": 2, "item": 2, "medication": 1}
+#: a medication, a package or a symptom named once is already a routine.
+MIN_HITS: dict[str, int] = {
+    "meal": 2,
+    "item": 2,
+    "product": 1,
+    "medication": 1,
+    "symptom": 1,
+}
 
-DICTIONARY_KINDS: tuple[str, ...] = ("meal", "item", "medication")
+#: every named entity the user can repeat lives in the dictionary.
+DICTIONARY_KINDS: tuple[str, ...] = ("meal", "item", "product", "medication", "symptom")
 
 
 async def bump_dictionary(
@@ -605,11 +647,29 @@ def _visible(kind_column: Any = DictionaryEntry.kind) -> Any:
     return DictionaryEntry.hits >= case(MIN_HITS, value=kind_column, else_=1)
 
 
+def _rotation(last_used: Any, hits: Any, ident: Any) -> tuple[Any, ...]:
+    """Rotation: the most recent entry first, whatever its counter says.
+
+    Every dictionary rotates the same way — what the user has just entered is
+    what they are most likely to enter again, so it heads the list. Rows never
+    used yet keep their original order (hits, then id) behind the rotated ones;
+    `NULLS LAST` is spelled out with `case` because SQLite only learned the
+    clause in 3.30.
+    """
+    from sqlalchemy import case
+
+    return (
+        case((last_used.is_(None), 1), else_=0),
+        last_used.desc(),
+        hits.desc(),
+        ident,
+    )
+
+
 def _order() -> tuple[Any, ...]:
     return (
         DictionaryEntry.pinned.desc(),
-        DictionaryEntry.hits.desc(),
-        DictionaryEntry.last_used_at.desc(),
+        *_rotation(DictionaryEntry.last_used_at, DictionaryEntry.hits, DictionaryEntry.id),
     )
 
 
@@ -693,7 +753,15 @@ async def remember_meal(session: AsyncSession, user: User, draft: MealDraft) -> 
     if title:
         await bump_dictionary(session, user, kind="meal", label=title, payload=meal_to_dict(draft))
     for item in draft.items:
-        await bump_dictionary(session, user, kind="item", label=item.name)
+        # payload — то же блюдо из одной позиции: кнопка «🥄 овсянка» должна
+        # открывать карточку, а не просить описать порцию заново.
+        await bump_dictionary(
+            session,
+            user,
+            kind="item",
+            label=item.name,
+            payload=meal_to_dict(MealDraft(title=item.name, items=[item], source="dictionary")),
+        )
 
 
 # ------------------------------------------------------------------ nutrition memory

@@ -15,7 +15,7 @@ from aiogram.types import CallbackQuery, Message
 
 from src.db import repo
 from src.handlers.deps import local_now, session_scope, to_utc
-from src.keyboards import dictionary_page, dictionary_suggestions, main_menu
+from src.keyboards import KIND_TABS, dictionary_page, dictionary_suggestions, main_menu
 from src.logging_setup import get_logger
 from src.vision.schemas import MealDraft, meal_from_dict
 
@@ -28,10 +28,14 @@ MIN_PREFIX = 2
 
 EMPTY_TEXT = (
     "⭐️ <b>Личный словарь</b>\n\n"
-    "Пока пусто. Блюдо попадает сюда, когда встречается <b>во второй раз</b>, "
-    "а лекарство — сразу после первого фото упаковки.\n"
+    "Пока пусто. Блюдо и его составляющие попадают сюда, когда встречаются "
+    "<b>во второй раз</b>, а упаковка, лекарство и симптом — сразу после "
+    "первой записи.\n"
     "Дальше запись делается одной кнопкой, без фото и подтверждения."
 )
+
+#: подписи разделов берём из клавиатуры — один список на всё приложение.
+KIND_TITLES: dict[str, str] = dict(KIND_TABS)
 
 
 def _rows(entries: list) -> list[tuple[int, str, str]]:
@@ -52,12 +56,18 @@ async def _render(message: Message, *, kind: str, mode: str, offset: int, edit: 
         )
         rows = _rows(entries)
     if not rows and offset == 0:
-        title = "🍽 блюда" if kind == "meal" else "💊 лекарства"
+        title = KIND_TITLES.get(kind, kind)
         text = f"{EMPTY_TEXT}\n\nРаздел «{title}» пока пуст."
     else:
         text = (
-            "⭐️ <b>Личный словарь</b>\n\n"
-            + ("Нажмите, чтобы записать это ещё раз." if mode == "use" else "Нажмите, чтобы убрать запись.")
+            "⭐️ <b>Личный словарь</b> · "
+            + KIND_TITLES.get(kind, kind)
+            + "\nСверху — то, что вы записывали последним.\n\n"
+            + (
+                "Нажмите, чтобы записать это ещё раз."
+                if mode == "use"
+                else "Нажмите, чтобы убрать запись."
+            )
         )
     markup = dictionary_page(rows, kind=kind, mode=mode, offset=offset)
     if edit:
@@ -127,8 +137,14 @@ async def on_new(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data.startswith("dict:use:"))
 async def on_use(callback: CallbackQuery, state: FSMContext) -> None:
-    """One tap: a meal reopens as a draft card, a medication is logged now."""
+    """One tap, per kind.
+
+    Еда и её составляющие — карточка подтверждения из `payload` (модель не
+    зовётся); упаковка — та же карточка продукта; лекарство — приём «сейчас»;
+    самочувствие — опрос с уже отмеченным симптомом.
+    """
     entry_id = int(callback.data.rsplit(":", 1)[1])
+    symptom_id: int | None = None
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, callback.from_user.id)
         entry = await repo.get_dictionary_entry(session, user, entry_id)
@@ -137,6 +153,8 @@ async def on_use(callback: CallbackQuery, state: FSMContext) -> None:
             return
         kind, label, payload = entry.kind, entry.label, dict(entry.payload or {})
         await repo.touch_dictionary(session, entry)
+        if kind == "symptom":
+            symptom_id = (await repo.upsert_symptom(session, user, label)).id
         if kind == "medication":
             taken_local = local_now(user)
             row = await repo.save_medication(
@@ -159,6 +177,39 @@ async def on_use(callback: CallbackQuery, state: FSMContext) -> None:
 
     await callback.answer()
     from src.handlers import views
+
+    if kind == "symptom":
+        # Симптом без оценки не запись: спрашиваем 1–5 и сохраняем как обычный
+        # чек-ин (`spec/wellbeing.md`), симптом уже отмечен.
+        from src.handlers.states import WellbeingFlow
+        from src.handlers.wellbeing import ASK_SCORE, EXTRA_KEY, NOTE_KEY, SELECTED_KEY
+        from src.keyboards import wellbeing_score
+
+        await state.set_state(WellbeingFlow.scoring)
+        await state.update_data(
+            {
+                SELECTED_KEY: [symptom_id] if symptom_id else [],
+                EXTRA_KEY: [] if symptom_id else [label],
+                NOTE_KEY: None,
+            }
+        )
+        await callback.message.answer(
+            f"🙂 <b>{label}</b>\n{ASK_SCORE}", reply_markup=wellbeing_score()
+        )
+        return
+
+    if kind == "product":
+        from src.vision.schemas import product_from_dict
+
+        if not payload:
+            await callback.message.answer(
+                f"«{label}» — состав не сохранён, пришлите фото этикетки ещё раз."
+            )
+            return
+        await views.show_product_draft(
+            callback.message, state, product_from_dict(payload), mode="eaten"
+        )
+        return
 
     draft = meal_from_dict(payload) if payload.get("items") else MealDraft(title=label)
     draft.source = "dictionary"

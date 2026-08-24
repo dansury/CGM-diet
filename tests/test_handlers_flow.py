@@ -8,6 +8,7 @@ transitions and the DB writes they cause.
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -17,10 +18,11 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 from src.config import load_settings
 from src.db import repo
-from src.handlers import confirm, intake, reports, wellbeing
+from src.handlers import common, confirm, dictionary, intake, reports, wellbeing
 from src.handlers.states import MealFlow, ProductFlow, WellbeingFlow
 
 TG_ID = 424242
+NOW = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 
 
 @dataclass
@@ -609,3 +611,60 @@ async def test_a_meal_without_macros_still_goes_through_the_model_unchanged(
     assert not any("Запомнил" in t for t in message.texts)
     user = await repo.get_user(session, TG_ID)
     assert await repo.load_nutrition_memory(session, user) == {}
+
+
+# ------------------------------------------------------------------ отмена
+
+async def test_the_cross_cancels_a_meal_card_without_saving(engine, session, state):
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    assert await state.get_state() == MealFlow.confirming.state
+
+    card = FakeMessage()
+    await common.on_cancel(FakeCallback(data="x:cancel", message=card), state)
+
+    assert await state.get_state() is None
+    assert any("Отменено" in t for t in card.texts)
+    user = await repo.get_user(session, TG_ID)
+    assert (await repo.counts(session, user))["meals"] == 0
+
+
+async def test_the_cross_cancels_the_wellbeing_survey(engine, session, state):
+    await wellbeing.cmd_wellbeing(FakeMessage(), state)
+    await wellbeing.on_score(FakeCallback(data="wb:score:2", message=FakeMessage()), state)
+    await common.on_cancel(FakeCallback(data="x:cancel", message=FakeMessage()), state)
+
+    assert await state.get_state() is None
+    user = await repo.get_user(session, TG_ID)
+    assert await repo.load_checkin_likes(session, user) == []
+
+
+# ------------------------------------------------------------------ ротация
+
+async def test_a_typed_symptom_heads_the_buttons_and_is_already_ticked(
+    engine, session, state
+):
+    await wellbeing.cmd_wellbeing(FakeMessage(), state)
+    await wellbeing.on_score(FakeCallback(data="wb:score:2", message=FakeMessage()), state)
+    await wellbeing.on_other(FakeCallback(data="wb:other", message=FakeMessage()), state)
+    await wellbeing.on_free_text(FakeMessage(text="кружится голова"), state)
+
+    user = await repo.get_user(session, TG_ID)
+    buttons = await repo.list_symptoms(session, user)
+    # мок-экстрактор возвращает сонливость + потливость — они и есть последний ввод
+    assert {s.label for s in buttons[:2]} == {"сонливость", "потливость"}
+    data = await state.get_data()
+    assert set(data["wb_selected"]) == {buttons[0].id, buttons[1].id}
+
+
+async def test_a_symptom_button_in_the_dictionary_opens_the_survey(engine, session, state):
+    user = await repo.get_or_create_user(session, TG_ID)
+    await repo.save_checkin(session, user, at=NOW, score=2, symptom_labels=["жажда"])
+    entry = (await repo.list_dictionary(session, user, kind="symptom"))[0]
+
+    card = FakeMessage()
+    await dictionary.on_use(FakeCallback(data=f"dict:use:{entry.id}", message=card), state)
+
+    assert await state.get_state() == WellbeingFlow.scoring.state
+    assert any("жажда" in t for t in card.texts)
+    data = await state.get_data()
+    assert data["wb_selected"]

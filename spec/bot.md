@@ -5,7 +5,7 @@
 `BOT_MODE=polling` (по умолчанию) → `dispatcher.start_polling`.
 `BOT_MODE=webhook` → uvicorn с `src.web.app:create_app`.
 `build_bot(settings)` — `ParseMode.HTML` по умолчанию.
-`COMMANDS` — 13 команд, регистрируются в меню Telegram при старте.
+`COMMANDS` — 14 команд, регистрируются в меню Telegram при старте.
 `prepare_runtime(bot, settings)` до первого апдейта (и в polling, и в webhook):
 `wire_error_reporter` → `load_active_models` → каталог свободных моделей.
 Каждый шаг деградирует молча — ни один не мешает боту стартовать.
@@ -15,10 +15,11 @@
 | Команда | Что делает | Файл |
 |---|---|---|
 | `/start` | регистрация, согласие, онбординг | `handlers/common.py` |
-| `/my` | личный словарь: запись одной кнопкой | `handlers/dictionary.py` |
+| `/my` | личный словарь всех сущностей: запись одной кнопкой | `handlers/dictionary.py` |
 | `/meds` | журнал лекарств + справка по побочкам | `handlers/meds.py` |
 | `/help` | подробная справка | `handlers/common.py` |
 | `/menu` | вернуть клавиатуру | `handlers/common.py` |
+| `/cancel` | отменить текущий ввод (то же, что `❌`) | `handlers/common.py` |
 | `/settings`, `/set` | пояс, единицы, окна, базовая линия | `handlers/common.py` |
 | `/eat`, `/sugar`, `/check` | явные режимы ввода | `handlers/intake.py` |
 | `/wellbeing` | опрос самочувствия | `handlers/wellbeing.py` |
@@ -36,11 +37,21 @@ Reply-меню: `🍽 Записать еду`, `🩸 Записать саха�
 `🙂 Самочувствие`, `📊 Статистика`, `📈 График`, `⭐️ Мой словарь`, `💊 Лекарства`.
 
 На каждой карточке распознавания — расшифровка текстом и кнопки
-`✅ Подтвердить`, `✏️ Скорректировать`, `✏️ БЖУ` (правку принимаем текстом
+`✅ Подтвердить`, `✏️ Скорректировать`, `✏️ БЖУ`, `❌ Отменить` (правку принимаем текстом
 **и голосом**). `✏️ БЖУ` — отдельный вход только для чисел: на карточке еды
 (`meal:macros`) числа на съеденную порцию, на карточке продукта
 (`prod:macros`) — на 100 г с этикетки. Введённые числа запоминаются за
 блюдом (`spec/dictionary.md` § Память БЖУ).
+
+### Отмена
+
+`❌ Отменить` — одна кнопка на все вводы: карточки еды, сахара, анализов,
+лекарства, продукта, выбор типа фото, опрос самочувствия, подсказки словаря и
+каждое приглашение «напишите текстом» (`keyboards.cancel_button`,
+`keyboards.cancel_only`). Callback один — `x:cancel`, обработчик один —
+`common.on_cancel`: `state.clear()` и «❌ Отменено. Ничего не записал.»
+Черновик живёт в FSM, поэтому отмена ничего не пишет в дневник и ничего не
+спрашивает. То же самое текстом — `/cancel`.
 
 `/health` — карточка Samsung Health с кнопками `📲 Как подключить`,
 `🔑 Мои ключи`, `📦 Приложение-мост` (`hs:how|keys|app|menu`), инструкция
@@ -54,6 +65,7 @@ prod:eat|save|more|macros|drop  lab:ok|drop
 kind:food|glucose_screen|food_label|lab_report|medication|drop   photo:reroute
 med:ok|edit|time|drop         prod:edit   lab:edit
 dict:use:<id>|rm:<id>|new|page:<kind>:<n>|mode:<kind>:<use|del>|close
+x:cancel                       # общий крестик на всех клавиатурах
 mdl:lvl:<global|slot|free> | mdl:slot:<slot> | mdl:set:<target>:<idx> | mdl:close
 wb:score:<1..5> | wb:sym:<id> | wb:other | wb:voice | wb:done
 stats:w:<1h|2h> | stats:k:<tag|item> | stats:chart

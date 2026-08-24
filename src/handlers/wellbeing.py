@@ -2,8 +2,9 @@
 
 The glossary is dynamic (`spec/wellbeing.md`): it starts from a seeded list and
 re-orders itself by how often each user actually taps a symptom; anything typed
-or spoken that is not in the list is added to *that user's* glossary and becomes
-a button next time. Score 5 short-circuits — feeling fine needs no symptom list.
+or spoken that is not in the list is added to *that user's* glossary, is marked
+as chosen straight away and heads the buttons next time — the glossary rotates,
+newest first. Score 5 short-circuits — feeling fine needs no symptom list.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from aiogram.types import CallbackQuery, Message
 from src.db import repo
 from src.handlers.deps import local_now, session_scope, to_utc
 from src.handlers.states import WellbeingFlow
-from src.keyboards import symptom_picker, wellbeing_score
+from src.keyboards import cancel_only, symptom_picker, wellbeing_score
 from src.vision import recognize
 
 router = Router(name="wellbeing")
@@ -42,9 +43,20 @@ async def on_score(callback: CallbackQuery, state: FSMContext) -> None:
     score = int(callback.data.rsplit(":", 1)[1])
     await callback.answer()
     if score >= 5:
-        await _save(callback.from_user.id, state, score=score)
+        # Оценка 5 закрывает диалог сразу, но уже отмеченное (например, симптом,
+        # нажатый в словаре) не теряется.
+        labels = await _selected_labels(callback.from_user.id, state)
+        data = await state.get_data()
+        await _save(
+            callback.from_user.id,
+            state,
+            score=score,
+            labels=labels,
+            note=data.get(NOTE_KEY),
+        )
         await state.clear()
-        await callback.message.edit_text("✅ Записал: самочувствие 5/5. Отлично!")
+        body = f" · {', '.join(labels)}" if labels else ""
+        await callback.message.edit_text(f"✅ Записал: самочувствие 5/5{body}. Отлично!")
         return
     await state.set_state(WellbeingFlow.picking)
     await state.update_data({SCORE_KEY: score})
@@ -83,7 +95,8 @@ async def on_other(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(WellbeingFlow.free_text)
     await callback.answer()
     await callback.message.answer(
-        "Напишите или наговорите, что чувствуете — добавлю в ваш список симптомов."
+        "Напишите или наговорите, что чувствуете — добавлю в ваш список симптомов.",
+        reply_markup=cancel_only(),
     )
 
 
@@ -91,7 +104,9 @@ async def on_other(callback: CallbackQuery, state: FSMContext) -> None:
 async def on_voice_prompt(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(WellbeingFlow.free_text)
     await callback.answer()
-    await callback.message.answer("🎤 Запишите голосовое — расшифрую и разберу.")
+    await callback.message.answer(
+        "🎤 Запишите голосовое — расшифрую и разберу.", reply_markup=cancel_only()
+    )
 
 
 @router.message(WellbeingFlow.free_text)
@@ -113,7 +128,15 @@ async def handle_free_text(message: Message, state: FSMContext, text: str) -> No
     for label in labels:
         if label not in extra:
             extra.append(label)
-    updates = {EXTRA_KEY: extra, NOTE_KEY: note or text}
+    # Названное руками сразу попадает в глоссарий и становится отмеченной
+    # кнопкой на первом месте: человек уже сказал это — переспрашивать нечего.
+    selected = set(data.get(SELECTED_KEY) or [])
+    selected.update(await _remember_labels(message.chat.id, labels))
+    updates = {
+        EXTRA_KEY: extra,
+        NOTE_KEY: note or text,
+        SELECTED_KEY: sorted(selected),
+    }
     if score is not None and data.get(SCORE_KEY) is None:
         updates[SCORE_KEY] = score
     await state.update_data(updates)
@@ -131,6 +154,19 @@ async def handle_free_text(message: Message, state: FSMContext, text: str) -> No
         "Добавил: " + (", ".join(labels) if labels else text) + "\nЕщё что-то?",
         reply_markup=keyboard,
     )
+
+
+async def _remember_labels(tg_id: int, labels: list[str]) -> list[int]:
+    """Store typed/spoken symptoms in the glossary; return their ids.
+
+    `upsert_symptom` stamps `last_used_at`, so `list_symptoms` — rotated,
+    newest first (`spec/wellbeing.md`) — puts them at the head of the picker.
+    """
+    if not labels:
+        return []
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, tg_id)
+        return [(await repo.upsert_symptom(session, user, label)).id for label in labels]
 
 
 @router.callback_query(F.data == "wb:done", WellbeingFlow.picking)

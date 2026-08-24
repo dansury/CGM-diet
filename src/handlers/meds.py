@@ -18,6 +18,7 @@ from src.db import repo
 from src.handlers.deps import local_now, session_scope, to_local, to_utc
 from src.handlers.states import MedicationFlow
 from src.handlers.views import DRAFT_KEY, FILES_KEY, TAKEN_AT_KEY, show_medication_draft
+from src.keyboards import cancel_only
 from src.logging_setup import get_logger
 from src.meds.side_effects import match_symptoms
 from src.reporting import format_med_side_effects, format_medications
@@ -99,7 +100,8 @@ async def med_edit(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await callback.message.answer(
         "Напишите или наговорите, что поправить — например:\n"
-        "<code>метформин 1000</code> · <code>это конкор</code> · <code>дозировка 5 мг</code>"
+        "<code>метформин 1000</code> · <code>это конкор</code> · <code>дозировка 5 мг</code>",
+        reply_markup=cancel_only(),
     )
 
 
@@ -187,7 +189,8 @@ async def med_time(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(MedicationFlow.retiming)
     await callback.answer()
     await callback.message.answer(
-        "Во сколько был приём? Например <code>08:30</code> или «вчера вечером»."
+        "Во сколько был приём? Например <code>08:30</code> или «вчера вечером».",
+        reply_markup=cancel_only(),
     )
 
 

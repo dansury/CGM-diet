@@ -114,6 +114,11 @@ class Settings:
     text_model: str = "google/gemini-2.5-flash"
     llm_mock: bool = False
 
+    # Speech-to-text: Yandex SpeechKit first, OpenAI-compatible endpoint as
+    # a fallback (`spec/ingest.md` § Голос).
+    yandex_speechkit_api_key: str = ""
+    yandex_folder_id: str = ""
+    speechkit_lang: str = "ru-RU"
     stt_base_url: str = ""
     stt_api_key: str = ""
     stt_model: str = "whisper-1"
@@ -160,8 +165,17 @@ class Settings:
         return tg_id in self.owner_tg_ids
 
     @property
+    def speechkit_available(self) -> bool:
+        """SpeechKit needs both an API key and the folder it is billed to."""
+        return bool(self.yandex_speechkit_api_key and self.yandex_folder_id)
+
+    @property
     def stt_available(self) -> bool:
-        return self.llm_mock or bool(self.stt_base_url and self.stt_api_key)
+        return (
+            self.llm_mock
+            or self.speechkit_available
+            or bool(self.stt_base_url and self.stt_api_key)
+        )
 
 
 _CACHE: Settings | None = None
@@ -195,6 +209,11 @@ def load_settings(*, dotenv_path: Path | None = None, refresh: bool = False) -> 
         vision_model=_read("VISION_MODEL") or "google/gemini-2.5-flash",
         text_model=_read("TEXT_MODEL") or "google/gemini-2.5-flash",
         llm_mock=_read_bool("LLM_MOCK", False),
+        yandex_speechkit_api_key=(
+            _read("YANDEX_SPEECHKIT_API_KEY") or _read("YANDEX_API_KEY") or ""
+        ),
+        yandex_folder_id=_read("YANDEX_FOLDER_ID") or "",
+        speechkit_lang=_read("SPEECHKIT_LANG") or "ru-RU",
         stt_base_url=_read("STT_BASE_URL") or "",
         stt_api_key=_read("STT_API_KEY") or "",
         stt_model=_read("STT_MODEL") or "whisper-1",

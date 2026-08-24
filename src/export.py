@@ -25,6 +25,7 @@ from src.db.models import (
     Meal,
     MealItem,
     Medication,
+    NutritionMemory,
     Product,
     Symptom,
     User,
@@ -60,6 +61,12 @@ _TABLES: tuple[tuple[str, Any, tuple[str, ...]], ...] = (
         "user_dictionary",
         DictionaryEntry,
         ("id", "kind", "key_norm", "label", "hits", "pinned", "is_active", "last_used_at"),
+    ),
+    (
+        "user_nutrition",
+        NutritionMemory,
+        ("id", "key_norm", "label", "kcal", "protein_g", "fat_g", "carbs_g", "fiber_g",
+         "portion_g", "hits", "last_used_at"),
     ),
     (
         "analysis_results",

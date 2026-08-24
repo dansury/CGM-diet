@@ -30,6 +30,8 @@ medications        id user_id taken_at name slug cid dose_text form
                    source(text|photo|dictionary) media_id note   -- журнал, не назначения
 user_dictionary    id user_id kind(meal|item|medication) key_norm label payload
                    hits pinned is_active last_used_at   -- uq(user_id,kind,key_norm)
+user_nutrition     id user_id key_norm label kcal protein_g fat_g carbs_g fiber_g portion_g
+                   hits last_used_at   -- БЖУ пользователя на 100 г; uq(user_id,key_norm)
 settings_kv        key value(JSON) updated_at           -- выбор модели владельцем
 analysis_results   id user_id taken_at panel marker value value_text unit
                    ref_low ref_high flag(low|normal|high) media_id raw_text
@@ -45,6 +47,7 @@ corrections        id user_id entity_type entity_id field old_value new_value cr
 ```
 
 Индексы: `medications(user_id, taken_at)`, `user_dictionary(user_id, kind, key_norm)`,
+`user_nutrition(user_id, key_norm)`,
 `meals(user_id, eaten_at)`, `glucose_readings(user_id, measured_at)`,
 `wellbeing_checkins(user_id, at)`, `activity_samples(user_id, start_at)`,
 `meal_items(name_norm)`, `products(user_id, name_norm)`.
@@ -76,6 +79,10 @@ list_dictionary / get_dictionary_entry / touch_dictionary / hide_dictionary
 remember_meal(session, user, draft)      # заголовок + состав, по одному «замечен»
 MIN_HITS = {meal: 2, item: 2, medication: 1}
 
+remember_nutrition(session, user, name, values:Remembered) -> NutritionMemory?  # на 100 г
+load_nutrition_memory(session, user, names?) -> dict[key_norm, Remembered]
+remember_meal_macros(session, user, draft) -> [name]     # позиции с macros_source=="user"
+
 get_setting / set_setting / all_settings                     # settings_kv
 counts(session, user) -> dict[str,int]
 delete_user_data(session, user, drop_user=False)
@@ -85,8 +92,8 @@ delete_user_data(session, user, drop_user=False)
 голове, сильный голод, жажда, сердцебиение, дрожь, головная боль,
 раздражительность, приливы, слабость, тошнота).
 
-`delete_user_data` чистит и `user_dictionary`; `settings_kv` к пользователю не
-относится и переживает `/delete`.
+`delete_user_data` чистит и `user_dictionary`, и `user_nutrition`; `settings_kv`
+к пользователю не относится и переживает `/delete`.
 
 `delete_user_data` делает явные `DELETE` по таблицам: SQLite не выполняет
 каскады без `PRAGMA foreign_keys=ON`, а строка пользователя должна пережить

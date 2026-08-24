@@ -39,8 +39,18 @@ TEXT_MODEL=google/gemini-2.5-flash
 LLM_MOCK=false
 ```
 
-Голосовые сообщения — опционально, через любой OpenAI-совместимый
-`/audio/transcriptions`:
+Голосовые сообщения — Yandex SpeechKit (основной путь). Нужны ключ сервисного
+аккаунта с ролью `ai.speechkit-stt.user` и folder-id того же облака:
+
+```dotenv
+YANDEX_SPEECHKIT_API_KEY=AQVN...
+YANDEX_FOLDER_ID=b1g...
+SPEECHKIT_LANG=ru-RU
+```
+
+Голосовое дольше 25 с или больше 950 КБ бот сам режет на куски по границам
+OGG-страниц — ffmpeg не нужен. Фолбэк, если SpeechKit не настроен или ответил
+ошибкой — любой OpenAI-совместимый `/audio/transcriptions`:
 
 ```dotenv
 STT_BASE_URL=https://api.openai.com/v1

@@ -21,6 +21,15 @@ from src.vision.schemas import ItemDraft, MealDraft
 
 NUTRIENTS = ("kcal", "protein_g", "fat_g", "carbs_g", "fiber_g")
 
+#: how a remembered macro is named in the card («Б 5 · Ж 2 · У 30»)
+MACRO_LABELS = {
+    "protein_g": "Б",
+    "fat_g": "Ж",
+    "carbs_g": "У",
+    "fiber_g": "клетчатка",
+    "kcal": "ккал",
+}
+
 _REMOVE = re.compile(r"^(?:убери(?:те)?|убрать|удали(?:те)?|минус|без)\s+(?P<name>.+)$", re.I)
 _ADD = re.compile(
     r"^(?:добавь(?:те)?|добавить|плюс|ещё|еще)\s+(?P<name>.+?)"
@@ -40,6 +49,40 @@ _PORTION = re.compile(
 )
 _BARE_PORTION = re.compile(r"^(?P<portion>\d+(?:[.,]\d+)?)\s*(?:г|гр|g|грамм\w*)$", re.I)
 
+#: «120 ккал» — the unit trails the number, unlike every other macro
+_KCAL_AFTER = re.compile(r"(?<![\w.,])(?P<value>\d+(?:[.,]\d+)?)\s*(?:ккал|кк|калори\w*)\b", re.I)
+#: «б 5», «белки 20», «У: 30,5», «жиров 12 г»
+_MACRO = re.compile(
+    r"(?<!\w)(?P<key>белк\w*|протеин\w*|жир\w*|углевод\w*|клетчатк\w*|волокн\w*"
+    r"|ккал|калори\w*|[бжук])\s*[:=\-]?\s*(?P<value>\d+(?:[.,]\d+)?)\s*(?:г|гр|g)?(?!\w)",
+    re.I,
+)
+#: what is left of a macro clause after the numbers: «гречка 250 г»
+_TRAILING_PORTION = re.compile(
+    r"^(?P<name>.*?)\s*(?P<portion>\d+(?:[.,]\d+)?)\s*(?:г|гр|g|грамм\w*)?$", re.I
+)
+
+_MACRO_FIELD = {
+    "б": "protein_g",
+    "бел": "protein_g",
+    "про": "protein_g",
+    "ж": "fat_g",
+    "жир": "fat_g",
+    "у": "carbs_g",
+    "угл": "carbs_g",
+    "к": "kcal",
+    "кка": "kcal",
+    "кал": "kcal",
+    "кле": "fiber_g",
+    "вол": "fiber_g",
+}
+
+
+def _macro_field(key: str) -> str | None:
+    key = key.lower()
+    return _MACRO_FIELD.get(key) or _MACRO_FIELD.get(key[:3])
+
+
 _SENTENCES = re.compile(r"[;\n]")
 _SPLIT = re.compile(r"[,]|(?<!\w)и(?!\w)")
 
@@ -50,7 +93,7 @@ STEM_LEN = 4
 
 @dataclass(slots=True)
 class Change:
-    kind: str  # portion|rename|remove|add
+    kind: str  # portion|rename|remove|add|macros
     item: str
     before: str = ""
     after: str = ""
@@ -61,6 +104,7 @@ class Change:
             "rename": "название",
             "remove": "убрано",
             "add": "добавлено",
+            "macros": "БЖУ",
         }
         head = f"{verbs.get(self.kind, self.kind)}: {self.item}"
         if self.before and self.after:
@@ -143,6 +187,7 @@ def _clone(draft: MealDraft) -> MealDraft:
                 fiber_g=i.fiber_g,
                 tags=list(i.tags or []),
                 estimated=i.estimated,
+                macros_source=i.macros_source,
             )
             for i in draft.items
         ],
@@ -168,6 +213,53 @@ def _clauses(text: str) -> list[str]:
             if part:
                 out.append(part)
     return out
+
+
+def _parse_macros(clause: str) -> tuple[dict[str, float], str]:
+    """Pull БЖУ/ккал out of a clause; return them plus the leftover text.
+
+    «гречка 250 г б 5 ж 2 у 30» → ({protein_g: 5, ...}, «гречка 250 г»).
+    """
+    values: dict[str, float] = {}
+    rest = clause
+
+    def take(match: re.Match[str], name: str) -> None:
+        value = _num(match.group("value"))
+        if value is not None and name not in values:
+            values[name] = value
+
+    for match in list(_KCAL_AFTER.finditer(rest)):
+        take(match, "kcal")
+    rest = _KCAL_AFTER.sub(" ", rest)
+    for match in list(_MACRO.finditer(rest)):
+        name = _macro_field(match.group("key"))
+        if name:
+            take(match, name)
+    rest = _MACRO.sub(" ", rest)
+    return values, " ".join(rest.split())
+
+
+def _set_macros(item: ItemDraft, values: dict[str, float]) -> None:
+    """The user's numbers are absolute for the item's portion, not per 100 g."""
+    for name, value in values.items():
+        setattr(item, name, value)
+    if "kcal" not in values:
+        kcal = sum(
+            (getattr(item, name) or 0.0) * per_g
+            for name, per_g in (("protein_g", 4.0), ("fat_g", 9.0), ("carbs_g", 4.0))
+        )
+        if kcal > 0:
+            item.kcal = round(kcal)
+    item.estimated = False
+    item.macros_source = "user"
+
+
+def _describe_macros(values: dict[str, float]) -> str:
+    return " · ".join(
+        f"{MACRO_LABELS[name]} {values[name]:g}"
+        for name in ("protein_g", "fat_g", "carbs_g", "fiber_g", "kcal")
+        if name in values
+    )
 
 
 def apply_meal_correction(draft: MealDraft, instruction: str) -> CorrectionResult:
@@ -223,6 +315,31 @@ def apply_meal_correction(draft: MealDraft, instruction: str) -> CorrectionResul
                 result.unmatched.append(clause)
             continue
 
+        # БЖУ must be read before the portion rules: «гречка б 5 ж 2 у 30»
+        # otherwise ends up parsed as «гречка — 30 г».
+        values, leftover = _parse_macros(clause)
+        if values:
+            name = leftover
+            portion: float | None = None
+            trailing = _TRAILING_PORTION.match(leftover) if leftover else None
+            if trailing and trailing.group("portion"):
+                name = trailing.group("name").strip()
+                portion = _num(trailing.group("portion"))
+            target = _find(items, name) if name else (items[0] if len(items) == 1 else None)
+            if target is None and name:
+                target = ItemDraft(name=name, tags=infer_tags(name))
+                items.append(target)
+            if target is None:
+                result.unmatched.append(clause)
+                continue
+            if portion is not None:
+                target.portion_g = portion
+            _set_macros(target, values)
+            result.changes.append(
+                Change("macros", target.name, after=_describe_macros(values))
+            )
+            continue
+
         match = _BARE_PORTION.match(clause)
         if match and len(items) == 1:
             portion = _num(match.group("portion"))
@@ -268,6 +385,7 @@ def apply_meal_correction(draft: MealDraft, instruction: str) -> CorrectionResul
 
 
 __all__ = [
+    "MACRO_LABELS",
     "NUTRIENTS",
     "Change",
     "CorrectionResult",

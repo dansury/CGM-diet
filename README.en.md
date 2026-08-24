@@ -86,6 +86,13 @@ right after the first photo of the box. From then on "same as yesterday" is a
 single tap: start typing and the bot predicts from the first characters.
 Delete what you do not need — it will not creep back.
 
+### 📌 Your own macros are remembered
+
+The model's estimate of a dish is approximate — you can correct it (the bot
+talks Russian: «овсянка 200 г б 12 ж 6 у 40»). It answers «📌 Запомнил ваши
+БЖУ» and from then on fills **your** numbers in every time that dish shows up
+again, rescaled to the portion. To change them, just type new ones.
+
 ### 🧩 Conclusions about components, not dishes
 
 "Buckwheat with chicken" shows up three times a month — that will never reach

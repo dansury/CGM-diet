@@ -12,6 +12,8 @@ from datetime import datetime
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
+from src.db import repo
+from src.handlers.deps import session_scope
 from src.handlers.states import (
     GlucoseFlow,
     LabFlow,
@@ -19,6 +21,7 @@ from src.handlers.states import (
     MedicationFlow,
     ProductFlow,
 )
+from src.ingest.nutrition import apply_memory
 from src.ingest.units import format_value
 from src.keyboards import (
     confirm_glucose,
@@ -27,6 +30,7 @@ from src.keyboards import (
     confirm_medication,
     product_actions,
 )
+from src.logging_setup import get_logger
 from src.reporting import (
     format_labs,
     format_meal_draft,
@@ -46,6 +50,8 @@ from src.vision.schemas import (
     product_to_dict,
 )
 
+log = get_logger("handlers.views")
+
 DRAFT_KEY = "draft"
 FILES_KEY = "draft_files"
 EATEN_AT_KEY = "eaten_at"
@@ -64,6 +70,7 @@ async def show_meal_draft(
 ) -> None:
     """`applied` — what a correction just changed, echoed back so the user sees
     that the edit was *merged*, not that the card was rebuilt from scratch."""
+    await fill_from_memory(message, draft)
     await state.set_state(MealFlow.confirming)
     await state.update_data(
         {
@@ -76,6 +83,28 @@ async def show_meal_draft(
         format_meal_draft(draft, eaten_at=eaten_at_local, applied=applied),
         reply_markup=confirm_meal(),
     )
+
+
+async def fill_from_memory(message: Message, draft: MealDraft) -> None:
+    """Подставить БЖУ, которые пользователь однажды ввёл сам.
+
+    Fail-soft: a lookup that goes wrong must not swallow the card — the draft
+    is then shown with the machine's own numbers (`spec/dictionary.md`
+    § Память БЖУ).
+    """
+    if not draft.items:
+        return
+    try:
+        async with session_scope() as session:
+            user = await repo.get_or_create_user(session, message.chat.id)
+            memory = await repo.load_nutrition_memory(
+                session, user, [item.name for item in draft.items]
+            )
+    except Exception:
+        log.exception("nutrition memory lookup failed")
+        return
+    if memory:
+        apply_memory(draft, memory)
 
 
 async def show_medication_draft(
@@ -169,6 +198,7 @@ __all__ = [
     "TAKEN_AT_KEY",
     "show_glucose_draft",
     "show_lab_draft",
+    "fill_from_memory",
     "show_meal_draft",
     "show_medication_draft",
     "show_product_draft",

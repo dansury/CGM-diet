@@ -7,7 +7,7 @@ transitions and the DB writes they cause.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import pytest
@@ -15,6 +15,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from src.config import load_settings
 from src.db import repo
 from src.handlers import confirm, intake, reports, wellbeing
 from src.handlers.states import MealFlow, ProductFlow, WellbeingFlow
@@ -32,6 +33,12 @@ class FakeUser:
 @dataclass
 class FakeChat:
     id: int = TG_ID
+
+
+@dataclass
+class FakeVoice:
+    file_id: str = "voice-1"
+    mime_type: str | None = "audio/ogg"
 
 
 @dataclass
@@ -410,3 +417,83 @@ async def test_typing_a_known_dish_does_not_call_the_model(engine, session, stat
     before = len(mock_llm.calls)
     await intake.handle_text(FakeMessage(text="овсянка с бананом"), state)
     assert len(mock_llm.calls) == before  # answered from the dictionary
+
+
+# ------------------------------------------------------------------ БЖУ memory
+
+async def test_typed_macros_are_remembered_and_the_user_is_told(engine, session, state):
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    await confirm.meal_edit(FakeCallback(data="meal:edit", message=FakeMessage()), state)
+
+    edit = FakeMessage(text="овсянка б 12 ж 6 у 40")
+    await confirm.meal_apply_edit(edit, state)
+    assert any("Запомнил" in t for t in edit.texts)
+    assert any("Б 12" in t for t in edit.texts)
+
+    user = await repo.get_user(session, TG_ID)
+    memory = await repo.load_nutrition_memory(session, user)
+    assert memory  # per-100 g row is there
+    assert any(m.protein_g for m in memory.values())
+
+
+async def test_a_remembered_dish_comes_back_with_the_users_numbers(engine, session, state):
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    await confirm.meal_edit(FakeCallback(data="meal:edit", message=FakeMessage()), state)
+    await confirm.meal_apply_edit(FakeMessage(text="овсянка 200 г б 12 ж 6 у 40"), state)
+    await confirm.meal_ok(FakeCallback(data="meal:ok", message=FakeMessage()), state)
+
+    again = FakeMessage(text="съела овсянку с бананом")
+    await intake.handle_text(again, state)
+    data = await state.get_data()
+    from src.vision.schemas import meal_from_dict
+
+    draft = meal_from_dict(data["draft"])
+    oats = next(i for i in draft.items if "овсян" in i.name.lower())
+    assert oats.macros_source == "memory"
+    assert oats.protein_g == 12.0  # та же порция — те же числа
+    assert oats.estimated is False
+
+
+# ------------------------------------------------------------------ voice
+
+async def test_voice_is_transcribed_by_speechkit_when_it_is_configured(
+    engine, session, state, monkeypatch
+):
+    from src.config import Settings
+    from src.ingest import speechkit
+
+    settings = load_settings()
+    monkeypatch.setattr(
+        "src.handlers.intake.load_settings",
+        lambda: replace(
+            settings,
+            yandex_speechkit_api_key="key",
+            yandex_folder_id="folder",
+        ),
+    )
+    assert Settings(yandex_speechkit_api_key="k", yandex_folder_id="f").speechkit_available
+
+    seen: dict[str, Any] = {}
+
+    async def fake_recognize(audio, **kwargs):
+        seen.update(kwargs)
+        seen["bytes"] = len(audio)
+        return speechkit.SpeechResult(text="сахар 8.2", duration_sec=2.0, language="ru-RU")
+
+    monkeypatch.setattr(speechkit, "recognize_voice", fake_recognize)
+
+    message = FakeMessage(voice=FakeVoice())
+    await intake.on_voice(message, state, FakeBot(payload=b"OggS-fake"))
+    assert seen["api_key"] == "key" and seen["folder_id"] == "folder"
+    assert any("Расслышал" in t for t in message.texts)
+
+    user = await repo.get_user(session, TG_ID)
+    assert (await repo.counts(session, user))["glucose"] == 1  # «сахар 8.2» записан
+
+
+async def test_voice_falls_back_to_the_llm_when_speechkit_is_not_configured(
+    engine, session, state
+):
+    message = FakeMessage(voice=FakeVoice())
+    await intake.on_voice(message, state, FakeBot(payload=b"OggS-fake"))
+    assert any("Расслышал" in t for t in message.texts)

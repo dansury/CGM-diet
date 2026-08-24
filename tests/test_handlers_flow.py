@@ -319,3 +319,94 @@ async def test_delete_asks_before_wiping_and_then_wipes(engine, session, state):
     await reports.on_delete_yes(FakeCallback(data="del:yes", message=FakeMessage()), state)
     user = await repo.get_user(session, TG_ID)
     assert set((await repo.counts(session, user)).values()) == {0}
+
+
+# ------------------------------------------------------------------ corrections
+
+async def test_a_correction_merges_instead_of_replacing(engine, session, state):
+    message = FakeMessage(photo=[FakePhoto()])
+    await intake.on_photo(message, state, FakeBot())  # гречка + курица + салат
+    await confirm.meal_edit(FakeCallback(data="meal:edit", message=FakeMessage()), state)
+
+    card = FakeMessage(text="убери салат")
+    await confirm.meal_apply_edit(card, state)
+    assert await state.get_state() == MealFlow.confirming.state
+    text = " ".join(card.texts)
+    assert "Учтено из вашей правки" in text
+    items_block = text.split("Учтено из вашей правки")[0]
+    bullets = [line for line in items_block.splitlines() if line.startswith("• ")]
+    assert any("куриная грудка" in b for b in bullets)  # untouched item survived
+    assert any("гречневая каша — 180 г" in b for b in bullets)  # with its numbers
+    assert not any("салат" in b for b in bullets)
+    assert "убрано: салат из огурцов" in text  # and the change is echoed back
+
+
+async def test_a_correction_can_be_spoken(engine, session, state):
+    await intake.on_photo(FakeMessage(photo=[FakePhoto()]), state, FakeBot())
+    await confirm.meal_edit(FakeCallback(data="meal:edit", message=FakeMessage()), state)
+
+    voice = FakeMessage(text=None)
+    handled = await intake._route_voice(voice, state, "гречки было 250")
+    assert handled  # a voice note in editing must not start a new meal
+    assert await state.get_state() == MealFlow.confirming.state
+    assert any("250 г" in t for t in voice.texts)
+
+
+# ------------------------------------------------------------------ medications
+
+async def test_a_medication_photo_becomes_a_journal_entry(engine, session, state):
+    from src.handlers import meds
+    from src.handlers.states import MedicationFlow
+
+    message = FakeMessage(photo=[FakePhoto()])
+    await intake._process_medication(message, state, [b""], ["photo-1"])
+    assert await state.get_state() == MedicationFlow.confirming.state
+    assert any("Глюкофаж" in t for t in message.texts)
+
+    await meds.med_ok(FakeCallback(data="med:ok", message=FakeMessage()), state)
+    user = await repo.get_user(session, TG_ID)
+    rows = await repo.load_medications(session, user)
+    assert [r.name for r in rows] == ["Глюкофаж 850 мг"]
+    assert rows[0].slug == "глюкофаж" and rows[0].cid  # reference key resolved
+
+
+async def test_a_medication_correction_keeps_what_was_not_mentioned(engine, session, state):
+    from src.handlers import meds
+
+    await intake._process_medication(FakeMessage(photo=[FakePhoto()]), state, [b""], [])
+    card = FakeMessage(text="1000 мг")
+    await meds.med_apply_edit(card, state)
+    text = " ".join(card.texts)
+    assert "Глюкофаж" in text  # name survived a dose-only correction
+    assert "1000 мг" in text
+
+
+# ------------------------------------------------------------------ dictionary
+
+async def test_the_second_meal_offers_a_one_tap_shortcut(engine, session, state):
+    from src.handlers import dictionary
+
+    for _ in range(2):
+        await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+        await confirm.meal_ok(FakeCallback(data="meal:ok", message=FakeMessage()), state)
+
+    user = await repo.get_user(session, TG_ID)
+    assert [e.label for e in await repo.list_dictionary(session, user, kind="meal")] == [
+        "Овсянка с бананом"
+    ]
+
+    typed = FakeMessage(text="овся")
+    assert await dictionary.offer_suggestions(typed, state, "овся")
+    assert any("уже записывали" in t for t in typed.texts)
+
+
+async def test_typing_a_known_dish_does_not_call_the_model(engine, session, state, mock_llm):
+    from src.handlers import dictionary  # noqa: F401
+
+    for _ in range(2):
+        await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+        await confirm.meal_ok(FakeCallback(data="meal:ok", message=FakeMessage()), state)
+
+    before = len(mock_llm.calls)
+    await intake.handle_text(FakeMessage(text="овсянка с бананом"), state)
+    assert len(mock_llm.calls) == before  # answered from the dictionary

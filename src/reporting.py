@@ -111,7 +111,33 @@ def format_remembered_macros(draft: MealDraft, names: list[str]) -> str:
         "📌 Запомнил ваши БЖУ:\n"
         f"{body}\n"
         "В следующий раз подставлю их вместо оценки. "
-        "Чтобы изменить — просто введите новые значения."
+        "Чтобы изменить — нажмите «✏️ БЖУ» и введите новые значения."
+    )
+
+
+def format_remembered_label(draft: ProductDraft, name: str, *, typed: bool = False) -> str:
+    """«Запомнил» для продукта: числа на 100 г, как они напечатаны на упаковке."""
+    macros = " · ".join(
+        f"{label} {value:g}"
+        for label, value in (
+            ("Б", draft.protein_100),
+            ("Ж", draft.fat_100),
+            ("У", draft.carbs_100),
+        )
+        if value is not None
+    )
+    kcal = f"{draft.kcal_100:.0f} ккал" if draft.kcal_100 is not None else ""
+    numbers = " · ".join(part for part in (kcal, macros) if part) or "—"
+    head = (
+        "📌 Запомнил ваши БЖУ:"
+        if typed
+        else "📌 Запомнил БЖУ с этикетки:"
+    )
+    return (
+        f"{head}\n"
+        f"• «{name}» — {numbers} на 100 г\n"
+        "В следующий раз подставлю их вместо оценки. "
+        "Чтобы изменить — нажмите «✏️ БЖУ» и введите новые значения."
     )
 
 
@@ -401,6 +427,7 @@ __all__ = [
     "format_product",
     "format_product_verdict",
     "format_recommendations",
+    "format_remembered_label",
     "format_remembered_macros",
     "format_stats",
     "format_symptoms",

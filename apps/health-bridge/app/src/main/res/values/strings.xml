@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CGM Мост</string>
+    <string name="rationale">Приложение читает шаги, тренировки, сон и пульс из Health Connect и отправляет их только на адрес, который вы указали. Ничего больше оно не собирает и никуда не передаёт.</string>
+</resources>

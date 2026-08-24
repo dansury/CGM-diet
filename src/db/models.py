@@ -289,6 +289,8 @@ class NutritionMemory(Base, TimestampMixin):
     carbs_g: Mapped[float | None] = mapped_column(Float)
     fiber_g: Mapped[float | None] = mapped_column(Float)
     portion_g: Mapped[float | None] = mapped_column(Float)  # portion it was entered for
+    # user|label — a hand-typed number is never overwritten by a later label scan.
+    source: Mapped[str] = mapped_column(String(16), default="user", nullable=False)
     hits: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

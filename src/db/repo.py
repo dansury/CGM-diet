@@ -699,12 +699,19 @@ async def remember_meal(session: AsyncSession, user: User, draft: MealDraft) -> 
 # ------------------------------------------------------------------ nutrition memory
 
 async def remember_nutrition(
-    session: AsyncSession, user: User, *, name: str, values: Remembered
+    session: AsyncSession,
+    user: User,
+    *,
+    name: str,
+    values: Remembered,
+    source: str = "user",
 ) -> NutritionMemory | None:
-    """Store the user's БЖУ for a dish, per 100 g. Re-entering it overwrites.
+    """Store БЖУ for a dish, per 100 g. Re-entering them overwrites.
 
     Constitution III: what the user typed is theirs and outranks every later
-    machine estimate — see `spec/dictionary.md` § Память БЖУ.
+    machine estimate — see `spec/dictionary.md` § Память БЖУ. `source="label"`
+    marks numbers read off a package: they replace an estimate, but never a
+    number the user typed with their own hands.
     """
     label = (name or "").strip()
     key = normalize_name(label)
@@ -716,11 +723,18 @@ async def remember_nutrition(
         )
     )
     if row is None:
-        row = NutritionMemory(user_id=user.id, key_norm=key, label=label[:128], hits=1)
+        row = NutritionMemory(
+            user_id=user.id, key_norm=key, label=label[:128], hits=1, source=source
+        )
         session.add(row)
     else:
+        if source == "label" and row.source == "user":
+            # The user has already spoken about this dish; a package reading
+            # does not get to overrule them.
+            return None
         row.hits += 1
         row.label = label[:128]
+        row.source = source
     for column in ("kcal", "protein_g", "fat_g", "carbs_g", "fiber_g", "portion_g"):
         value = getattr(values, column)
         if value is not None:
@@ -758,17 +772,55 @@ async def load_nutrition_memory(
 
 
 async def remember_meal_macros(
-    session: AsyncSession, user: User, draft: MealDraft
+    session: AsyncSession, user: User, draft: MealDraft, *, source: str = "user"
 ) -> list[str]:
-    """Persist БЖУ the user typed on this draft. Returns the dishes remembered."""
+    """Persist БЖУ named on this draft. Returns the dishes remembered.
+
+    `source` selects which items count: `user` — typed by hand, `label` — read
+    off a package (`spec/dictionary.md` § Память БЖУ).
+    """
     saved: list[str] = []
     for item in draft.items:
-        if item.macros_source != "user":
+        if item.macros_source != source:
             continue
-        row = await remember_nutrition(session, user, name=item.name, values=per_100(item))
+        row = await remember_nutrition(
+            session, user, name=item.name, values=per_100(item), source=source
+        )
         if row is not None:
             saved.append(item.name)
     return saved
+
+
+async def remember_product_macros(
+    session: AsyncSession, user: User, draft: ProductDraft
+) -> str | None:
+    """Запомнить БЖУ с этикетки. Returns the name remembered, if any.
+
+    Label values are already per 100 g, so they go in as they are printed.
+    """
+    name = product_item_name(draft)
+    row = await remember_nutrition(
+        session,
+        user,
+        name=name,
+        values=Remembered(
+            kcal=draft.kcal_100,
+            protein_g=draft.protein_100,
+            fat_g=draft.fat_100,
+            carbs_g=draft.carbs_100,
+            fiber_g=draft.fiber_100,
+            portion_g=None,
+        ),
+        source="label",
+    )
+    return name if row is not None else None
+
+
+def product_item_name(draft: ProductDraft) -> str:
+    """Как продукт называется в еде и в памяти БЖУ — «бренд название»."""
+    brand = (draft.brand or "").strip()
+    name = (draft.name or "").strip()
+    return f"{brand} {name}".strip() if brand else name
 
 
 # ------------------------------------------------------------------ settings kv

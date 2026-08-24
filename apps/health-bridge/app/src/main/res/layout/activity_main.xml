@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:padding="16dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/rationale"
+            android:paddingBottom="16dp" />
+
+        <Button
+            android:id="@+id/paste"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Вставить строку настройки" />
+
+        <EditText
+            android:id="@+id/base"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Адрес сервера (https://…)"
+            android:inputType="textUri"
+            android:autofillHints="" />
+
+        <EditText
+            android:id="@+id/tgId"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Ваш ID из бота"
+            android:inputType="number"
+            android:autofillHints="" />
+
+        <EditText
+            android:id="@+id/token"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="Токен"
+            android:inputType="text"
+            android:autofillHints="" />
+
+        <Button
+            android:id="@+id/save"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Сохранить" />
+
+        <Button
+            android:id="@+id/permissions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Разрешить доступ к Health Connect" />
+
+        <Button
+            android:id="@+id/syncNow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Синхронизировать сейчас" />
+
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="16dp"
+            android:textIsSelectable="true" />
+    </LinearLayout>
+</ScrollView>

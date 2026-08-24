@@ -162,6 +162,56 @@ async def test_erasure_takes_the_remembered_macros_with_it(session):
     assert await repo.load_nutrition_memory(session, user) == {}
 
 
+# --------------------------------------------------------------- БЖУ с этикетки
+
+async def test_label_macros_are_remembered_per_100_g(session):
+    from src.vision.schemas import ProductDraft
+
+    user = await repo.get_or_create_user(session, 504)
+    draft = ProductDraft(name="творог 5%", brand="Простоквашино", kcal_100=121,
+                         protein_100=16, fat_100=5, carbs_100=3)
+    assert await repo.remember_product_macros(session, user, draft) == "Простоквашино творог 5%"
+    memory = await repo.load_nutrition_memory(session, user)
+    stored = memory["простоквашино творог 5"]
+    assert (stored.protein_g, stored.fat_g, stored.carbs_g) == (16.0, 5.0, 3.0)
+    assert stored.portion_g is None       # на этикетке порции нет, только 100 г
+
+
+async def test_a_label_never_overwrites_what_the_user_typed(session):
+    from src.vision.schemas import ProductDraft
+
+    user = await repo.get_or_create_user(session, 505)
+    typed = ItemDraft(name="творог", portion_g=100, protein_g=18, macros_source="user")
+    await repo.remember_meal_macros(session, user, MealDraft(items=[typed]))
+    assert await repo.remember_product_macros(
+        session, user, ProductDraft(name="творог", protein_100=16, kcal_100=121)
+    ) is None
+    memory = await repo.load_nutrition_memory(session, user)
+    assert memory["творог"].protein_g == 18.0
+
+
+async def test_the_user_overwrites_a_label_reading(session):
+    from src.vision.schemas import ProductDraft
+
+    user = await repo.get_or_create_user(session, 506)
+    await repo.remember_product_macros(
+        session, user, ProductDraft(name="творог", protein_100=16, kcal_100=121)
+    )
+    typed = ItemDraft(name="творог", portion_g=100, protein_g=18, macros_source="user")
+    assert await repo.remember_meal_macros(session, user, MealDraft(items=[typed])) == ["творог"]
+    memory = await repo.load_nutrition_memory(session, user)
+    assert memory["творог"].protein_g == 18.0
+
+
+async def test_label_sourced_items_of_a_meal_are_remembered(session):
+    user = await repo.get_or_create_user(session, 507)
+    item = ItemDraft(name="батончик", portion_g=100, protein_g=10, macros_source="label")
+    assert await repo.remember_meal_macros(session, user, MealDraft(items=[item])) == []
+    assert await repo.remember_meal_macros(
+        session, user, MealDraft(items=[item]), source="label"
+    ) == ["батончик"]
+
+
 # --------------------------------------------------------------- ввод «сразу с БЖУ»
 
 def test_split_macros_separates_the_food_from_the_numbers():

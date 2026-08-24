@@ -39,9 +39,10 @@ def confirm_meal() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="✏️ Скорректировать", callback_data="meal:edit"),
             ],
             [
+                InlineKeyboardButton(text="✏️ БЖУ", callback_data="meal:macros"),
                 InlineKeyboardButton(text="🕒 Другое время", callback_data="meal:time"),
-                InlineKeyboardButton(text="🗑 Отменить", callback_data="meal:drop"),
             ],
+            [InlineKeyboardButton(text="🗑 Отменить", callback_data="meal:drop")],
             [InlineKeyboardButton(text="🤖 Это не еда", callback_data="photo:reroute")],
         ]
     )
@@ -109,10 +110,25 @@ def product_actions(*, mode: str) -> InlineKeyboardMarkup:
     )
     rows.append(
         [
+            InlineKeyboardButton(text="✏️ БЖУ", callback_data="prod:macros"),
             InlineKeyboardButton(text="✏️ Скорректировать", callback_data="prod:edit"),
-            InlineKeyboardButton(text="🗑 Отменить", callback_data="prod:drop"),
         ]
     )
+    rows.append([InlineKeyboardButton(text="🗑 Отменить", callback_data="prod:drop")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def health_setup(*, step: str = "menu") -> InlineKeyboardMarkup:
+    """Инструкция Samsung Health: шаги листаются кнопками (`spec/health_sync.md`)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if step != "how":
+        rows.append([InlineKeyboardButton(text="📲 Как подключить", callback_data="hs:how")])
+    if step != "keys":
+        rows.append([InlineKeyboardButton(text="🔑 Мои ключи", callback_data="hs:keys")])
+    if step != "app":
+        rows.append([InlineKeyboardButton(text="📦 Приложение-мост", callback_data="hs:app")])
+    if step != "menu":
+        rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="hs:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -280,6 +296,7 @@ __all__ = [
     "confirm_medication",
     "dictionary_page",
     "dictionary_suggestions",
+    "health_setup",
     "main_menu",
     "photo_kind",
     "product_actions",

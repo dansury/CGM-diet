@@ -21,7 +21,7 @@ class ItemDraft:
     fiber_g: float | None = None
     tags: list[str] = field(default_factory=list)
     estimated: bool = False   # numbers came from the reference table, not the model
-    macros_source: str = ""   # ""|user|memory — who put the БЖУ here (see nutrition.py)
+    macros_source: str = ""   # ""|user|label|memory — who put the БЖУ here (nutrition.py)
 
 
 @dataclass(slots=True)

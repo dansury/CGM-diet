@@ -180,6 +180,31 @@ async def test_editing_the_draft_records_a_correction(engine, session, state):
     assert "овсянка 300" in corrections[0].new_value
 
 
+async def test_the_bju_button_stores_the_numbers_and_says_so(engine, session, state):
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    await confirm.meal_macros(FakeCallback(data="meal:macros", message=FakeMessage()), state)
+    assert await state.get_state() == MealFlow.editing_macros.state
+
+    edit = FakeMessage(text="овсяная каша 200 г б 12 ж 6 у 40")
+    await confirm.meal_apply_macros(edit, state)
+    assert await state.get_state() == MealFlow.confirming.state
+    assert any("Запомнил ваши БЖУ" in t for t in edit.texts)
+
+    user = await repo.get_user(session, TG_ID)
+    memory = await repo.load_nutrition_memory(session, user)
+    # 12 г белка на 200 г → 6 г на 100 г
+    assert memory["овсяная каша"].protein_g == 6.0
+
+
+async def test_the_bju_button_rejects_a_phrase_without_numbers(engine, session, state):
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    await confirm.meal_macros(FakeCallback(data="meal:macros", message=FakeMessage()), state)
+    edit = FakeMessage(text="ну примерно как обычно")
+    await confirm.meal_apply_macros(edit, state)
+    assert await state.get_state() == MealFlow.editing_macros.state  # ждём числа дальше
+    assert any("Не понял числа" in t for t in edit.texts)
+
+
 # ------------------------------------------------------------------ photos
 
 async def test_a_photo_is_classified_and_becomes_a_meal_draft(engine, session, state):
@@ -221,6 +246,50 @@ async def test_saving_a_product_remembers_it(engine, session, state):
 
     user = await repo.get_user(session, TG_ID)
     assert (await repo.counts(session, user))["products"] == 1
+
+
+async def test_a_saved_label_remembers_its_macros(engine, session, state):
+    await intake.start_check_mode(FakeMessage(), state)
+    await intake.on_photo(FakeMessage(photo=[FakePhoto()]), state, FakeBot())
+    message = FakeMessage()
+    await confirm.product_save(FakeCallback(data="prod:save", message=message), state)
+
+    user = await repo.get_user(session, TG_ID)
+    memory = await repo.load_nutrition_memory(session, user)
+    assert memory  # числа с этикетки закреплены за продуктом
+    assert any("этикетки" in t for t in message.texts)
+
+
+async def test_editing_the_label_bju_overrides_the_package(engine, session, state):
+    await intake.start_check_mode(FakeMessage(), state)
+    await intake.on_photo(FakeMessage(photo=[FakePhoto()]), state, FakeBot())
+    await confirm.product_macros(FakeCallback(data="prod:macros", message=FakeMessage()), state)
+    assert await state.get_state() == ProductFlow.editing_macros.state
+
+    edit = FakeMessage(text="ккал 200 б 16 ж 2 у 12")
+    await confirm.product_apply_macros(edit, state)
+    assert await state.get_state() == ProductFlow.confirming.state
+    assert any("Запомнил ваши БЖУ" in t for t in edit.texts)
+
+    user = await repo.get_user(session, TG_ID)
+    memory = await repo.load_nutrition_memory(session, user)
+    assert any(value.carbs_g == 12.0 for value in memory.values())
+
+
+# ------------------------------------------------------------------ Samsung Health
+
+async def test_health_instruction_is_available_from_the_card(engine, session, state):
+    message = FakeMessage()
+    await reports.cmd_health(message)
+    assert any("Samsung Health" in t for t in message.texts)
+
+    card = FakeMessage()
+    await reports.on_health_step(FakeCallback(data="hs:how", message=card))
+    assert any("Health Connect" in t for t in card.texts)
+
+    keys = FakeMessage()
+    await reports.on_health_step(FakeCallback(data="hs:keys", message=keys))
+    assert any("cgmdiet://setup" in t or "HEALTH_SYNC_SECRET" in t for t in keys.texts)
 
 
 # ------------------------------------------------------------------ wellbeing

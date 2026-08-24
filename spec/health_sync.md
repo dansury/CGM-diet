@@ -8,6 +8,40 @@ Samsung Health не предоставляет сторонним сервиса
 Connect и отправляет батчи на наш эндпоинт. Формат платформо-нейтральный, та же
 схема без изменений подходит для Apple HealthKit.
 
+## Приложение-мост (`apps/health-bridge/`)
+
+Android, Kotlin, minSdk 26. Читает Health Connect (шаги, тренировки, сон,
+пульс) и шлёт батчи на `<base>/health/samsung`. Своего сервера нет; на телефоне
+хранятся только `base`, `tg_id`, `token` и граница последней отправки.
+
+```
+MainActivity   один экран: поля, разрешения, «Синхронизировать сейчас»
+Prefs          настройки + разбор ссылки cgmdiet://setup?base=&tg=&token=
+HealthReader   Health Connect -> Sample(kind,start,end,external_id,steps,avg_hr)
+Uploader       POST /health/samsung, X-Health-Token
+SyncWorker     WorkManager, раз в час; окно — от прошлой отправки (первый раз 3 суток)
+```
+
+Сборка — `gradle assembleDebug`; APK собирает
+`.github/workflows/health-bridge.yml` (артефакт запуска + файл релиза).
+Ссылку на APK для пользователя задаёт `HEALTH_BRIDGE_URL`
+(по умолчанию — releases репозитория).
+
+## Инструкция в интерфейсе (`handlers/reports.py`)
+
+`/health` — карточка со статусом (шаги за 7 дней, контраст «с прогулкой /
+без») и кнопки `hs:how|keys|app|menu`:
+
+- `📲 Как подключить` — 6 шагов словами телефона Samsung: Health Connect →
+  разрешения в Samsung Health → установка моста → ключи → доступ → первая
+  синхронизация; хвостом — что делать, если данные перестали приходить
+  (батарея «без ограничений»);
+- `🔑 Мои ключи` — строка `cgmdiet://setup?base=…&tg=…&token=…` одним блоком
+  плюс те же три поля по отдельности; без `HEALTH_SYNC_SECRET` — прямая
+  просьба написать владельцу, а не пустой токен;
+- `📦 Приложение-мост` — ссылка на APK, что делать с предупреждением
+  «неизвестный источник», и где лежит исходник.
+
 ## Аутентификация (`src/health/samsung.py`)
 
 ```

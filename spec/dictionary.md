@@ -74,23 +74,35 @@ dict:mode:<kind>:<use|del> | dict:rm:<id> | dict:close
 ```
 user_nutrition  id user_id key_norm label
                 kcal protein_g fat_g carbs_g fiber_g portion_g   -- на 100 г
-                hits last_used_at created_at
+                source(user|label) hits last_used_at created_at
                 -- uq(user_id, key_norm) ; ix(user_id, key_norm)
 ```
+
+`source` — откуда числа: `user` — названы руками, `label` — прочитаны с
+этикетки. Этикетка **не** перезаписывает строку с `source="user"`
+(`remember_nutrition` возвращает `None`); слово пользователя перезаписывает
+этикетку всегда.
 
 Хранение на 100 г: порция меняется — числа пересчитываются, а не врут.
 `portion_g` — порция, для которой их вводили (используется, когда у новой
 позиции веса нет).
 
 ```
-remember_nutrition(session, user, *, name, values:Remembered) -> NutritionMemory|None
+remember_nutrition(session, user, *, name, values:Remembered, source="user")
+    -> NutritionMemory|None
 load_nutrition_memory(session, user, names=None) -> dict[key_norm, Remembered]
-remember_meal_macros(session, user, draft) -> list[str]   # позиции с macros_source=="user"
+remember_meal_macros(session, user, draft, *, source="user") -> list[str]
+    # позиции с macros_source == source
+remember_product_macros(session, user, draft:ProductDraft) -> str|None   # source="label"
+product_item_name(draft:ProductDraft) -> str                             # «бренд название»
 ```
 
 Поток:
 
-1. пользователь называет БЖУ — в правке карточки или сразу во вводе
+0. кнопка `✏️ БЖУ` на карточке еды (`meal:macros`) и на карточке продукта
+   (`prod:macros`) — отдельный вход только для чисел; разбор тот же
+   (`correction._parse_macros`), карточка не пересобирается;
+1. пользователь называет БЖУ — кнопкой `✏️ БЖУ`, в правке карточки или сразу во вводе
    («овсянка 200 г б 12 ж 6 у 40»; разбор — `spec/ingest.md` § Корректировки,
    § БЖУ во вводе), позиция получает `macros_source="user"`;
 2. `views.remember_typed_macros` (зовут `handlers/confirm.meal_apply_edit` и
@@ -104,6 +116,17 @@ remember_meal_macros(session, user, draft) -> list[str]   # позиции с ma
    `remember_nutrition` идемпотентен, повторный ввод перезаписывает значение;
 4. любая следующая карточка еды проходит `views.fill_from_memory` →
    `nutrition.apply_memory` и показывает числа пользователя без «≈».
+
+**БЖУ с этикетки** (`macros_source="label"`):
+
+- `prod:save` и `prod:eat` → `remember_product_macros` пишет напечатанные на
+  упаковке числа (они уже на 100 г, `portion_g=None`) и говорит вслух
+  `reporting.format_remembered_label` («📌 Запомнил БЖУ с этикетки»);
+- позиция, созданная из этикетки (`prod:eat`), получает `macros_source="label"`
+  — это факт с упаковки, а не оценка модели; `meal:ok` пишет такие позиции
+  вторым вызовом `remember_meal_macros(..., source="label")`;
+- правка чисел кнопкой `✏️ БЖУ` на карточке продукта пишет их уже как
+  `source="user"` — исправленная этикетка становится словом пользователя.
 
 Удаление: `/delete` (`repo.delete_user_data`) уносит таблицу целиком, `/export`
 отдаёт её как `user_nutrition.csv`.

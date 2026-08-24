@@ -1,0 +1,49 @@
+[project]
+name = "cgm-diet"
+version = "0.1.0"
+description = "Telegram bot: food photos + CGM/glucose + labs -> personal postprandial statistics"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+dependencies = [
+    "aiogram>=3.13,<4",
+    "sqlalchemy>=2.0.30",
+    "alembic>=1.13",
+    "aiosqlite>=0.20",
+    "asyncpg>=0.29",
+    "httpx>=0.27",
+    "python-dotenv>=1.0",
+    "matplotlib>=3.8",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.7",
+]
+
+[project.optional-dependencies]
+pdf = ["pymupdf>=1.24"]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["src*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "B008"]

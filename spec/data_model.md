@@ -28,7 +28,7 @@ glucose_readings   id user_id measured_at value_mmol unit_input
 weights            id user_id measured_at weight_kg note
 medications        id user_id taken_at name slug cid dose_text form
                    source(text|photo|dictionary) media_id note   -- журнал, не назначения
-user_dictionary    id user_id kind(meal|item|medication) key_norm label payload
+user_dictionary    id user_id kind(meal|item|product|medication|symptom) key_norm label payload
                    hits pinned is_active last_used_at   -- uq(user_id,kind,key_norm)
 user_nutrition     id user_id key_norm label kcal protein_g fat_g carbs_g fiber_g portion_g
                    hits last_used_at   -- БЖУ пользователя на 100 г; uq(user_id,key_norm)

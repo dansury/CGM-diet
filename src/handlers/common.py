@@ -5,11 +5,11 @@ from __future__ import annotations
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from src.db import repo
 from src.handlers.deps import local_now, session_scope
-from src.keyboards import main_menu
+from src.keyboards import CANCEL_DATA, main_menu
 from src.reporting import DISCLAIMER
 
 router = Router(name="common")
@@ -49,7 +49,14 @@ HELP = """<b>Как пользоваться</b>
 «вчера в 21:00 сахар 9.1». Понимаю время и единицы.
 
 🙂 <b>Самочувствие</b> — оценка 1–5; если не 5, предложу симптомы кнопками из
-вашего личного глоссария. Можно добавить свои или наговорить голосом.
+вашего личного глоссария. Можно добавить свои или наговорить голосом — то, что
+вы написали сами, встанет первой кнопкой и уже отмеченным.
+
+⭐️ <b>Мой словарь</b> (/my) — всё, что вы записываете повторно: блюда,
+продукты, упаковки, лекарства и самочувствие. Сверху всегда последнее.
+
+❌ <b>Отменить</b> — крестик есть на любой карточке и в любом приглашении
+что-то написать; то же делает /cancel.
 
 📊 /stats — статистика по компонентам · /graph — график · /today — сегодня
 📤 /export — выгрузка CSV · 🗑 /delete — удалить все данные
@@ -84,6 +91,30 @@ async def cmd_help(message: Message) -> None:
 async def cmd_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("Главное меню", reply_markup=main_menu())
+
+
+CANCELLED = "❌ Отменено. Ничего не записал."
+
+
+@router.callback_query(F.data == CANCEL_DATA)
+async def on_cancel(callback: CallbackQuery, state: FSMContext) -> None:
+    """Крестик на любой карточке и в любой подсказке — один и тот же выход.
+
+    Отмена не спрашивает подтверждения и ничего не пишет в дневник: черновик
+    живёт в FSM, а `state.clear()` уносит его целиком.
+    """
+    await state.clear()
+    await callback.answer("Отменено")
+    if callback.message is not None:
+        await callback.message.edit_text(CANCELLED)
+
+
+@router.message(Command("cancel"))
+@router.message(F.text == "❌ Отменить")
+async def cmd_cancel(message: Message, state: FSMContext) -> None:
+    """То же самое текстом — на случай, если карточка уехала вверх по чату."""
+    await state.clear()
+    await message.answer(CANCELLED, reply_markup=main_menu())
 
 
 @router.message(Command("settings"))
@@ -166,4 +197,4 @@ def _parse_window(value: str) -> tuple[int, int]:
     return start, end
 
 
-__all__ = ["HELP", "WELCOME", "router"]
+__all__ = ["CANCELLED", "HELP", "WELCOME", "router"]

@@ -40,7 +40,7 @@ from src.handlers.states import (
 from src.ingest.correction import apply_meal_correction, split_macros
 from src.ingest.text_parse import parse_text
 from src.ingest.units import to_mmol
-from src.keyboards import main_menu, photo_kind
+from src.keyboards import cancel_only, main_menu, photo_kind
 from src.llm import ImagePart, get_client, model_selection
 from src.logging_setup import get_logger
 from src.vision import recognize
@@ -62,7 +62,8 @@ async def start_check_mode(message: Message, state: FSMContext) -> None:
     await message.answer(
         "🛒 Режим проверки перед покупкой.\n"
         "Пришлите фото упаковки — лучше две: лицевую сторону и состав.\n"
-        "Ничего не запишу как съеденное, просто скажу, что говорят ваши данные."
+        "Ничего не запишу как съеденное, просто скажу, что говорят ваши данные.",
+        reply_markup=cancel_only(),
     )
 
 
@@ -70,7 +71,9 @@ async def start_check_mode(message: Message, state: FSMContext) -> None:
 @router.message(Command("eat"))
 async def start_meal_mode(message: Message, state: FSMContext) -> None:
     await state.update_data({MODE_KEY: "meal"})
-    await message.answer("🍽 Пришлите фото еды или опишите текстом / голосом.")
+    await message.answer(
+        "🍽 Пришлите фото еды или опишите текстом / голосом.", reply_markup=cancel_only()
+    )
 
 
 @router.message(F.text == "🩸 Записать сахар")
@@ -79,7 +82,8 @@ async def start_glucose_mode(message: Message, state: FSMContext) -> None:
     await state.update_data({MODE_KEY: "glucose"})
     await message.answer(
         "🩸 Пришлите скриншот CGM/глюкометра или напишите значение — «сахар 8.2», "
-        "«гк 130 mg/dl в 8:30»."
+        "«гк 130 mg/dl в 8:30».",
+        reply_markup=cancel_only(),
     )
 
 

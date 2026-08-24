@@ -22,7 +22,7 @@ from src.db.models import User
 from src.export import build_export
 from src.handlers.deps import local_now, session_scope, to_local
 from src.ingest.units import format_value
-from src.keyboards import confirm_delete, main_menu, stats_windows
+from src.keyboards import confirm_delete, health_setup, main_menu, stats_windows
 from src.reporting import (
     DISCLAIMER,
     format_activity,
@@ -268,8 +268,6 @@ async def on_delete_no(callback: CallbackQuery) -> None:
 
 @router.message(Command("health"))
 async def cmd_health(message: Message) -> None:
-    settings = load_settings()
-    base = settings.webhook_base_url or "https://<ваш-домен>"
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, message.chat.id)
         samples = await repo.load_activity(session, user, since=local_now(user) - timedelta(days=7))
@@ -289,21 +287,126 @@ async def cmd_health(message: Message) -> None:
                 unit=user.glucose_unit,
             )
         total_steps = sum(s.steps or 0 for s in samples)
+    await message.answer(
+        _health_status_text(total_steps) + contrast_text,
+        reply_markup=health_setup(step="menu"),
+        disable_web_page_preview=True,
+    )
+
+
+@router.callback_query(F.data.startswith("hs:"))
+async def on_health_step(callback: CallbackQuery) -> None:
+    """Инструкция листается кнопками — человек не ищет её в README."""
+    step = callback.data.split(":", 1)[1]
+    texts = {
+        "how": _health_how_text,
+        "keys": lambda: _health_keys_text(callback.from_user.id),
+        "app": _health_app_text,
+        "menu": lambda: _health_status_text(None),
+    }
+    render = texts.get(step)
+    if render is None:
+        await callback.answer()
+        return
+    await callback.answer()
+    await callback.message.edit_text(
+        render(),
+        reply_markup=health_setup(step=step),
+        disable_web_page_preview=True,
+    )
+
+
+def _health_status_text(total_steps: int | None) -> str:
+    tail = (
+        f"\n\nЗа 7 дней получено шагов: <b>{total_steps}</b>."
+        if total_steps is not None
+        else ""
+    )
+    return (
+        "⌚️ <b>Samsung Health</b>\n\n"
+        "Шаги, тренировки и сон с телефона помогают увидеть, "
+        "как прогулка после еды меняет ваш сахар.\n\n"
+        "Samsung Health не отдаёт данные сайтам напрямую — их забирает "
+        "с телефона маленькое приложение-мост через Health Connect "
+        "и присылает сюда.\n\n"
+        "Настройка занимает 5 минут и делается один раз." + tail
+    )
+
+
+def _health_how_text() -> str:
+    """Пошагово, словами телефона Samsung — без единого технического термина сверх нужного."""
+    return (
+        "📲 <b>Как подключить — 6 шагов</b>\n\n"
+        "<b>1. Health Connect на телефоне</b>\n"
+        "Android 14 и новее: <i>Настройки → Безопасность и конфиденциальность → "
+        "Ещё → Health Connect</i> — он уже есть.\n"
+        "Android 10–13: установите «Health Connect» из Galaxy Store "
+        "или Google Play.\n\n"
+        "<b>2. Разрешите Samsung Health делиться</b>\n"
+        "Откройте <i>Samsung Health → ☰ (три полоски) → Настройки → "
+        "Health Connect</i> и включите: шаги, тренировки, сон, пульс.\n\n"
+        "<b>3. Поставьте приложение-мост</b>\n"
+        "Кнопка «📦 Приложение-мост» ниже — там ссылка и что делать, "
+        "если телефон предупредит про «неизвестный источник».\n\n"
+        "<b>4. Вставьте свои ключи</b>\n"
+        "Кнопка «🔑 Мои ключи» ниже даёт одну строку. Скопируйте её, "
+        "откройте мост и нажмите «Вставить строку настройки» — все три поля "
+        "заполнятся сами.\n\n"
+        "<b>5. Разрешите мосту читать Health Connect</b>\n"
+        "При первом запуске он спросит доступ к шагам, тренировкам, сну "
+        "и пульсу — нажмите «Разрешить».\n\n"
+        "<b>6. Нажмите «Синхронизировать сейчас»</b>\n"
+        "Через минуту вернитесь сюда и отправьте /health — внизу появится "
+        "число полученных шагов. Дальше мост присылает данные сам, раз в час.\n\n"
+        "⚠️ Если данные перестали приходить: <i>Настройки → Приложения → "
+        "CGM Мост → Батарея → Без ограничений</i>."
+    )
+
+
+def _health_keys_text(tg_id: int) -> str:
+    settings = load_settings()
+    base = settings.webhook_base_url or "https://&lt;ваш-домен&gt;"
     from src.health.samsung import HealthSyncError, make_token
 
     try:
-        token = make_token(message.chat.id, settings.health_sync_secret)
+        token = make_token(tg_id, settings.health_sync_secret)
     except HealthSyncError:
-        token = "— не настроен HEALTH_SYNC_SECRET на сервере"
-    await message.answer(
-        "⌚️ <b>Samsung Health / Health Connect</b>\n\n"
-        "Прямого API у Samsung Health нет — данные забирает приложение-мост на "
-        "телефоне (Health Connect) и отправляет их сюда:\n"
-        f"<code>POST {base}/health/samsung</code>\n"
-        f"Заголовок: <code>X-Health-Token: {token}</code>\n"
-        f"Ваш chat_id: <code>{message.chat.id}</code>\n\n"
-        "Формат и пример запроса — в README, раздел «Health sync».\n"
-        f"За 7 дней получено шагов: {total_steps}." + contrast_text
+        return (
+            "🔑 <b>Мои ключи</b>\n\n"
+            "Сервер ещё не настроен на приём данных с телефона "
+            "(<code>HEALTH_SYNC_SECRET</code> не задан). "
+            "Напишите владельцу бота — без этого мост подключить нельзя."
+        )
+    return (
+        "🔑 <b>Мои ключи</b>\n\n"
+        "Скопируйте эту строку целиком и вставьте в приложение-мост "
+        "(«Вставить строку настройки»):\n"
+        f"<code>cgmdiet://setup?base={base}&amp;tg={tg_id}&amp;token={token}</code>\n\n"
+        "Или заполните поля вручную:\n"
+        f"• Адрес сервера: <code>{base}</code>\n"
+        f"• Ваш ID: <code>{tg_id}</code>\n"
+        f"• Токен: <code>{token}</code>\n\n"
+        "🔒 Токен — только ваш: он открывает запись данных ровно в вашу карточку "
+        "и ничего не читает. Никому его не пересылайте."
+    )
+
+
+def _health_app_text() -> str:
+    settings = load_settings()
+    return (
+        "📦 <b>Приложение-мост</b>\n\n"
+        "«CGM Мост» — бесплатное приложение без рекламы и без своего сервера: "
+        "оно читает Health Connect и отправляет данные только на адрес, "
+        "который вы вставите.\n\n"
+        f"Скачать APK: {settings.health_bridge_url}\n\n"
+        "<b>Как поставить APK</b>\n"
+        "1. Откройте ссылку в браузере телефона и скачайте файл "
+        "<code>cgm-bridge.apk</code>.\n"
+        "2. Нажмите на скачанный файл. Телефон предупредит про «неизвестный "
+        "источник» — нажмите «Настройки» и разрешите установку для браузера.\n"
+        "3. Вернитесь и нажмите «Установить».\n\n"
+        "Исходный код приложения — в папке <code>apps/health-bridge</code> "
+        "того же репозитория: можно собрать самому, если ставить APK не хочется."
     )
 
 

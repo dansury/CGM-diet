@@ -214,6 +214,15 @@ apply_meal_correction(draft, instruction) -> CorrectionResult
 `views.remember_typed_macros`). Названные БЖУ отключают подсказку словаря:
 человек описывает эту тарелку, а не переиспользует сохранённую.
 
+**Кнопка `✏️ БЖУ`** (`meal:macros` → `MealFlow.editing_macros` →
+`confirm.meal_apply_macros`): тот же `apply_meal_correction`, но принимаются
+только изменения `macros|portion`; ничего не разобрано → просим числа ещё раз,
+состояние держим. Карточка продукта: `prod:macros` →
+`ProductFlow.editing_macros` → `confirm.product_apply_macros` →
+`_apply_label_macros` (тот же `_parse_macros`, поля на 100 г; «сахар N» —
+отдельным регэкспом), числа пишутся в память как `source="user"`.
+Оба состояния принимают голос (`_route_voice`).
+
 **БЖУ в правке** (`_parse_macros`, разбирается **до** правил порции — иначе
 «гречка б 5 ж 2 у 30» читается как «гречка — 30 г»):
 

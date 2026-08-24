@@ -7,6 +7,7 @@ than their own statistics.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 from aiogram import F, Router
@@ -18,8 +19,10 @@ from src.handlers.deps import local_now, session_scope, to_utc
 from src.handlers.states import GlucoseFlow, LabFlow, MealFlow, ProductFlow
 from src.handlers.views import DRAFT_KEY, EATEN_AT_KEY, FILES_KEY
 from src.ingest.correction import apply_meal_correction
+from src.ingest.nutrition import Remembered
 from src.ingest.units import MGDL, MMOL, format_value
 from src.logging_setup import get_logger
+from src.reporting import format_remembered_label
 from src.vision import recognize
 from src.vision.schemas import (
     ItemDraft,
@@ -34,6 +37,23 @@ from src.vision.schemas import (
 
 router = Router(name="confirm")
 log = get_logger("handlers.confirm")
+
+MACROS_PROMPT = (
+    "✏️ <b>БЖУ</b>\n"
+    "Напишите или наговорите числа — например:\n"
+    "<code>б 12 ж 6 у 40</code> — если блюдо одно;\n"
+    "<code>овсянка 200 г б 12 ж 6 у 40 292 ккал</code> — если блюд несколько.\n"
+    "Числа — на съеденную порцию. Ккал можно не называть: посчитаю сам.\n"
+    "Запомню их за этим блюдом и в следующий раз подставлю без оценки."
+)
+
+PRODUCT_MACROS_PROMPT = (
+    "✏️ <b>БЖУ с этикетки</b>\n"
+    "Напишите или наговорите то, что напечатано на упаковке <b>на 100 г</b>:\n"
+    "<code>ккал 86 б 16 ж 1.8 у 2</code>\n"
+    "Можно по одному полю: <code>углеводы 12</code>.\n"
+    "Эти числа запомню за продуктом и буду подставлять вместо оценки."
+)
 
 
 async def _drop(callback: CallbackQuery, state: FSMContext, text: str = "Отменено.") -> None:
@@ -64,6 +84,8 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
         await repo.remember_meal(session, user, draft)
         # …and БЖУ typed by hand stay with the dish for good.
         await repo.remember_meal_macros(session, user, draft)
+        # То же для чисел, прочитанных с этикетки (`spec/dictionary.md`).
+        await repo.remember_meal_macros(session, user, draft, source="label")
         title = meal.title or "приём пищи"
         shortcut = await repo.suggest_dictionary(session, user, title, kinds=("meal",), limit=1)
     await state.clear()
@@ -160,6 +182,45 @@ async def meal_apply_edit(
 
 def _items_line(draft: MealDraft) -> str:
     return ", ".join(f"{i.name} {i.portion_g or ''}".strip() for i in draft.items)
+
+
+@router.callback_query(F.data == "meal:macros", MealFlow.confirming)
+async def meal_macros(callback: CallbackQuery, state: FSMContext) -> None:
+    """«✏️ БЖУ» — отдельный вход для чисел: карточка не пересобирается."""
+    await state.set_state(MealFlow.editing_macros)
+    await callback.answer()
+    await callback.message.answer(MACROS_PROMPT)
+
+
+@router.message(MealFlow.editing_macros)
+async def meal_apply_macros(
+    message: Message, state: FSMContext, *, text_override: str | None = None
+) -> None:
+    """Числа для позиций текущей карточки; всё остальное в ней не трогаем."""
+    instruction = (text_override or message.text or "").strip()
+    data = await state.get_data()
+    old = meal_from_dict(data.get(DRAFT_KEY) or {})
+    result = apply_meal_correction(old, instruction)
+    macro_changes = [change for change in result.changes if change.kind in ("macros", "portion")]
+    if not macro_changes:
+        await message.answer(
+            "Не понял числа. Напишите, например: <code>б 12 ж 6 у 40</code> "
+            "или <code>овсянка 200 г б 12 ж 6 у 40</code>."
+        )
+        return
+    from src.handlers.views import remember_typed_macros, show_meal_draft
+
+    await remember_typed_macros(message, result.draft)
+    await show_meal_draft(
+        message,
+        state,
+        result.draft,
+        file_ids=data.get(FILES_KEY),
+        eaten_at_local=(
+            datetime.fromisoformat(data[EATEN_AT_KEY]) if data.get(EATEN_AT_KEY) else None
+        ),
+        applied=[change.describe() for change in macro_changes],
+    )
 
 
 @router.callback_query(F.data == "meal:time", MealFlow.confirming)
@@ -312,11 +373,15 @@ async def product_save(callback: CallbackQuery, state: FSMContext) -> None:
             media_ids.append((media.id, "front" if index == 0 else "back"))
         product = await repo.save_product(session, user, draft, media_ids=media_ids)
         name = product.name
+        # БЖУ с этикетки — такой же факт, как названный руками: запоминаем.
+        remembered = await repo.remember_product_macros(session, user, draft)
     await state.clear()
     await callback.answer("Запомнил")
     await callback.message.edit_text(
         f"💾 Продукт «{name}» сохранён. Пришлёте его снова — узнаю по названию или штрихкоду."
     )
+    if remembered:
+        await callback.message.answer(format_remembered_label(draft, remembered))
 
 
 @router.callback_query(F.data == "prod:eat", ProductFlow.confirming)
@@ -325,7 +390,7 @@ async def product_eat(callback: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     draft = product_from_dict(data.get(DRAFT_KEY) or {})
     item = ItemDraft(
-        name=f"{draft.brand + ' ' if draft.brand else ''}{draft.name}".strip(),
+        name=repo.product_item_name(draft),
         portion_g=100.0,
         kcal=draft.kcal_100,
         protein_g=draft.protein_100,
@@ -333,6 +398,8 @@ async def product_eat(callback: CallbackQuery, state: FSMContext) -> None:
         carbs_g=draft.carbs_100,
         fiber_g=draft.fiber_100,
         tags=draft.flags,
+        # Числа напечатаны на упаковке — это не оценка модели.
+        macros_source="label" if draft.kcal_100 is not None else "",
     )
     meal = MealDraft(title=draft.name, items=[item], confidence=draft.confidence, source="label")
     async with session_scope() as session:
@@ -342,7 +409,10 @@ async def product_eat(callback: CallbackQuery, state: FSMContext) -> None:
             media = await repo.save_media(session, user, kind="label", tg_file_id=file_id)
             media_ids.append((media.id, "front" if index == 0 else "back"))
         await repo.save_product(session, user, draft, media_ids=media_ids)
+        remembered = await repo.remember_product_macros(session, user, draft)
     await callback.answer()
+    if remembered:
+        await callback.message.answer(format_remembered_label(draft, remembered))
     await state.update_data({DRAFT_KEY: meal_to_dict(meal)})
     from src.handlers.views import show_meal_draft
 
@@ -356,6 +426,66 @@ async def product_more(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
     await callback.message.answer(
         "Пришлите фото второй стороны упаковки (состав и пищевая ценность) — объединю."
+    )
+
+
+@router.callback_query(F.data == "prod:macros", ProductFlow.confirming)
+async def product_macros(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(ProductFlow.editing_macros)
+    await callback.answer()
+    await callback.message.answer(PRODUCT_MACROS_PROMPT)
+
+
+@router.message(ProductFlow.editing_macros)
+async def product_apply_macros(
+    message: Message, state: FSMContext, *, text_override: str | None = None
+) -> None:
+    """Числа на 100 г с этикетки: правим только их и сразу запоминаем."""
+    instruction = (text_override or message.text or "").strip()
+    data = await state.get_data()
+    draft = product_from_dict(data.get(DRAFT_KEY) or {})
+    applied = _apply_label_macros(draft, instruction)
+    if not applied:
+        await message.answer(
+            "Не понял числа. Напишите, например: <code>ккал 86 б 16 ж 1.8 у 2</code>."
+        )
+        return
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, message.chat.id)
+        await repo.save_correction(
+            session,
+            user,
+            entity_type="product_draft",
+            entity_id=None,
+            field="macros",
+            old_value=draft.name,
+            new_value=instruction,
+        )
+        # Правка руками — это уже слово пользователя, не этикетка.
+        await repo.remember_nutrition(
+            session,
+            user,
+            name=repo.product_item_name(draft),
+            values=Remembered(
+                kcal=draft.kcal_100,
+                protein_g=draft.protein_100,
+                fat_g=draft.fat_100,
+                carbs_g=draft.carbs_100,
+                fiber_g=draft.fiber_100,
+                portion_g=None,
+            ),
+            source="user",
+        )
+    from src.handlers.views import show_product_draft
+
+    await message.answer(format_remembered_label(draft, repo.product_item_name(draft), typed=True))
+    await show_product_draft(
+        message,
+        state,
+        draft,
+        mode=data.get("draft_mode") or "eaten",
+        file_ids=data.get(FILES_KEY),
+        applied=applied,
     )
 
 
@@ -407,6 +537,39 @@ async def product_apply_edit(
     )
 
 
+_LABEL_FIELDS = {
+    "kcal": ("kcal_100", "ккал"),
+    "protein_g": ("protein_100", "белки"),
+    "fat_g": ("fat_100", "жиры"),
+    "carbs_g": ("carbs_100", "углеводы"),
+    "fiber_g": ("fiber_100", "клетчатка"),
+}
+
+
+def _apply_label_macros(draft, instruction: str) -> list[str]:
+    """«ккал 86 б 16 ж 1.8 у 2» → числа на 100 г. Mutates `draft` in place.
+
+    Разбор тот же, что у «✏️ БЖУ» на карточке еды (`src/ingest/correction`),
+    поэтому «б/ж/у» и «белки/жиры/углеводы» работают одинаково везде.
+    """
+    from src.ingest.correction import _parse_macros
+
+    values, leftover = _parse_macros(instruction or "")
+    applied: list[str] = []
+    for name, (attribute, label) in _LABEL_FIELDS.items():
+        if name not in values:
+            continue
+        before = getattr(draft, attribute)
+        setattr(draft, attribute, values[name])
+        applied.append(f"{label} на 100 г — {before if before is not None else '—'} → {values[name]:g}")
+    sugars = re.search(r"сахар\w*\s*[:—-]?\s*(\d+(?:[.,]\d+)?)", leftover, re.I)
+    if sugars:
+        value = float(sugars.group(1).replace(",", "."))
+        draft.sugars_100 = value
+        applied.append(f"сахар на 100 г — {value:g}")
+    return applied
+
+
 _PRODUCT_FIELDS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("kcal_100", "ккал", ("ккал", "калори", "энергет")),
     ("protein_100", "белки", ("белк", "белок", "протеин")),
@@ -419,8 +582,6 @@ _PRODUCT_FIELDS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
 
 def _apply_product_correction(draft, instruction: str) -> list[str]:
     """Mutates `draft` in place; returns human-readable descriptions of changes."""
-    import re
-
     applied: list[str] = []
     text = (instruction or "").strip()
     if not text:

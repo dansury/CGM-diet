@@ -413,10 +413,12 @@ async def _route_voice(message: Message, state: FSMContext, text: str) -> bool:
 
     routes = {
         MealFlow.editing.state: confirm.meal_apply_edit,
+        MealFlow.editing_macros.state: confirm.meal_apply_macros,
         MealFlow.retiming.state: confirm.meal_apply_time,
         GlucoseFlow.editing.state: confirm.glucose_apply_edit,
         LabFlow.editing.state: confirm.lab_apply_edit,
         ProductFlow.editing.state: confirm.product_apply_edit,
+        ProductFlow.editing_macros.state: confirm.product_apply_macros,
         MedicationFlow.editing.state: meds.med_apply_edit,
         MedicationFlow.retiming.state: meds.med_apply_time,
     }

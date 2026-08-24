@@ -137,6 +137,8 @@ class Settings:
     min_observations: int = 3
 
     health_sync_secret: str = ""
+    # где взять APK приложения-моста (`spec/health_sync.md` § Инструкция)
+    health_bridge_url: str = "https://github.com/dansury/CGM-diet/releases/latest"
 
     # error reports to the owner (`spec/errors.md`)
     error_reports_enabled: bool = True
@@ -229,6 +231,10 @@ def load_settings(*, dotenv_path: Path | None = None, refresh: bool = False) -> 
         baseline_window=_read_int("BASELINE_WINDOW", 20),
         min_observations=_read_int("MIN_OBSERVATIONS", 3),
         health_sync_secret=_read("HEALTH_SYNC_SECRET") or "",
+        health_bridge_url=(
+            _read("HEALTH_BRIDGE_URL")
+            or "https://github.com/dansury/CGM-diet/releases/latest"
+        ),
         error_reports_enabled=_read_bool("ERROR_REPORTS_ENABLED", True),
         error_report_tg_ids=_read_int_tuple("ERROR_REPORT_TG_IDS"),
         free_fallback_enabled=_read_bool("FREE_FALLBACK_ENABLED", True),

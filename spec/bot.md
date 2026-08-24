@@ -27,7 +27,7 @@
 | `/graph` | таймлайн, самочувствие, рейтинг | `handlers/reports.py` |
 | `/export` | ZIP с CSV | `handlers/reports.py` |
 | `/delete` | удаление с подтверждением | `handlers/reports.py` |
-| `/health` | инструкция и токен Samsung Health | `handlers/reports.py` |
+| `/health` | пошаговая инструкция Samsung Health, ключи, ссылка на мост | `handlers/reports.py` |
 | `/model`, `/models`, `/errors`, `/whereami` | только владелец, только в личке | `handlers/admin.py` |
 
 ## Клавиатуры (`src/keyboards.py`)
@@ -35,21 +35,29 @@
 Reply-меню: `🍽 Записать еду`, `🩸 Записать сахар`, `🛒 Проверить продукт`,
 `🙂 Самочувствие`, `📊 Статистика`, `📈 График`, `⭐️ Мой словарь`, `💊 Лекарства`.
 
-На каждой карточке распознавания — расшифровка текстом и две кнопки:
-`✅ Подтвердить` и `✏️ Скорректировать` (правку принимаем текстом **и голосом**).
+На каждой карточке распознавания — расшифровка текстом и кнопки
+`✅ Подтвердить`, `✏️ Скорректировать`, `✏️ БЖУ` (правку принимаем текстом
+**и голосом**). `✏️ БЖУ` — отдельный вход только для чисел: на карточке еды
+(`meal:macros`) числа на съеденную порцию, на карточке продукта
+(`prod:macros`) — на 100 г с этикетки. Введённые числа запоминаются за
+блюдом (`spec/dictionary.md` § Память БЖУ).
+
+`/health` — карточка Samsung Health с кнопками `📲 Как подключить`,
+`🔑 Мои ключи`, `📦 Приложение-мост` (`hs:how|keys|app|menu`), инструкция
+листается прямо в чате (`spec/health_sync.md` § Инструкция).
 
 Callback-грамматика `<domain>:<action>[:<arg>]` (лимит Telegram — 64 байта):
 
 ```
-meal:ok|edit|time|drop         glu:ok|edit|unit|drop
-prod:eat|save|more|drop        lab:ok|drop
+meal:ok|edit|macros|time|drop   glu:ok|edit|unit|drop
+prod:eat|save|more|macros|drop  lab:ok|drop
 kind:food|glucose_screen|food_label|lab_report|medication|drop   photo:reroute
 med:ok|edit|time|drop         prod:edit   lab:edit
 dict:use:<id>|rm:<id>|new|page:<kind>:<n>|mode:<kind>:<use|del>|close
 mdl:lvl:<global|slot|free> | mdl:slot:<slot> | mdl:set:<target>:<idx> | mdl:close
 wb:score:<1..5> | wb:sym:<id> | wb:other | wb:voice | wb:done
 stats:w:<1h|2h> | stats:k:<tag|item> | stats:chart
-del:yes|no
+del:yes|no                     hs:how|keys|app|menu
 ```
 
 Черновики **не** передаются в callback-data — они лежат в FSM. Устаревшая
@@ -58,9 +66,9 @@ del:yes|no
 ## FSM (`src/handlers/states.py`)
 
 ```
-MealFlow.confirming|editing|retiming
+MealFlow.confirming|editing|editing_macros|retiming
 GlucoseFlow.confirming|editing
-ProductFlow.confirming|awaiting_second_side|editing
+ProductFlow.confirming|awaiting_second_side|editing|editing_macros
 LabFlow.confirming|editing
 MedicationFlow.confirming|editing|retiming
 WellbeingFlow.scoring|picking|free_text

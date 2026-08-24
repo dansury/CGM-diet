@@ -8,6 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 class MealFlow(StatesGroup):
     confirming = State()
     editing = State()
+    editing_macros = State()   # «✏️ БЖУ» — только числа, без пересбора карточки
     retiming = State()
 
 
@@ -20,6 +21,7 @@ class ProductFlow(StatesGroup):
     confirming = State()
     awaiting_second_side = State()
     editing = State()
+    editing_macros = State()   # «✏️ БЖУ» — числа на 100 г с этикетки
 
 
 class LabFlow(StatesGroup):

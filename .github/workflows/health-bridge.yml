@@ -1,0 +1,42 @@
+name: health-bridge APK
+
+# Собирает APK приложения-моста: артефакт скачивается со страницы запуска,
+# на релизе прикладывается к самому релизу (ссылку показывает /health в боте).
+on:
+  push:
+    paths:
+      - "apps/health-bridge/**"
+      - ".github/workflows/health-bridge.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: assembleDebug
+        working-directory: apps/health-bridge
+        run: gradle --no-daemon assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cgm-bridge-apk
+          path: apps/health-bridge/app/build/outputs/apk/debug/*.apk
+
+      - name: attach to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp apps/health-bridge/app/build/outputs/apk/debug/app-debug.apk cgm-bridge.apk
+          gh release upload "${{ github.event.release.tag_name }}" cgm-bridge.apk --clobber

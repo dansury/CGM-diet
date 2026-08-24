@@ -127,8 +127,14 @@ WEB_PORT=8080
 приложение-мост на телефоне читает Health Connect и шлёт батчи боту.
 
 1. Задайте на сервере `HEALTH_SYNC_SECRET=<длинная случайная строка>`.
-2. Отправьте боту `/health` — он покажет ваш `chat_id` и персональный токен.
-3. Настройте на телефоне отправку:
+2. Соберите приложение-мост (`apps/health-bridge/`, см. его README) и положите
+   APK туда, куда указывает `HEALTH_BRIDGE_URL` — по умолчанию это последний
+   релиз репозитория, APK к нему прикладывает
+   `.github/workflows/health-bridge.yml`.
+3. Дальше всё делает пользователь: `/health` в боте показывает пошаговую
+   инструкцию, строку настройки `cgmdiet://setup?…` и ссылку на APK.
+
+Своё приложение вместо моста шлёт то же самое:
 
 ```http
 POST https://bot.example.com/health/samsung
@@ -255,6 +261,7 @@ alembic/  seeds/  tests/  spec/  specs/  docs/  .specify/
 | `MIN_OBSERVATIONS` | `3` | минимум наблюдений для показа компонента |
 | `BOT_MODE` | `polling` | `polling` или `webhook` |
 | `HEALTH_SYNC_SECRET` | — | нужен для релея Samsung Health |
+| `HEALTH_BRIDGE_URL` | releases репозитория | ссылка на APK моста в `/health` |
 | `OWNER_TG_IDS` | — | кому доступны `/model`, `/models`, `/errors` |
 | `ERROR_REPORTS_ENABLED` | `true` | отчёты об ошибках владельцу |
 | `ERROR_REPORT_TG_IDS` | — | кому слать отчёты; пусто — `OWNER_TG_IDS` |

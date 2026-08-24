@@ -36,6 +36,7 @@ from src.reporting import (
     format_meal_draft,
     format_medication_draft,
     format_product,
+    format_remembered_macros,
 )
 from src.vision.schemas import (
     GlucoseDraft,
@@ -105,6 +106,27 @@ async def fill_from_memory(message: Message, draft: MealDraft) -> None:
         return
     if memory:
         apply_memory(draft, memory)
+
+
+async def remember_typed_macros(message: Message, draft: MealDraft) -> list[str]:
+    """Сохранить БЖУ, которые пользователь ввёл сам, и сказать об этом вслух.
+
+    Молча закрепить число нельзя: пользователь должен видеть, что подставляться
+    будет именно оно (`spec/dictionary.md` § Память БЖУ). Fail-soft — сбой записи
+    не отменяет карточку.
+    """
+    if not any(item.macros_source == "user" for item in draft.items):
+        return []
+    try:
+        async with session_scope() as session:
+            user = await repo.get_or_create_user(session, message.chat.id)
+            saved = await repo.remember_meal_macros(session, user, draft)
+    except Exception:
+        log.exception("remembering typed macros failed")
+        return []
+    if saved:
+        await message.answer(format_remembered_macros(draft, saved))
+    return saved
 
 
 async def show_medication_draft(
@@ -199,6 +221,7 @@ __all__ = [
     "show_glucose_draft",
     "show_lab_draft",
     "fill_from_memory",
+    "remember_typed_macros",
     "show_meal_draft",
     "show_medication_draft",
     "show_product_draft",

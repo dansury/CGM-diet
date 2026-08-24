@@ -497,3 +497,46 @@ async def test_voice_falls_back_to_the_llm_when_speechkit_is_not_configured(
     message = FakeMessage(voice=FakeVoice())
     await intake.on_voice(message, state, FakeBot(payload=b"OggS-fake"))
     assert any("Расслышал" in t for t in message.texts)
+
+
+async def test_macros_typed_with_the_meal_are_kept_and_remembered(engine, session, state):
+    message = FakeMessage(text="съела овсянку 200 г б 12 ж 6 у 40")
+    await intake.handle_text(message, state)
+
+    from src.vision.schemas import meal_from_dict
+
+    draft = meal_from_dict((await state.get_data())["draft"])
+    oats = next(i for i in draft.items if "овсян" in i.name.lower())
+    assert (oats.protein_g, oats.fat_g, oats.carbs_g) == (12.0, 6.0, 40.0)
+    assert oats.macros_source == "user"
+    assert any("Запомнил" in t for t in message.texts)
+
+    user = await repo.get_user(session, TG_ID)
+    memory = await repo.load_nutrition_memory(session, user)
+    assert memory  # 12 г на 200 г → 6 г на 100 г
+    assert next(iter(memory.values())).protein_g == 6.0
+
+
+async def test_typing_macros_skips_the_dictionary_shortcut(engine, session, state, mock_llm):
+    from src.handlers import dictionary  # noqa: F401
+
+    for _ in range(2):
+        await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+        await confirm.meal_ok(FakeCallback(data="meal:ok", message=FakeMessage()), state)
+
+    before = len(mock_llm.calls)
+    typed = FakeMessage(text="овсянка с бананом б 14 ж 7 у 44")
+    await intake.handle_text(typed, state)
+    assert len(mock_llm.calls) > before          # словарь не перехватил ввод с числами
+    assert not any("уже записывали" in t for t in typed.texts)
+    assert any("Запомнил" in t for t in typed.texts)
+
+
+async def test_a_meal_without_macros_still_goes_through_the_model_unchanged(
+    engine, session, state
+):
+    message = FakeMessage(text="съела овсянку с бананом")
+    await intake.handle_text(message, state)
+    assert not any("Запомнил" in t for t in message.texts)
+    user = await repo.get_user(session, TG_ID)
+    assert await repo.load_nutrition_memory(session, user) == {}

@@ -141,11 +141,10 @@ async def meal_apply_edit(
             old_value=_items_line(old),
             new_value=instruction,
         )
-        # БЖУ, введённые руками, запоминаются за блюдом — и об этом говорим вслух.
-        remembered = await repo.remember_meal_macros(session, user, new)
-    if remembered:
-        await message.answer(_remembered_line(new, remembered))
-    from src.handlers.views import show_meal_draft
+    from src.handlers.views import remember_typed_macros, show_meal_draft
+
+    # БЖУ, введённые руками, запоминаются за блюдом — и об этом говорим вслух.
+    await remember_typed_macros(message, new)
 
     await show_meal_draft(
         message,
@@ -156,33 +155,6 @@ async def meal_apply_edit(
             datetime.fromisoformat(data[EATEN_AT_KEY]) if data.get(EATEN_AT_KEY) else None
         ),
         applied=[change.describe() for change in result.changes],
-    )
-
-
-def _remembered_line(draft: MealDraft, names: list[str]) -> str:
-    """«Запомнил» must name the numbers, otherwise the user cannot spot a typo."""
-    parts: list[str] = []
-    for item in draft.items:
-        if item.name not in names:
-            continue
-        macros = " · ".join(
-            f"{label} {value:g}"
-            for label, value in (
-                ("Б", item.protein_g),
-                ("Ж", item.fat_g),
-                ("У", item.carbs_g),
-            )
-            if value is not None
-        )
-        basis = f" на {item.portion_g:.0f} г" if item.portion_g else " на 100 г"
-        kcal = f", {item.kcal:.0f} ккал" if item.kcal else ""
-        parts.append(f"«{item.name}» — {macros}{kcal}{basis}")
-    listed = "\n".join(f"• {p}" for p in parts)
-    return (
-        "📌 Запомнил ваши БЖУ:\n"
-        f"{listed}\n"
-        "В следующий раз подставлю их вместо оценки. "
-        "Чтобы изменить — просто введите новые значения."
     )
 
 

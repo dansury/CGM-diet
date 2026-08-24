@@ -92,6 +92,29 @@ def format_meal_draft(
     return "\n".join(lines)
 
 
+def format_remembered_macros(draft: MealDraft, names: list[str]) -> str:
+    """«Запомнил» называет сами числа — иначе опечатку не заметить."""
+    lines: list[str] = []
+    for item in draft.items:
+        if item.name not in names:
+            continue
+        macros = " · ".join(
+            f"{label} {value:g}"
+            for label, value in (("Б", item.protein_g), ("Ж", item.fat_g), ("У", item.carbs_g))
+            if value is not None
+        )
+        basis = f" на {item.portion_g:.0f} г" if item.portion_g else " на 100 г"
+        kcal = f", {item.kcal:.0f} ккал" if item.kcal else ""
+        lines.append(f"• «{item.name}» — {macros}{kcal}{basis}")
+    body = "\n".join(lines)
+    return (
+        "📌 Запомнил ваши БЖУ:\n"
+        f"{body}\n"
+        "В следующий раз подставлю их вместо оценки. "
+        "Чтобы изменить — просто введите новые значения."
+    )
+
+
 def format_product(draft: ProductDraft, *, mode: str = "eaten") -> str:
     """`mode`: `eaten` — уже съедено, `check` — проверка перед покупкой."""
     head = "🛒 <b>Проверка продукта</b>" if mode == "check" else "🏷 <b>Продукт с этикетки</b>"
@@ -378,6 +401,7 @@ __all__ = [
     "format_product",
     "format_product_verdict",
     "format_recommendations",
+    "format_remembered_macros",
     "format_stats",
     "format_symptoms",
 ]

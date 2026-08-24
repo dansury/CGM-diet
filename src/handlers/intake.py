@@ -37,6 +37,7 @@ from src.handlers.states import (
     ProductFlow,
     WellbeingFlow,
 )
+from src.ingest.correction import apply_meal_correction, split_macros
 from src.ingest.text_parse import parse_text
 from src.ingest.units import to_mmol
 from src.keyboards import main_menu, photo_kind
@@ -499,16 +500,31 @@ async def handle_text(
             )
         return
 
-    # The personal dictionary answers before the model does: «то же, что вчера»
-    # costs one tap and no API call (`spec/dictionary.md`).
-    from src.handlers.dictionary import offer_suggestions
-
-    if await offer_suggestions(message, state, leftover):
+    # БЖУ, названные прямо во вводе («овсянка 200 г б 12 ж 6 у 40»), не уходят
+    # в модель: она бы вернула свою оценку, а числа пользователя сильнее
+    # (`spec/ingest.md` § Нутриенты).
+    food_text, macro_instruction = split_macros(leftover)
+    if not food_text or len(food_text) < 3:
+        if not saved:
+            await message.answer(
+                "Не понял, что записать. Опишите еду («овсянка с бананом») "
+                "или пришлите фото.",
+                reply_markup=main_menu(),
+            )
         return
+
+    # The personal dictionary answers before the model does: «то же, что вчера»
+    # costs one tap and no API call (`spec/dictionary.md`). Named БЖУ mean the
+    # user is describing this plate, not reusing a saved one.
+    if not macro_instruction:
+        from src.handlers.dictionary import offer_suggestions
+
+        if await offer_suggestions(message, state, food_text):
+            return
 
     # Anything left over is treated as a meal description.
     try:
-        draft = await recognize.parse_meal_text(leftover)
+        draft = await recognize.parse_meal_text(food_text)
     except recognize.RecognitionError:
         if not saved:
             await message.answer(
@@ -517,6 +533,9 @@ async def handle_text(
                 reply_markup=main_menu(),
             )
         return
+    if macro_instruction:
+        draft = apply_meal_correction(draft, macro_instruction).draft
+        await views.remember_typed_macros(message, draft)
     await views.show_meal_draft(message, state, draft, eaten_at_local=parsed.at)
 
 

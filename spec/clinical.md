@@ -39,7 +39,8 @@
 
 ```
 DISCLAIMER ; CONFIDENCE_LABEL{high|medium|low}
-format_meal_draft(draft, eaten_at?) -> str
+format_meal_draft(draft, eaten_at?, applied?) -> str
+format_remembered_macros(draft, names:[str]) -> str   # «📌 Запомнил ваши БЖУ …»
 format_product(draft, mode="eaten"|"check") -> str
 format_product_verdict(draft, matches:[KeyStats], unit) -> str
 format_stats(stats, unit, window, limit=8) -> str
@@ -53,6 +54,9 @@ format_medications(rows, days=30) -> str
 format_med_coverage(coverages) -> str | None
 format_med_side_effects(links) -> str | None
 ```
+
+`format_remembered_macros` называет сами числа и порцию, на которую они
+запомнены: закрепить значение молча нельзя — иначе опечатку не заметить.
 
 `applied` — блок «Учтено из вашей правки»: пользователь должен видеть, что
 корректировка встроена в распознавание, а не что карточка собрана заново.

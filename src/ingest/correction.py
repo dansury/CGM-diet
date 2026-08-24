@@ -262,6 +262,28 @@ def _describe_macros(values: dict[str, float]) -> str:
     )
 
 
+def split_macros(text: str) -> tuple[str, str]:
+    """Отделить БЖУ, названные во входном тексте, от описания еды.
+
+    «овсянка 200 г б 12 ж 6 у 40» → («овсянка 200 г», «овсянка 200 г б 12 ж 6 у 40»):
+    the model is asked about the food, the numbers are then applied as the
+    user's own correction so they are never re-estimated.
+    """
+    food: list[str] = []
+    macros: list[str] = []
+    for clause in _clauses(text or ""):
+        values, leftover = _parse_macros(clause)
+        if values:
+            macros.append(clause)
+            if leftover:
+                food.append(leftover)
+        else:
+            food.append(clause)
+    if not macros:
+        return (text or "").strip(), ""
+    return ", ".join(food), "; ".join(macros)
+
+
 def apply_meal_correction(draft: MealDraft, instruction: str) -> CorrectionResult:
     """Merge `instruction` into `draft`; untouched items keep their numbers."""
     result = CorrectionResult(draft=_clone(draft))
@@ -390,4 +412,5 @@ __all__ = [
     "Change",
     "CorrectionResult",
     "apply_meal_correction",
+    "split_macros",
 ]

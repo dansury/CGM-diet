@@ -7,7 +7,8 @@
    ставится кнопками меню и командами `/check`, `/eat`, `/sugar`.
 2. **Автоклассификация фото** (`recognize.classify_photo`) →
    `food | glucose_screen | food_label | lab_report | other`. `other` → 4 кнопки.
-3. **Текст**: сначала `ingest.text_parse` (без модели), остаток → `parse_meal_text`.
+3. **Текст**: сначала `ingest.text_parse` (без модели), затем `correction.split_macros`
+   отделяет названные БЖУ, остаток → личный словарь → `parse_meal_text`.
 4. **Голос**: `_transcribe` (SpeechKit, см. ниже) → тот же маршрут, что и текст;
    в состоянии `WellbeingFlow.free_text` — сразу в извлечение симптомов.
 5. **Документ**: `image/*` → анализы по фото; `pdf` → `ingest.pdf.pdf_to_text`,
@@ -206,6 +207,13 @@ apply_meal_correction(draft, instruction) -> CorrectionResult
 | `N г` при одной позиции | то же для единственного блюда |
 | `<блюдо> [N г] б 5 ж 2 у 30 [120 ккал]` | ставит БЖУ (и порцию, если названа) |
 
+**БЖУ во вводе** (`split_macros(text) -> (food_text, macro_instruction)`):
+клаузы с БЖУ вычищаются от чисел, описание еды уходит в модель, а сами числа
+применяются к вернувшемуся черновику как правка пользователя
+(`handlers/intake.handle_text` → `apply_meal_correction` →
+`views.remember_typed_macros`). Названные БЖУ отключают подсказку словаря:
+человек описывает эту тарелку, а не переиспользует сохранённую.
+
 **БЖУ в правке** (`_parse_macros`, разбирается **до** правил порции — иначе
 «гречка б 5 ж 2 у 30» читается как «гречка — 30 г»):
 
@@ -216,7 +224,8 @@ apply_meal_correction(draft, instruction) -> CorrectionResult
 - имя не названо и позиция одна → правка идёт в неё; имени нет ни в одной
   позиции → позиция добавляется;
 - `kcal` не назван → Атуотер по названным БЖУ; `estimated=False`,
-  `macros_source="user"`, `Change(kind="macros")`.
+  `macros_source="user"`, `Change(kind="macros")`;
+- один и тот же разбор обслуживает и правку карточки, и первичный ввод.
 
 Поиск позиции: точное `normalize_name` → подстрока → общий корень слова
 (`STEM_LEN = 4`, «гречки» ≈ «гречневая»). Неразобранное копится в `unmatched`.

@@ -160,3 +160,34 @@ async def test_erasure_takes_the_remembered_macros_with_it(session):
     await repo.remember_meal_macros(session, user, MealDraft(items=[item]))
     await repo.delete_user_data(session, user)
     assert await repo.load_nutrition_memory(session, user) == {}
+
+
+# --------------------------------------------------------------- ввод «сразу с БЖУ»
+
+def test_split_macros_separates_the_food_from_the_numbers():
+    from src.ingest.correction import split_macros
+
+    assert split_macros("овсянка 200 г б 12 ж 6 у 40") == (
+        "овсянка 200 г",
+        "овсянка 200 г б 12 ж 6 у 40",
+    )
+
+
+def test_split_macros_leaves_a_plain_description_alone():
+    from src.ingest.correction import split_macros
+
+    assert split_macros("овсянка с бананом") == ("овсянка с бананом", "")
+
+
+def test_split_macros_keeps_the_dishes_that_carry_no_numbers():
+    from src.ingest.correction import split_macros
+
+    food, macros = split_macros("гречка 250, курица б 30 ж 5 у 0")
+    assert food == "гречка 250, курица"
+    assert macros == "курица б 30 ж 5 у 0"
+
+
+def test_a_portion_alone_is_not_read_as_macros():
+    from src.ingest.correction import split_macros
+
+    assert split_macros("гречка 250 г") == ("гречка 250 г", "")

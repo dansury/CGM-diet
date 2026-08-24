@@ -191,11 +191,96 @@ def render_wellbeing(
     return _flush(fig)
 
 
+def render_weight(
+    series: list[tuple[datetime, float]],
+    *,
+    target_kg: float | None = None,
+    corridor: list[tuple[datetime, float]] | None = None,
+    title: str | None = None,
+) -> bytes:
+    """Замеры веса, линия цели и коридор ожидаемого темпа (`spec/body.md`)."""
+    if not series:
+        return _empty("Пока нет замеров веса")
+
+    fig, ax = plt.subplots(figsize=(9, 3.8))
+    xs = [at for at, _ in series]
+    ys = [kg for _, kg in series]
+    ax.plot(xs, ys, color="#2c3e50", marker="o", markersize=5, linewidth=1.8, zorder=4)
+    if corridor:
+        ax.plot(
+            [at for at, _ in corridor],
+            [kg for _, kg in corridor],
+            color="#2980b9",
+            linestyle="--",
+            linewidth=1.2,
+            alpha=0.8,
+            label="ожидаемый темп",
+            zorder=2,
+        )
+    if target_kg:
+        ax.axhline(
+            target_kg, color="#27ae60", linestyle=":", linewidth=1.6, label="цель", zorder=3
+        )
+    if corridor or target_kg:
+        ax.legend(loc="best", fontsize=8, framealpha=0.8)
+    ax.set_ylabel("кг")
+    ax.set_title(title or "Вес")
+    ax.grid(True, alpha=0.2)
+    _time_axis(ax)
+    return _flush(fig)
+
+
+def render_body_composition(
+    fat: list[tuple[datetime, float]],
+    muscle: list[tuple[datetime, float]],
+    *,
+    title: str | None = None,
+) -> bytes:
+    """Процент жира и мышечная масса; рисуется только по введённому биоимпедансу."""
+    if len(fat) < 2 and len(muscle) < 2:
+        return _empty("Биоимпеданс пока не вводился")
+
+    fig, ax = plt.subplots(figsize=(9, 3.8))
+    drawn = False
+    if len(fat) >= 2:
+        ax.plot(
+            [at for at, _ in fat],
+            [value for _, value in fat],
+            color="#e67e22",
+            marker="o",
+            markersize=4,
+            linewidth=1.6,
+            label="жир, %",
+        )
+        ax.set_ylabel("жир, %", color="#e67e22")
+        ax.tick_params(axis="y", colors="#e67e22")
+        drawn = True
+    if len(muscle) >= 2:
+        axis = ax.twinx() if drawn else ax
+        axis.plot(
+            [at for at, _ in muscle],
+            [value for _, value in muscle],
+            color="#16a085",
+            marker="s",
+            markersize=4,
+            linewidth=1.6,
+            label="мышцы, кг",
+        )
+        axis.set_ylabel("мышцы, кг", color="#16a085")
+        axis.tick_params(axis="y", colors="#16a085")
+    ax.set_title(title or "Состав тела")
+    ax.grid(True, alpha=0.2)
+    _time_axis(ax)
+    return _flush(fig)
+
+
 __all__ = [
     "CONFIDENCE_COLORS",
     "TARGET_HIGH",
     "TARGET_LOW",
+    "render_body_composition",
     "render_ranking",
     "render_timeline",
+    "render_weight",
     "render_wellbeing",
 ]

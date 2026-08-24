@@ -1,4 +1,5 @@
-"""Deterministic demo dataset: 14 days of meals, CGM, check-ins and steps.
+"""Deterministic demo dataset: 14 days of meals, CGM, check-ins, steps,
+weighings and workouts.
 
 Run it against a local DB to see `/stats`, `/graph` and the recommendations with
 real-looking numbers:
@@ -21,9 +22,11 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.analytics import body as body_math
+from src.analytics import workout as workout_math
 from src.db import repo
 from src.db.models import ActivitySample
-from src.vision.schemas import GlucoseDraft, ItemDraft, MealDraft
+from src.vision.schemas import GlucoseDraft, ItemDraft, MealDraft, WorkoutDraft
 
 SEED = 20260824
 DAYS = 14
@@ -48,6 +51,9 @@ MENU: tuple[tuple[str, list[tuple[str, list[str], float]], float], ...] = (
 )
 
 SYMPTOM_POOL = ("сонливость", "потливость", "туман в голове", "сильный голод")
+
+#: (вид, минуты, интенсивность) — чередуются через день
+WORKOUTS = (("walking", 45.0, "low"), ("running", 35.0, "high"), ("strength", 50.0, "moderate"))
 
 
 async def build_demo(session: AsyncSession, tg_id: int, *, days: int = DAYS) -> dict[str, int]:
@@ -134,6 +140,65 @@ async def build_demo(session: AsyncSession, tg_id: int, *, days: int = DAYS) -> 
                     ),
                     source="buttons",
                 )
+
+        # Тренировка через день, чтобы дневной коридор было видно не пустым.
+        if day % 2 == 1:
+            kind, minutes, intensity = WORKOUTS[day % len(WORKOUTS)]
+            started = day_start.replace(hour=18)
+            await repo.save_workout(
+                session,
+                user,
+                WorkoutDraft(
+                    kind=kind,
+                    title=workout_math.kind_label(kind),
+                    duration_min=minutes,
+                    intensity=intensity,
+                    sweat="yes" if intensity == "high" else "light",
+                    source="text",
+                ),
+                started_at=started,
+                ended_at=started + timedelta(minutes=minutes),
+            )
+
+    # Взвешивания раз в неделю: вес медленно снижается, состав тела следом.
+    for week in range(days // 7 + 1):
+        measured = start + timedelta(days=week * 7)
+        await repo.save_weight(
+            session,
+            user,
+            measured_at=measured,
+            weight_kg=round(88.0 - week * 0.6, 1),
+            composition={
+                "body_fat_pct": round(27.0 - week * 0.4, 1),
+                "muscle_mass_kg": round(59.0 + week * 0.1, 1),
+                "water_pct": round(53.0 + week * 0.2, 1),
+            },
+            source="manual",
+        )
+
+    await repo.upsert_body_profile(
+        session, user, height_cm=178.0, birth_year=1982, sex="m", activity="light"
+    )
+    plan = body_math.build_plan(
+        kind="lose",
+        weight_kg=86.8,
+        target_weight_kg=80.0,
+        rate_kg_week=0.5,
+        height_cm=178.0,
+        age=44,
+        sex="m",
+        activity="light",
+    )
+    await repo.set_goal(
+        session,
+        user,
+        kind="lose",
+        target_weight_kg=80.0,
+        start_weight_kg=88.0,
+        rate_kg_week=plan.rate_kg_week,
+        target_kcal=plan.target_kcal,
+        started_at=start,
+    )
 
     await repo.upsert_activity(session, user, activity)
     return await repo.counts(session, user)

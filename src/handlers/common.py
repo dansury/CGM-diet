@@ -21,17 +21,21 @@ WELCOME = """👋 Это дневник <b>еда → сахар → самоч�
 🩸 скриншот CGM/глюкометра или просто «сахар 8.2»
 🏷 фото этикетки (можно две стороны подряд — лицевую и оборотную)
 🧪 анализы: фото, PDF или текст
+🏃 тренировку: «бегал 40 минут», фото трекера или страницы дневника
+⚖️ вес и состав тела: «вес 82,4 жир 24%» или фото экрана весов
 🎤 голосовое — распознаю и разберу
 
 <b>Что я делаю:</b>
 • связываю приёмы пищи с сахаром по времени (45–90 мин и 90–150 мин);
 • считаю, после каких <i>компонентов</i> сахар поднимается чаще и выше;
 • показываю это графиком и цифрами с уровнем достоверности;
-• спрашиваю о самочувствии и сопоставляю симптомы с сахаром.
+• спрашиваю о самочувствии и сопоставляю симптомы с сахаром;
+• веду вес и состав тела, считаю дневной коридор калорий под вашу цель
+  и показываю прогресс-бар после каждого приёма пищи.
 
 <b>Чего я не делаю:</b> не ставлю диагнозы, не назначаю лекарства и не считаю дозы.
 
-Команды: /today /stats /graph /wellbeing /health /export /delete /help"""
+Команды: /today /stats /graph /body /workout /wellbeing /health /export /delete /help"""
 
 HELP = """<b>Как пользоваться</b>
 
@@ -57,6 +61,16 @@ HELP = """<b>Как пользоваться</b>
 
 ❌ <b>Отменить</b> — крестик есть на любой карточке и в любом приглашении
 что-то написать; то же делает /cancel.
+
+⚖️ <b>Вес и цель</b> (/body) — рост, возраст, пол, биоимпеданс и целевой вес.
+Задайте цель — покажу дневной коридор калорий с безопасным темпом снижения
+(не быстрее 1 % массы тела в неделю) и полосу прогресса после каждой еды.
+Раз в две недели сам напомню взвеситься; вес можно вводить и когда захочется —
+«вес 82,4», /weight или фото весов.
+
+🏃 <b>Тренировки</b> (/workout) — «бегал 40 минут», голосом, фото трекера или
+рукописного дневника. Уточню длительность, интенсивность и вспотели ли вы —
+и посчитаю примерные энергозатраты.
 
 📊 /stats — статистика по компонентам · /graph — график · /today — сегодня
 📤 /export — выгрузка CSV · 🗑 /delete — удалить все данные
@@ -121,16 +135,20 @@ async def cmd_cancel(message: Message, state: FSMContext) -> None:
 async def cmd_settings(message: Message) -> None:
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, message.from_user.id)
+        profile = await repo.get_body_profile(session, user)
+        days = profile.weight_prompt_days if profile else 14
         text = (
             "⚙️ <b>Настройки</b>\n"
             f"Часовой пояс: <code>{user.tz}</code>\n"
             f"Единицы глюкозы: <code>{user.glucose_unit}</code>\n"
             f"Окно «через 1 час»: {user.window_1h_start}–{user.window_1h_end} мин\n"
             f"Окно «через 2 часа»: {user.window_2h_start}–{user.window_2h_end} мин\n"
-            f"Базовая линия до еды: {user.baseline_window} мин\n\n"
+            f"Базовая линия до еды: {user.baseline_window} мин\n"
+            f"Напоминать взвеситься: раз в {days} дн.\n\n"
             "Изменить: <code>/set tz Europe/Moscow</code>, "
             "<code>/set unit mg/dL</code>, <code>/set window1 45-90</code>, "
-            "<code>/set window2 90-150</code>, <code>/set baseline 20</code>"
+            "<code>/set window2 90-150</code>, <code>/set baseline 20</code>, "
+            "<code>/set weighin 14</code>"
         )
     await message.answer(text)
 
@@ -144,6 +162,19 @@ async def cmd_set(message: Message) -> None:
     key, value = parts[1].lower(), parts[2].strip()
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, message.from_user.id)
+        if key == "weighin":
+            # частота напоминаний о взвешивании живёт в профиле тела
+            try:
+                days = int(value)
+            except ValueError:
+                await message.answer("Формат: <code>/set weighin 14</code> (дни)")
+                return
+            if not 3 <= days <= 90:
+                await message.answer("Напоминать можно раз в 3–90 дней.")
+                return
+            await repo.upsert_body_profile(session, user, weight_prompt_days=days)
+            await message.answer(f"✅ напоминание о взвешивании: раз в {days} дн.")
+            return
         try:
             applied = _apply_setting(user, key, value)
         except ValueError as exc:

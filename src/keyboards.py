@@ -40,6 +40,7 @@ def main_menu() -> ReplyKeyboardMarkup:
         keyboard=[
             [KeyboardButton(text="🍽 Записать еду"), KeyboardButton(text="🩸 Записать сахар")],
             [KeyboardButton(text="🛒 Проверить продукт"), KeyboardButton(text="🙂 Самочувствие")],
+            [KeyboardButton(text="🏃 Тренировка"), KeyboardButton(text="⚖️ Вес и цель")],
             [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📈 График")],
             [KeyboardButton(text="⭐️ Мой словарь"), KeyboardButton(text="💊 Лекарства")],
         ],
@@ -245,7 +246,11 @@ def photo_kind() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🏷 Этикетка", callback_data="kind:food_label"),
                 InlineKeyboardButton(text="🧪 Анализы", callback_data="kind:lab_report"),
             ],
-            [InlineKeyboardButton(text="💊 Лекарство", callback_data="kind:medication")],
+            [
+                InlineKeyboardButton(text="💊 Лекарство", callback_data="kind:medication"),
+                InlineKeyboardButton(text="⚖️ Весы", callback_data="kind:body_scale"),
+            ],
+            [InlineKeyboardButton(text="🏃 Тренировка", callback_data="kind:workout")],
             [cancel_button()],
         ]
     )
@@ -315,6 +320,166 @@ def stats_windows(active: str = "1h") -> InlineKeyboardMarkup:
     )
 
 
+# ------------------------------------------------------------------ тело и цель
+
+def body_menu(*, has_goal: bool) -> InlineKeyboardMarkup:
+    """Карточка `/body`: замер, профиль, цель, график."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⚖️ Записать вес", callback_data="bd:weight"),
+                InlineKeyboardButton(
+                    text="🎯 Изменить цель" if has_goal else "🎯 Задать цель",
+                    callback_data="bd:goal",
+                ),
+            ],
+            [
+                InlineKeyboardButton(text="📏 Рост", callback_data="bd:field:height"),
+                InlineKeyboardButton(text="🎂 Возраст", callback_data="bd:field:age"),
+            ],
+            [
+                InlineKeyboardButton(text="⚧ Пол", callback_data="bd:field:sex"),
+                InlineKeyboardButton(text="🏃 Активность", callback_data="bd:field:activity"),
+            ],
+            [InlineKeyboardButton(text="📉 График веса", callback_data="bd:chart")],
+        ]
+    )
+
+
+def sex_picker() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Мужской", callback_data="bd:sex:m"),
+                InlineKeyboardButton(text="Женский", callback_data="bd:sex:f"),
+            ],
+            [cancel_button()],
+        ]
+    )
+
+
+def activity_picker() -> InlineKeyboardMarkup:
+    """Уровни как их описывают диетологи — человек выбирает словами, не числом."""
+    from src.analytics.body import ACTIVITY_LABELS
+
+    rows = [
+        [InlineKeyboardButton(text=label, callback_data=f"bd:act:{slug}")]
+        for slug, label in ACTIVITY_LABELS.items()
+    ]
+    rows.append([cancel_button()])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def rate_picker(options: list[float], *, recommended: float | None = None) -> InlineKeyboardMarkup:
+    """Только темпы внутри безопасных рамок (`spec/body.md`)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for value in options:
+        mark = " ⭐️" if recommended is not None and abs(value - recommended) < 1e-6 else ""
+        row.append(
+            InlineKeyboardButton(
+                text=f"{value:g} кг/нед{mark}", callback_data=f"bd:rate:{int(round(value * 100))}"
+            )
+        )
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([cancel_button()])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def confirm_measurement() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Записать", callback_data="bd:save"),
+                InlineKeyboardButton(text="✏️ Скорректировать", callback_data="bd:field:weight"),
+            ],
+            [cancel_button()],
+        ]
+    )
+
+
+def weight_prompt() -> InlineKeyboardMarkup:
+    """Кнопка из напоминания: попасть в ввод веса одним нажатием."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⚖️ Ввести вес", callback_data="bd:weight")],
+            [InlineKeyboardButton(text="Не сейчас", callback_data="bd:close")],
+        ]
+    )
+
+
+# ------------------------------------------------------------------ тренировки
+
+def confirm_workout() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data="wo:ok"),
+                InlineKeyboardButton(text="✏️ Скорректировать", callback_data="wo:edit"),
+            ],
+            [
+                InlineKeyboardButton(text="❤️ Пульс", callback_data="wo:hr"),
+                InlineKeyboardButton(text="🕒 Другое время", callback_data="wo:time"),
+            ],
+            [cancel_button()],
+        ]
+    )
+
+
+def workout_duration() -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(text="15 мин", callback_data="wo:dur:15"),
+            InlineKeyboardButton(text="30 мин", callback_data="wo:dur:30"),
+            InlineKeyboardButton(text="45 мин", callback_data="wo:dur:45"),
+        ],
+        [
+            InlineKeyboardButton(text="1 час", callback_data="wo:dur:60"),
+            InlineKeyboardButton(text="1.5 часа", callback_data="wo:dur:90"),
+            InlineKeyboardButton(text="2 часа", callback_data="wo:dur:120"),
+        ],
+        [InlineKeyboardButton(text="✍️ Другое", callback_data="wo:dur:other"), cancel_button()],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def workout_intensity() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🟢 Лёгкая — говорить легко", callback_data="wo:int:low")],
+            [
+                InlineKeyboardButton(
+                    text="🟡 Средняя — дышу тяжело, говорю фразами",
+                    callback_data="wo:int:moderate",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔴 Высокая — говорить почти не мог(ла)", callback_data="wo:int:high"
+                )
+            ],
+            [cancel_button()],
+        ]
+    )
+
+
+def workout_sweat() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Да, заметно", callback_data="wo:sweat:yes"),
+                InlineKeyboardButton(text="Слегка", callback_data="wo:sweat:light"),
+                InlineKeyboardButton(text="Нет", callback_data="wo:sweat:no"),
+            ],
+            [cancel_button()],
+        ]
+    )
+
+
 def confirm_delete() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -333,21 +498,31 @@ __all__ = [
     "CANCEL_TEXT",
     "KIND_ICONS",
     "KIND_TABS",
+    "activity_picker",
+    "body_menu",
     "cancel_button",
     "cancel_only",
     "confirm_delete",
+    "confirm_measurement",
     "confirm_glucose",
     "confirm_labs",
     "confirm_meal",
     "confirm_medication",
+    "confirm_workout",
     "dictionary_page",
     "dictionary_suggestions",
     "health_setup",
     "main_menu",
     "photo_kind",
     "product_actions",
+    "rate_picker",
+    "sex_picker",
     "stats_windows",
     "symptom_picker",
     "tag_button_label",
+    "weight_prompt",
     "wellbeing_score",
+    "workout_duration",
+    "workout_intensity",
+    "workout_sweat",
 ]

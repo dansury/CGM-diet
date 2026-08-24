@@ -1,0 +1,106 @@
+"""Фоновые напоминания. Пока одно — «пора взвеситься» (`spec/body.md`).
+
+Отдельная задача asyncio, а не cron: бот и так живёт процессом (polling или
+uvicorn), и одна корутина с часовым тиком дешевле любой внешней обвязки.
+Задача полностью безопасна к падениям: любая ошибка внутри тика логируется и
+цикл продолжается — напоминание не имеет права уронить бота.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import UTC, datetime
+
+from aiogram import Bot
+
+from src.db import repo
+from src.handlers.deps import session_scope, to_local
+from src.keyboards import weight_prompt
+from src.logging_setup import get_logger
+from src.reporting import WEIGHT_PROMPT
+
+log = get_logger("scheduler")
+
+TICK_SECONDS = 3600
+#: в какие часы локального времени пользователя уместно писать
+QUIET_START = 9
+QUIET_END = 20
+
+_task: asyncio.Task | None = None
+
+
+def start_scheduler(bot: Bot, *, interval_s: int = TICK_SECONDS) -> asyncio.Task | None:
+    """Поднять фоновый цикл. Повторный вызов не плодит вторую задачу."""
+    global _task
+    if _task is not None and not _task.done():
+        return _task
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        log.warning("scheduler needs a running loop; skipped")
+        return None
+    _task = loop.create_task(weight_reminder_loop(bot, interval_s=interval_s))
+    return _task
+
+
+async def stop_scheduler() -> None:
+    global _task
+    if _task is None:
+        return
+    _task.cancel()
+    try:
+        await _task
+    except Exception:  # остановка не должна шуметь, включая CancelledError
+        pass
+    except asyncio.CancelledError:
+        pass
+    _task = None
+
+
+async def weight_reminder_loop(bot: Bot, *, interval_s: int = TICK_SECONDS) -> None:
+    while True:
+        try:
+            await run_weight_reminders(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("weight reminder tick failed")
+        await asyncio.sleep(interval_s)
+
+
+async def run_weight_reminders(bot: Bot, *, now: datetime | None = None) -> int:
+    """Один тик: кому пора взвеситься — тому и пишем. Возвращает число писем.
+
+    Отметка о напоминании ставится **до** отправки: сеть может отвалиться на
+    середине рассылки, и повторный тик не должен слать второе сообщение.
+    """
+    moment = now or datetime.now(UTC)
+    sent = 0
+    async with session_scope() as session:
+        due = await repo.users_due_for_weight(session, now=moment)
+        for user, profile in due:
+            local = to_local(moment, user)
+            if not QUIET_START <= local.hour < QUIET_END:
+                continue
+            await repo.mark_weight_prompt(session, profile, moment)
+            try:
+                await bot.send_message(
+                    user.tg_id, WEIGHT_PROMPT, reply_markup=weight_prompt()
+                )
+                sent += 1
+            except Exception:
+                # Заблокированный чат — обычное дело; метку не откатываем,
+                # иначе бот будет долбиться в него каждый час.
+                log.warning("weight reminder not delivered to %s", user.tg_id, exc_info=True)
+    return sent
+
+
+__all__ = [
+    "QUIET_END",
+    "QUIET_START",
+    "TICK_SECONDS",
+    "run_weight_reminders",
+    "start_scheduler",
+    "stop_scheduler",
+    "weight_reminder_loop",
+]

@@ -65,6 +65,10 @@ markdown, без назначений и диагнозов, `null` вместо
 | `LAB_REPORT` | анализы | `{panel, taken_at, markers[{marker,value,unit,ref_low,ref_high}], confidence}` |
 | `TEXT_MEAL` | еда текстом | как `FOOD_PHOTO` |
 | `SYMPTOM_EXTRACT` | самочувствие | `{score, symptoms[], note}` |
+| `MEDICATION_PHOTO` | упаковка лекарства | `{name, inn, dose_text, form, confidence}` |
+| `WORKOUT_TEXT` | тренировка словами | `{kind, title, duration_min, intensity, distance_m, steps, avg_hr, rpe, sweat, kcal, started_at, note, confidence}` |
+| `WORKOUT_PHOTO` | фото трекера, часов или рукописного дневника | как `WORKOUT_TEXT` |
+| `BODY_SCALE` | фото весов / распечатки биоимпеданса | `{weight_kg, body_fat_pct, muscle_mass_kg, water_pct, bone_mass_kg, visceral_fat, bmr_kcal, confidence}` |
 
 `tags`/`flags` ограничены словарём `analytics/tags.TAGS`.
 
@@ -78,6 +82,10 @@ recognize_label(images) -> ProductDraft
 recognize_glucose_screenshot(images, now) -> ([GlucoseDraft], device)
 recognize_labs(images?|text?, now) -> LabDraft
 extract_symptoms(text) -> (score?, [symptom], note)
+recognize_medication(images) -> MedicationDraft
+parse_workout_text(text, now) -> WorkoutDraft
+recognize_workout_photo(images, now, hint="") -> WorkoutDraft   # читает и почерк
+recognize_body_photo(images) -> MeasurementDraft
 RecognitionError — ответ пришёл, но непригоден
 ```
 
@@ -93,7 +101,8 @@ RecognitionError — ответ пришёл, но непригоден
 
 Черновики (`src/vision/schemas.py`): `MealDraft/ItemDraft` (`ItemDraft.estimated`
 — числа добраны из таблицы, см. ниже), `ProductDraft`,
-`GlucoseDraft`, `LabDraft/MarkerDraft`. `MarkerDraft.flag` вычисляется из
+`GlucoseDraft`, `LabDraft/MarkerDraft`, `WorkoutDraft`, `MeasurementDraft`.
+`MarkerDraft.flag` вычисляется из
 референса документа. Пары `*_to_dict`/`*_from_dict` — для хранения в FSM.
 
 ## Нутриенты (`src/ingest/nutrition.py`)
@@ -161,11 +170,15 @@ DEFAULT_BASIS_G = 100.0               # база, когда вес позици
 ## Текст без модели (`src/ingest/text_parse.py`)
 
 `parse_text(text, now) -> ParsedText{glucose[(value,unit)], weight_kg, wellbeing,
-medications[(name,dose)], at, fasting, leftover}`.
+medications[(name,dose)], body:BodyFacts, at, fasting, leftover}`.
 
 - глюкоза: `(сахар|глюкоза|гк|glucose|sugar|bg) [:=-]? число [единицы]?`;
   без ключевого слова — только при явных единицах (`8.9 ммоль/л`);
 - вес `25..400` кг, самочувствие `1..5`, лекарства по глаголу приёма;
+- тело: рост `100..250` см, возраст `10..120`, пол (`мужской|женский`),
+  биоимпеданс — `жир %`, `мышцы кг`, `вода %`, `кости кг`, `висцеральный`,
+  `bmr ккал`; целевой вес по слову «цель»; всё это попадает в
+  `ParsedText.body` (`BodyFacts`) и пишется без модели;
 - время: **дата ищется первой** (`ДД.ММ`, месяц обязательно двузначный) — иначе
   «сахар 9.1» читается как 9 января; затем время `ЧЧ:ММ` вне уже занятых
   диапазонов; «вчера» и «время в будущем» откатывают на сутки;

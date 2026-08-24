@@ -12,6 +12,8 @@
 | [spec/ingest.md](spec/ingest.md) | маршрутизация ввода, промпты, распознавание, голос (SpeechKit), текст, единицы, PDF | `src/vision/*`, `src/ingest/*` |
 | [spec/analytics.md](spec/analytics.md) | компоненты, окна, статистика, CGM-метрики, симптомы, активность | `src/analytics/*` |
 | [spec/bot.md](spec/bot.md) | команды, клавиатуры, FSM, обработчики, отчёты | `src/bot.py`, `src/handlers/*`, `src/keyboards.py` |
+| [spec/body.md](spec/body.md) | рост, вес, биоимпеданс, цель, дневной коридор калорий, напоминание о взвешивании | `src/analytics/body.py`, `src/handlers/body.py`, `src/scheduler.py` |
+| [spec/workout.md](spec/workout.md) | тренировки и ходьба: ввод, доп. вопросы, энергозатраты по MET | `src/analytics/workout.py`, `src/handlers/workout.py` |
 | [spec/wellbeing.md](spec/wellbeing.md) | опрос 1–5, динамический глоссарий симптомов | `src/handlers/wellbeing.py`, `src/analytics/symptoms.py` |
 | [spec/charts.md](spec/charts.md) | таймлайн, рейтинг, самочувствие | `src/charts/render.py` |
 | [spec/health_sync.md](spec/health_sync.md) | Samsung Health / Health Connect, HTTP-релей, вебхук, инструкция и приложение-мост | `src/health/*`, `src/web/app.py`, `apps/health-bridge/` |

@@ -111,8 +111,30 @@ async def cmd_today(message: Message) -> None:
                 tail = f" — {', '.join(labels)}" if labels else ""
                 lines.append(f"• {stamp:%H:%M} {checkin.score}/5{tail}")
             lines.append("")
+        workouts_today = [
+            row
+            for row in await repo.load_workouts(session, user, since=start)
+            if to_local(row.started_at, user).date() == today
+        ]
+        if workouts_today:
+            from src.analytics.workout import kind_label
+
+            lines.append("<b>Тренировки</b>")
+            for row in workouts_today:
+                stamp = to_local(row.started_at, user)
+                duration = f" · {row.duration_min:.0f} мин" if row.duration_min else ""
+                energy = f" · ≈ {row.kcal:.0f} ккал" if row.kcal else ""
+                lines.append(
+                    f"• {stamp:%H:%M} {row.title or kind_label(row.kind)}{duration}{energy}"
+                )
+            lines.append("")
         if len(lines) <= 2:
             lines.append("Сегодня записей пока нет. Пришлите фото еды или показание сахара.")
+        from src.handlers.body import day_progress_text
+
+        progress = await day_progress_text(session, user, now=now)
+        if progress:
+            lines.append(progress)
     await message.answer("\n".join(lines), reply_markup=main_menu())
 
 
@@ -199,6 +221,10 @@ async def cmd_graph(message: Message) -> None:
     if score_marks:
         symptom_png = render_wellbeing(score_marks, title="Самочувствие за 3 дня")
         await message.answer_photo(BufferedInputFile(symptom_png, filename="wellbeing.png"))
+    # Вес и состав тела — только если пользователь их вводил (`spec/body.md`).
+    from src.handlers.body import send_weight_charts
+
+    await send_weight_charts(message, tg_id=message.chat.id)
     await _send_ranking_chart(message, window="1h", key_type="tag")
 
 
@@ -241,7 +267,8 @@ async def cmd_delete(message: Message) -> None:
         f"Будут удалены: приёмы пищи — {totals['meals']}, показания сахара — "
         f"{totals['glucose']}, отметки самочувствия — {totals['checkins']}, "
         f"продукты — {totals['products']}, анализы — {totals['labs']}, "
-        f"активность — {totals['activity']}.\n\n"
+        f"активность — {totals['activity']}, взвешивания — {totals['weights']}, "
+        f"тренировки — {totals['workouts']}.\n\n"
         "Это необратимо. Сначала можно сделать /export.",
         reply_markup=confirm_delete(),
     )

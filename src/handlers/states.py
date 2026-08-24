@@ -41,11 +41,25 @@ class WellbeingFlow(StatesGroup):
     free_text = State()
 
 
+class BodyFlow(StatesGroup):
+    awaiting = State()     # какое поле ждём — в ключе `body_field`
+    confirming = State()   # карточка замера, распознанного с фото весов
+
+
+class WorkoutFlow(StatesGroup):
+    confirming = State()
+    asking = State()       # очередь доп. вопросов — в ключе `wo_pending`
+    editing = State()
+    retiming = State()
+    awaiting_hr = State()
+
+
 class SettingsFlow(StatesGroup):
     editing = State()
 
 
 __all__ = [
+    "BodyFlow",
     "GlucoseFlow",
     "LabFlow",
     "MealFlow",
@@ -53,4 +67,5 @@ __all__ = [
     "ProductFlow",
     "SettingsFlow",
     "WellbeingFlow",
+    "WorkoutFlow",
 ]

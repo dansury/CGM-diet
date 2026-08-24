@@ -5,9 +5,10 @@
 `BOT_MODE=polling` (по умолчанию) → `dispatcher.start_polling`.
 `BOT_MODE=webhook` → uvicorn с `src.web.app:create_app`.
 `build_bot(settings)` — `ParseMode.HTML` по умолчанию.
-`COMMANDS` — 14 команд, регистрируются в меню Telegram при старте.
+`COMMANDS` — 17 команд (`/workouts` в меню не выносится), регистрируются в меню Telegram при старте.
 `prepare_runtime(bot, settings)` до первого апдейта (и в polling, и в webhook):
-`wire_error_reporter` → `load_active_models` → каталог свободных моделей.
+`wire_error_reporter` → `load_active_models` → каталог свободных моделей →
+`scheduler.start(bot)` (напоминание о взвешивании, `spec/body.md`).
 Каждый шаг деградирует молча — ни один не мешает боту стартовать.
 
 ## Команды
@@ -20,9 +21,12 @@
 | `/help` | подробная справка | `handlers/common.py` |
 | `/menu` | вернуть клавиатуру | `handlers/common.py` |
 | `/cancel` | отменить текущий ввод (то же, что `❌`) | `handlers/common.py` |
-| `/settings`, `/set` | пояс, единицы, окна, базовая линия | `handlers/common.py` |
+| `/settings`, `/set` | пояс, единицы, окна, базовая линия, частота взвешиваний (`weighin`) | `handlers/common.py` |
 | `/eat`, `/sugar`, `/check` | явные режимы ввода | `handlers/intake.py` |
 | `/wellbeing` | опрос самочувствия | `handlers/wellbeing.py` |
+| `/body` | профиль тела, замеры, цель, дневной коридор | `handlers/body.py` |
+| `/weight` | ввести вес и биоимпеданс | `handlers/body.py` |
+| `/workout`, `/workouts` | записать тренировку или ходьбу; журнал за неделю | `handlers/workout.py` |
 | `/today` | записи за сегодня | `handlers/reports.py` |
 | `/stats` | статистика + метрики + симптомы + рекомендации | `handlers/reports.py` |
 | `/graph` | таймлайн, самочувствие, рейтинг | `handlers/reports.py` |
@@ -34,7 +38,8 @@
 ## Клавиатуры (`src/keyboards.py`)
 
 Reply-меню: `🍽 Записать еду`, `🩸 Записать сахар`, `🛒 Проверить продукт`,
-`🙂 Самочувствие`, `📊 Статистика`, `📈 График`, `⭐️ Мой словарь`, `💊 Лекарства`.
+`🙂 Самочувствие`, `🏃 Тренировка`, `⚖️ Вес и цель`, `📊 Статистика`, `📈 График`,
+`⭐️ Мой словарь`, `💊 Лекарства`.
 
 На каждой карточке распознавания — расшифровка текстом и кнопки
 `✅ Подтвердить`, `✏️ Скорректировать`, `✏️ БЖУ`, `❌ Отменить` (правку принимаем текстом
@@ -62,7 +67,8 @@ Callback-грамматика `<domain>:<action>[:<arg>]` (лимит Telegram �
 ```
 meal:ok|edit|macros|time|drop   glu:ok|edit|unit|drop
 prod:eat|save|more|macros|drop  lab:ok|drop
-kind:food|glucose_screen|food_label|lab_report|medication|drop   photo:reroute
+kind:food|glucose_screen|food_label|lab_report|medication|body_scale|workout|drop
+photo:reroute
 med:ok|edit|time|drop         prod:edit   lab:edit
 dict:use:<id>|rm:<id>|new|page:<kind>:<n>|mode:<kind>:<use|del>|close
 x:cancel                       # общий крестик на всех клавиатурах
@@ -70,6 +76,10 @@ mdl:lvl:<global|slot|free> | mdl:slot:<slot> | mdl:set:<target>:<idx> | mdl:clos
 wb:score:<1..5> | wb:sym:<id> | wb:other | wb:voice | wb:done
 stats:w:<1h|2h> | stats:k:<tag|item> | stats:chart
 del:yes|no                     hs:how|keys|app|menu
+bd:menu|profile|weight|goal|chart|close | bd:field:<name> | bd:sex:<m|f>
+bd:act:<level> | bd:rate:<кг/нед ×100> | bd:save|bd:drop
+wo:ok|edit|time|hr|drop | wo:dur:<мин|other> | wo:int:<low|moderate|high>
+wo:sweat:<yes|light|no>
 ```
 
 Черновики **не** передаются в callback-data — они лежат в FSM. Устаревшая
@@ -84,16 +94,21 @@ ProductFlow.confirming|awaiting_second_side|editing|editing_macros
 LabFlow.confirming|editing
 MedicationFlow.confirming|editing|retiming
 WellbeingFlow.scoring|picking|free_text
+BodyFlow.awaiting              # какое поле ждём — в ключе `body_field`
+BodyFlow.confirming            # карточка замера с фото весов
+WorkoutFlow.confirming|asking|editing|retiming|awaiting_hr
 SettingsFlow.editing
 ```
 
 Ключи данных: `draft`, `draft_files`, `eaten_at`, `taken_at`, `draft_mode`,
 `pending_mode`, `pending_photos`, `wb_selected`, `wb_score`, `wb_extra`,
-`wb_note`, `dict_pending`, `mdl_candidates`, `mdl_target`.
+`wb_note`, `dict_pending`, `mdl_candidates`, `mdl_target`, `body_field`,
+`wo_pending`, `started_at`.
 
 ## Порядок роутеров (`src/handlers/__init__.py`)
 
-`admin → common → reports → wellbeing → dictionary → meds → confirm → intake → errors`.
+`admin → common → reports → wellbeing → body → workout → dictionary → meds →
+confirm → intake → errors`.
 `admin` первый и полностью отфильтрован (владелец + личка): чужому апдейту он
 просто не соответствует и тот идёт дальше. `intake` предпоследний: он ловит
 любой текст и любое фото. `errors` — наблюдатель `router.errors`, обработчиков
@@ -128,6 +143,15 @@ sha256(data)
 
 **Лекарство:** фото упаковки → `recognize_medication` → карточка `med:*` →
 `repo.save_medication_draft` (журнал + личный словарь). `spec/meds.md`.
+
+**Тело:** «вес 82, жир 24%» текстом/голосом пишется сразу; фото весов →
+`recognize_body_photo` → карточка `bd:save`. Цель и коридор калорий —
+`spec/body.md`.
+
+**Тренировка:** текст/голос/фото (в том числе рукописный дневник) →
+`recognize.parse_workout_text` / `recognize_workout_photo` → недостающее
+спрашивается кнопками (длительность → интенсивность → пот) → карточка с
+оценкой ккал → `wo:ok`. `spec/workout.md`.
 
 **Свободный текст:** `parse_text` пишет сахар/вес/лекарства/самочувствие сразу
 (они однозначны). Названные БЖУ («овсянка 200 г б 12 ж 6 у 40») отделяются

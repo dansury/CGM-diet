@@ -129,7 +129,16 @@ async def test_export_contains_every_table(seeded):
     archive = await build_export(session, user)
     with zipfile.ZipFile(io.BytesIO(archive)) as zf:
         names = set(zf.namelist())
-        assert {"meals.csv", "meal_items.csv", "glucose_readings.csv", "README.txt"} <= names
+        assert {
+            "meals.csv",
+            "meal_items.csv",
+            "glucose_readings.csv",
+            "weights.csv",
+            "body_profile.csv",
+            "body_goals.csv",
+            "workouts.csv",
+            "README.txt",
+        } <= names
         meals_csv = zf.read("meals.csv").decode("utf-8-sig")
     assert meals_csv.count("\n") == 43  # header + 42 meals
 

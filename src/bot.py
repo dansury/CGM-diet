@@ -30,6 +30,9 @@ COMMANDS = [
     BotCommand(command="stats", description="Статистика по продуктам"),
     BotCommand(command="graph", description="График еды и сахара"),
     BotCommand(command="wellbeing", description="Отметить самочувствие"),
+    BotCommand(command="body", description="Вес, состав тела и цель"),
+    BotCommand(command="weight", description="Записать вес"),
+    BotCommand(command="workout", description="Записать тренировку"),
     BotCommand(command="check", description="Проверить продукт перед покупкой"),
     BotCommand(command="health", description="Подключить Samsung Health"),
     BotCommand(command="export", description="Выгрузить данные (CSV)"),
@@ -75,6 +78,10 @@ async def prepare_runtime(bot: Bot, settings: Settings) -> None:
         log.info("active models: %s", mapping)
     except Exception:
         log.warning("could not load model selection; falling back to .env", exc_info=True)
+
+    from src.scheduler import start_scheduler
+
+    start_scheduler(bot)
 
     if settings.free_fallback_enabled and not settings.llm_mock:
         from src.llm import set_free_alternates

@@ -43,6 +43,49 @@ _TIME_RE = re.compile(r"\b(?:в\s*)?([01]?\d|2[0-3])[:.]([0-5]\d)\b")
 # parsing as 9 January. Day may be one or two digits.
 _DATE_RE = re.compile(r"\b([0-3]?\d)[./]([01]\d)(?:[./](\d{2,4}))?\b")
 
+# --- тело: рост, возраст, пол, биоимпеданс, целевой вес (`spec/body.md`)
+_HEIGHT_RE = re.compile(
+    r"(?:рост|height)\s*[:=\-—]?\s*(\d{2,3}(?:[.,]\d)?)\s*(?:см|cm)?", re.IGNORECASE
+)
+_AGE_RE = re.compile(
+    r"(?:возраст|мне|age)\s*[:=\-—]?\s*(\d{1,3})\s*(?:лет|год\w*|years?)?", re.IGNORECASE
+)
+_AGE_TAIL_RE = re.compile(r"\b(\d{1,3})\s*(?:лет|года|год)\b", re.IGNORECASE)
+_SEX_RE = re.compile(
+    r"\b(?:пол\s*[:=\-—]?\s*)?(мужской|женский|мужчина|женщина|муж|жен)\b", re.IGNORECASE
+)
+# Процент обязателен: иначе «творог жирность 5» ушёл бы в процент жира тела.
+_FAT_RE = re.compile(
+    r"(?:жир(?:а)?(?:\s+тела)?|процент\s+жира|body\s*fat)\s*[:=\-—]?\s*"
+    r"(\d{1,2}(?:[.,]\d)?)\s*%",
+    re.IGNORECASE,
+)
+_MUSCLE_RE = re.compile(
+    r"(?:мышечн\w*\s+масс\w*|мышц\w*|muscle)\s*[:=\-—]?\s*"
+    r"(\d{1,3}(?:[.,]\d)?)\s*(?:кг|kg)?",
+    re.IGNORECASE,
+)
+_WATER_RE = re.compile(
+    r"(?:вод\w*|water)\s*[:=\-—]?\s*(\d{1,2}(?:[.,]\d)?)\s*%", re.IGNORECASE
+)
+_BONE_RE = re.compile(
+    r"(?:костн\w*\s+масс\w*|кости|bone)\s*[:=\-—]?\s*(\d{1,2}(?:[.,]\d)?)\s*(?:кг|kg)?",
+    re.IGNORECASE,
+)
+_VISCERAL_RE = re.compile(
+    r"(?:висцеральн\w*(?:\s+жир\w*)?|visceral)\s*[:=\-—]?\s*(\d{1,2}(?:[.,]\d)?)",
+    re.IGNORECASE,
+)
+_BMR_RE = re.compile(
+    r"(?:основн\w*\s+обмен|метаболизм|bmr)\s*[:=\-—]?\s*(\d{3,4})\s*(?:ккал|kcal)?",
+    re.IGNORECASE,
+)
+_TARGET_RE = re.compile(
+    r"(?:целев\w*\s+вес|хочу\s+весить|цель|goal)\s*[:=\-—]?\s*"
+    r"(\d{2,3}(?:[.,]\d)?)\s*(?:кг|kg)?",
+    re.IGNORECASE,
+)
+
 _FASTING_RE = re.compile(r"натощак|до\s+еды|fasting", re.IGNORECASE)
 _YESTERDAY_RE = re.compile(r"\bвчера\b", re.IGNORECASE)
 # Words that carried a value already extracted — dropped from `leftover` so
@@ -53,6 +96,53 @@ _LEFTOVER_NOISE = re.compile(
 
 
 @dataclass(slots=True)
+class BodyFacts:
+    """Что сказано о теле: рост и пол — надолго, биоимпеданс — про этот замер."""
+
+    height_cm: float | None = None
+    age: int | None = None
+    sex: str | None = None                # m|f
+    body_fat_pct: float | None = None
+    muscle_mass_kg: float | None = None
+    water_pct: float | None = None
+    bone_mass_kg: float | None = None
+    visceral_fat: float | None = None
+    bmr_kcal: float | None = None
+    target_weight_kg: float | None = None
+
+    @property
+    def is_empty(self) -> bool:
+        return not any(
+            value is not None
+            for value in (
+                self.height_cm,
+                self.age,
+                self.sex,
+                self.body_fat_pct,
+                self.muscle_mass_kg,
+                self.water_pct,
+                self.bone_mass_kg,
+                self.visceral_fat,
+                self.bmr_kcal,
+                self.target_weight_kg,
+            )
+        )
+
+    @property
+    def composition(self) -> dict[str, float]:
+        """Только то, что относится к одному взвешиванию."""
+        pairs = (
+            ("body_fat_pct", self.body_fat_pct),
+            ("muscle_mass_kg", self.muscle_mass_kg),
+            ("water_pct", self.water_pct),
+            ("bone_mass_kg", self.bone_mass_kg),
+            ("visceral_fat", self.visceral_fat),
+            ("bmr_kcal", self.bmr_kcal),
+        )
+        return {name: value for name, value in pairs if value is not None}
+
+
+@dataclass(slots=True)
 class ParsedText:
     """Everything one free-text message yielded."""
 
@@ -60,13 +150,20 @@ class ParsedText:
     weight_kg: float | None = None
     wellbeing: int | None = None
     medications: list[tuple[str, str | None]] = field(default_factory=list)
+    body: BodyFacts = field(default_factory=BodyFacts)
     at: datetime | None = None
     fasting: bool = False
     leftover: str = ""
 
     @property
     def is_empty(self) -> bool:
-        return not (self.glucose or self.weight_kg or self.wellbeing or self.medications)
+        return not (
+            self.glucose
+            or self.weight_kg
+            or self.wellbeing
+            or self.medications
+            or not self.body.is_empty
+        )
 
 
 def _num(raw: str) -> float:
@@ -119,6 +216,8 @@ def parse_text(text: str, *, now: datetime | None = None) -> ParsedText:
         result.medications.append((name, dose))
         consumed.append(match.span())
 
+    consumed.extend(_parse_body(text, result))
+
     result.fasting = bool(_FASTING_RE.search(text))
     result.at, when_spans = _parse_when(text, now=now, consumed=consumed)
     consumed.extend(when_spans)
@@ -129,6 +228,48 @@ def parse_text(text: str, *, now: datetime | None = None) -> ParsedText:
     leftover = _LEFTOVER_NOISE.sub(" ", leftover)
     result.leftover = re.sub(r"\s{2,}", " ", leftover).strip(" ,.;:—-")
     return result
+
+
+def _parse_body(text: str, result: ParsedText) -> list[tuple[int, int]]:
+    """Рост, возраст, пол и биоимпеданс — без единого вызова модели.
+
+    Диапазоны здесь не косметика: «жир 240» и «рост 17» это опечатки, и лучше
+    не записать их вовсе, чем испортить ими расчёт коридора калорий.
+    """
+    spans: list[tuple[int, int]] = []
+    body = result.body
+
+    def take(pattern: re.Pattern[str], low: float, high: float) -> float | None:
+        match = pattern.search(text)
+        if not match:
+            return None
+        value = _num(match.group(1))
+        if not low <= value <= high:
+            return None
+        spans.append(match.span())
+        return value
+
+    body.height_cm = take(_HEIGHT_RE, 100.0, 250.0)
+    age = take(_AGE_RE, 10.0, 120.0)
+    if age is None:
+        tail = _AGE_TAIL_RE.search(text)
+        if tail and 10 <= int(tail.group(1)) <= 120:
+            age = float(tail.group(1))
+            spans.append(tail.span())
+    body.age = int(age) if age else None
+    body.body_fat_pct = take(_FAT_RE, 3.0, 70.0)
+    body.muscle_mass_kg = take(_MUSCLE_RE, 10.0, 120.0)
+    body.water_pct = take(_WATER_RE, 20.0, 80.0)
+    body.bone_mass_kg = take(_BONE_RE, 0.5, 10.0)
+    body.visceral_fat = take(_VISCERAL_RE, 1.0, 60.0)
+    body.bmr_kcal = take(_BMR_RE, 600.0, 4000.0)
+    body.target_weight_kg = take(_TARGET_RE, 25.0, 400.0)
+
+    sex = _SEX_RE.search(text)
+    if sex:
+        body.sex = "m" if sex.group(1).lower().startswith("муж") else "f"
+        spans.append(sex.span())
+    return spans
 
 
 def _parse_when(
@@ -185,4 +326,4 @@ def to_mmol_pairs(parsed: ParsedText) -> list[tuple[float, str]]:
     return [(to_mmol(value, unit), unit) for value, unit in parsed.glucose]
 
 
-__all__ = ["MGDL", "MMOL", "ParsedText", "parse_text", "to_mmol_pairs"]
+__all__ = ["MGDL", "MMOL", "BodyFacts", "ParsedText", "parse_text", "to_mmol_pairs"]

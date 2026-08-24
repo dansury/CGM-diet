@@ -21,6 +21,8 @@ from src.analytics.windows import GlucosePoint, MealLike
 from src.db.models import (
     ActivitySample,
     AnalysisResult,
+    BodyGoal,
+    BodyProfile,
     CheckinSymptom,
     Correction,
     DictionaryEntry,
@@ -37,6 +39,7 @@ from src.db.models import (
     User,
     Weight,
     WellbeingCheckin,
+    Workout,
     utcnow,
 )
 from src.ingest.nutrition import Remembered, per_100
@@ -46,6 +49,7 @@ from src.vision.schemas import (
     MealDraft,
     MedicationDraft,
     ProductDraft,
+    WorkoutDraft,
     meal_to_dict,
     product_to_dict,
 )
@@ -475,13 +479,246 @@ async def load_activity_buckets(
     return out
 
 
+# ------------------------------------------------------------------ body
+
+#: колонки биоимпеданса, которые принимает `save_weight`
+COMPOSITION_FIELDS = (
+    "body_fat_pct",
+    "muscle_mass_kg",
+    "water_pct",
+    "bone_mass_kg",
+    "visceral_fat",
+    "bmr_kcal",
+)
+
+
 async def save_weight(
-    session: AsyncSession, user: User, *, measured_at: datetime, weight_kg: float
+    session: AsyncSession,
+    user: User,
+    *,
+    measured_at: datetime,
+    weight_kg: float,
+    composition: dict[str, float] | None = None,
+    source: str = "manual",
+    note: str | None = None,
 ) -> Weight:
-    row = Weight(user_id=user.id, measured_at=measured_at, weight_kg=weight_kg)
+    """One weighing; the bioimpedance columns are filled only if they came in."""
+    row = Weight(
+        user_id=user.id,
+        measured_at=measured_at,
+        weight_kg=weight_kg,
+        source=source,
+        note=note,
+    )
+    for field_name, value in (composition or {}).items():
+        if field_name in COMPOSITION_FIELDS and value is not None:
+            setattr(row, field_name, float(value))
     session.add(row)
     await session.flush()
     return row
+
+
+async def load_weights(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[Weight]:
+    stmt = select(Weight).where(Weight.user_id == user.id).order_by(Weight.measured_at)
+    if since is not None:
+        stmt = stmt.where(Weight.measured_at >= since)
+    rows = list(await session.scalars(stmt))
+    for row in rows:
+        row.measured_at = _aware(row.measured_at)
+    return rows
+
+
+async def last_weight(session: AsyncSession, user: User) -> Weight | None:
+    row = await session.scalar(
+        select(Weight)
+        .where(Weight.user_id == user.id)
+        .order_by(Weight.measured_at.desc())
+        .limit(1)
+    )
+    if row is not None:
+        row.measured_at = _aware(row.measured_at)
+    return row
+
+
+async def get_body_profile(session: AsyncSession, user: User) -> BodyProfile | None:
+    return await session.scalar(select(BodyProfile).where(BodyProfile.user_id == user.id))
+
+
+async def upsert_body_profile(session: AsyncSession, user: User, **fields: Any) -> BodyProfile:
+    """Create or patch the profile; `None` values leave the column alone."""
+    profile = await get_body_profile(session, user)
+    if profile is None:
+        profile = BodyProfile(user_id=user.id)
+        session.add(profile)
+    for key, value in fields.items():
+        if value is not None and hasattr(profile, key):
+            setattr(profile, key, value)
+    await session.flush()
+    return profile
+
+
+async def get_active_goal(session: AsyncSession, user: User) -> BodyGoal | None:
+    goal = await session.scalar(
+        select(BodyGoal)
+        .where(BodyGoal.user_id == user.id, BodyGoal.is_active.is_(True))
+        .order_by(BodyGoal.started_at.desc())
+        .limit(1)
+    )
+    if goal is not None:
+        goal.started_at = _aware(goal.started_at)
+    return goal
+
+
+async def set_goal(
+    session: AsyncSession,
+    user: User,
+    *,
+    kind: str,
+    target_weight_kg: float | None,
+    start_weight_kg: float | None,
+    rate_kg_week: float | None,
+    target_kcal: float | None,
+    started_at: datetime,
+    target_date: datetime | None = None,
+) -> BodyGoal:
+    """One goal at a time: the previous one is retired, not deleted."""
+    await clear_goal(session, user)
+    goal = BodyGoal(
+        user_id=user.id,
+        kind=kind,
+        target_weight_kg=target_weight_kg,
+        start_weight_kg=start_weight_kg,
+        rate_kg_week=rate_kg_week,
+        target_kcal=target_kcal,
+        target_date=target_date,
+        started_at=started_at,
+        is_active=True,
+    )
+    session.add(goal)
+    await session.flush()
+    return goal
+
+
+async def clear_goal(session: AsyncSession, user: User) -> None:
+    for goal in await session.scalars(
+        select(BodyGoal).where(BodyGoal.user_id == user.id, BodyGoal.is_active.is_(True))
+    ):
+        goal.is_active = False
+    await session.flush()
+
+
+async def users_due_for_weight(
+    session: AsyncSession, *, now: datetime, min_gap_days: int = 3
+) -> list[tuple[User, BodyProfile]]:
+    """Кого пора попросить взвеситься (`spec/body.md` § Напоминание).
+
+    Просим только тех, кто сам завёл профиль или цель: непрошеное «встаньте на
+    весы» — не то, что бот вправе присылать.
+    """
+    out: list[tuple[User, BodyProfile]] = []
+    rows = await session.execute(select(User, BodyProfile).join(BodyProfile, BodyProfile.user_id == User.id))
+    for user, profile in rows.all():
+        every = timedelta(days=max(profile.weight_prompt_days or 14, 1))
+        last = await session.scalar(
+            select(func.max(Weight.measured_at)).where(Weight.user_id == user.id)
+        )
+        if last is not None and now - _aware(last) < every:
+            continue
+        prompted = profile.last_weight_prompt_at
+        if prompted is not None and now - _aware(prompted) < timedelta(days=min_gap_days):
+            continue
+        out.append((user, profile))
+    return out
+
+
+async def mark_weight_prompt(session: AsyncSession, profile: BodyProfile, at: datetime) -> None:
+    profile.last_weight_prompt_at = at
+    await session.flush()
+
+
+# ------------------------------------------------------------------ workouts
+
+async def save_workout(
+    session: AsyncSession,
+    user: User,
+    draft: WorkoutDraft,
+    *,
+    started_at: datetime,
+    ended_at: datetime | None = None,
+    media_id: int | None = None,
+) -> Workout:
+    row = Workout(
+        user_id=user.id,
+        started_at=started_at,
+        ended_at=ended_at,
+        kind=draft.kind,
+        title=draft.title or None,
+        duration_min=draft.duration_min,
+        intensity=draft.intensity,
+        distance_m=draft.distance_m,
+        steps=draft.steps,
+        avg_hr=draft.avg_hr,
+        rpe=draft.rpe,
+        sweat=draft.sweat,
+        kcal=draft.kcal,
+        kcal_source=draft.kcal_source,
+        met=draft.met,
+        source=draft.source,
+        media_id=media_id,
+        note=draft.note or None,
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def load_workouts(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[Workout]:
+    stmt = select(Workout).where(Workout.user_id == user.id).order_by(Workout.started_at)
+    if since is not None:
+        stmt = stmt.where(Workout.started_at >= since)
+    rows = list(await session.scalars(stmt))
+    for row in rows:
+        row.started_at = _aware(row.started_at)
+        if row.ended_at is not None:
+            row.ended_at = _aware(row.ended_at)
+    return rows
+
+
+async def day_energy(
+    session: AsyncSession, user: User, *, start: datetime, end: datetime
+) -> dict[str, float]:
+    """Съедено и потрачено за сутки — вход для дневного коридора.
+
+    Потрачено = ручные тренировки + то, что прислал телефон, без пересечений
+    (`analytics.body.merge_burn`): одна пробежка не должна считаться дважды.
+    """
+    from src.analytics.body import merge_burn
+
+    meals = await session.execute(
+        select(func.sum(Meal.kcal), func.sum(Meal.carbs_g)).where(
+            Meal.user_id == user.id, Meal.eaten_at >= start, Meal.eaten_at < end
+        )
+    )
+    consumed, carbs = meals.one()
+    workouts = [
+        (row.started_at, row.ended_at, row.kcal)
+        for row in await load_workouts(session, user, since=start)
+        if row.started_at < end
+    ]
+    samples = [
+        (_aware(sample.start_at), _aware(sample.end_at) if sample.end_at else None, sample.kcal)
+        for sample in await load_activity(session, user, since=start)
+        if sample.kind == "workout" and _aware(sample.start_at) < end
+    ]
+    return {
+        "consumed_kcal": float(consumed or 0.0),
+        "carbs_g": float(carbs or 0.0),
+        "burned_kcal": float(merge_burn(workouts, samples)),
+    }
 
 
 async def save_medication(
@@ -1011,6 +1248,9 @@ async def delete_user_data(session: AsyncSession, user: User, *, drop_user: bool
         Meal,
         GlucoseReading,
         Weight,
+        BodyGoal,
+        BodyProfile,
+        Workout,
         Medication,
         AnalysisResult,
         ActivitySample,
@@ -1061,6 +1301,8 @@ async def counts(session: AsyncSession, user: User) -> dict[str, int]:
         ("labs", AnalysisResult),
         ("activity", ActivitySample),
         ("medications", Medication),
+        ("weights", Weight),
+        ("workouts", Workout),
     ):
         out[name] = int(
             await session.scalar(
@@ -1112,6 +1354,18 @@ __all__ = [
     "save_medication",
     "save_medication_draft",
     "save_product",
+    "load_weights",
+    "last_weight",
+    "get_body_profile",
+    "upsert_body_profile",
+    "get_active_goal",
+    "set_goal",
+    "clear_goal",
+    "users_due_for_weight",
+    "mark_weight_prompt",
+    "save_workout",
+    "load_workouts",
+    "day_energy",
     "save_weight",
     "seed_symptoms",
     "set_setting",

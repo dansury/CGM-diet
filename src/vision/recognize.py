@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from typing import Any
 
+from src.analytics import workout as workout_kinds
 from src.analytics.tags import normalize_tags
 from src.ingest.nutrition import fill_meal
 from src.ingest.units import canonical_unit, guess_unit, is_plausible, to_mmol
@@ -23,8 +24,10 @@ from src.vision.schemas import (
     LabDraft,
     MarkerDraft,
     MealDraft,
+    MeasurementDraft,
     MedicationDraft,
     ProductDraft,
+    WorkoutDraft,
 )
 
 log = get_logger("vision.recognize")
@@ -79,7 +82,16 @@ async def _ask_json(
 
 # ---------------------------------------------------------------- routing
 
-PHOTO_KINDS = ("food", "glucose_screen", "food_label", "lab_report", "medication", "other")
+PHOTO_KINDS = (
+    "food",
+    "glucose_screen",
+    "food_label",
+    "lab_report",
+    "medication",
+    "body_scale",
+    "workout",
+    "other",
+)
 
 
 async def classify_photo(
@@ -372,6 +384,102 @@ async def recognize_medication(
     )
 
 
+# ---------------------------------------------------------------- workouts
+
+_WORKOUT_INTENSITIES = ("low", "moderate", "high")
+_SWEAT = ("yes", "light", "no")
+
+
+def _workout_from_payload(
+    payload: Any, *, source: str, now: datetime, raw_text: str | None = None
+) -> WorkoutDraft:
+    """Numbers only: the kcal estimate is the calculator's job, not the model's."""
+    if not isinstance(payload, dict):
+        raise RecognitionError("ожидался JSON-объект")
+    title = str(payload.get("title") or "").strip()
+    kind = workout_kinds.resolve_kind(str(payload.get("kind") or "") or title or raw_text or "")
+    intensity = str(payload.get("intensity") or "").strip().lower()
+    sweat = str(payload.get("sweat") or "").strip().lower()
+    rpe_raw = _f(payload.get("rpe"))
+    steps_raw = _f(payload.get("steps"))
+    kcal = _f(payload.get("kcal"))
+    started_at = _resolve_stamp(payload.get("started_at"), payload.get("time"), now=now)
+    draft = WorkoutDraft(
+        kind=kind,
+        title=title or workout_kinds.kind_label(kind),
+        duration_min=_f(payload.get("duration_min")),
+        intensity=intensity if intensity in _WORKOUT_INTENSITIES else None,
+        distance_m=_f(payload.get("distance_m")),
+        steps=int(steps_raw) if steps_raw else None,
+        avg_hr=_f(payload.get("avg_hr")),
+        rpe=int(rpe_raw) if rpe_raw and 1 <= rpe_raw <= 10 else None,
+        sweat=sweat if sweat in _SWEAT else None,
+        kcal=kcal,
+        kcal_source="device" if kcal and source == "photo" else ("user" if kcal else "estimated"),
+        started_at=started_at,
+        note=str(payload.get("note") or "").strip(),
+        source=source,
+        confidence=_f(payload.get("confidence")),
+        raw_text=raw_text,
+    )
+    if draft.duration_min is None and draft.steps:
+        draft.duration_min = workout_kinds.minutes_from_steps(draft.steps)
+    return draft
+
+
+async def parse_workout_text(
+    text: str, *, now: datetime, client: LLMClient | None = None
+) -> WorkoutDraft:
+    client = client or get_client()
+    payload = await _ask_json(client, prompt=prompts.WORKOUT_TEXT + text, max_tokens=600)
+    return _workout_from_payload(payload, source="text", now=now, raw_text=text)
+
+
+async def recognize_workout_photo(
+    images: list[ImagePart],
+    *,
+    now: datetime,
+    hint: str = "",
+    client: LLMClient | None = None,
+) -> WorkoutDraft:
+    """Экран часов, приложения или страница бумажного дневника — в том числе от руки."""
+    client = client or get_client()
+    prompt = prompts.WORKOUT_PHOTO + (f"\nПодсказка пользователя: {hint}\n" if hint else "")
+    payload = await _ask_json(client, prompt=prompt, images=images, max_tokens=700)
+    draft = _workout_from_payload(payload, source="photo", now=now, raw_text=hint or None)
+    if draft.duration_min is None and draft.steps is None and draft.distance_m is None:
+        # Ни одного числа — карточка была бы пустой; пусть скажет словами.
+        raise RecognitionError("на фото не видно ни времени, ни расстояния")
+    return draft
+
+
+# ---------------------------------------------------------------- body
+
+async def recognize_body_photo(
+    images: list[ImagePart], *, client: LLMClient | None = None
+) -> MeasurementDraft:
+    """Экран весов или распечатка биоимпеданса. Состав тела необязателен."""
+    client = client or get_client()
+    payload = await _ask_json(client, prompt=prompts.BODY_SCALE, images=images, max_tokens=400)
+    if not isinstance(payload, dict):
+        raise RecognitionError("ожидался JSON-объект")
+    draft = MeasurementDraft(
+        weight_kg=_f(payload.get("weight_kg")),
+        body_fat_pct=_f(payload.get("body_fat_pct")),
+        muscle_mass_kg=_f(payload.get("muscle_mass_kg")),
+        water_pct=_f(payload.get("water_pct")),
+        bone_mass_kg=_f(payload.get("bone_mass_kg")),
+        visceral_fat=_f(payload.get("visceral_fat")),
+        bmr_kcal=_f(payload.get("bmr_kcal")),
+        confidence=_f(payload.get("confidence")),
+    )
+    if draft.weight_kg is not None and not 25.0 <= draft.weight_kg <= 400.0:
+        draft.weight_kg = None
+    if draft.weight_kg is None and not draft.has_composition:
+        raise RecognitionError("не разобрал показания весов")
+    return draft
+
+
 async def extract_symptoms(
     text: str, *, client: LLMClient | None = None
 ) -> tuple[int | None, list[str], str]:
@@ -393,6 +501,9 @@ __all__ = [
     "correct_meal",
     "extract_symptoms",
     "parse_meal_text",
+    "parse_workout_text",
+    "recognize_body_photo",
+    "recognize_workout_photo",
     "recognize_glucose_screenshot",
     "recognize_label",
     "recognize_labs",

@@ -8,6 +8,7 @@ from aiogram import Router
 def build_router() -> Router:
     from src.handlers import (
         admin,
+        body,
         common,
         confirm,
         dictionary,
@@ -16,6 +17,7 @@ def build_router() -> Router:
         meds,
         reports,
         wellbeing,
+        workout,
     )
 
     root = Router(name="root")
@@ -23,6 +25,8 @@ def build_router() -> Router:
     root.include_router(common.router)
     root.include_router(reports.router)
     root.include_router(wellbeing.router)
+    root.include_router(body.router)
+    root.include_router(workout.router)
     root.include_router(dictionary.router)
     root.include_router(meds.router)
     root.include_router(confirm.router)

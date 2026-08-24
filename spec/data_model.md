@@ -26,6 +26,15 @@ meal_items         id meal_id product_id? name name_norm portion_g kcal protein_
 glucose_readings   id user_id measured_at value_mmol unit_input
                    source(manual|text|screenshot|cgm_api) device trend raw_text media_id confirmed
 weights            id user_id measured_at weight_kg note
+                   body_fat_pct muscle_mass_kg water_pct bone_mass_kg visceral_fat
+                   bmr_kcal source(manual|text|voice|photo|scale)   -- биоимпеданс необязателен
+body_profile       id user_id* height_cm birth_year sex(m|f) activity
+                   weight_prompt_days last_weight_prompt_at updated_at   -- uq(user_id)
+body_goals         id user_id kind(lose|maintain|gain) target_weight_kg start_weight_kg
+                   rate_kg_week target_kcal target_date started_at is_active
+workouts           id user_id started_at ended_at? kind title duration_min
+                   intensity(low|moderate|high) distance_m steps avg_hr rpe sweat
+                   kcal kcal_source(estimated|user|device) met source media_id note
 medications        id user_id taken_at name slug cid dose_text form
                    source(text|photo|dictionary) media_id note   -- журнал, не назначения
 user_dictionary    id user_id kind(meal|item|product|medication|symptom) key_norm label payload
@@ -46,7 +55,8 @@ food_stats         id user_id key_type(item|tag|product) key window n
 corrections        id user_id entity_type entity_id field old_value new_value created_at
 ```
 
-Индексы: `medications(user_id, taken_at)`, `user_dictionary(user_id, kind, key_norm)`,
+Индексы: `body_goals(user_id, is_active)`, `workouts(user_id, started_at)`,
+`weights(user_id, measured_at)`, `medications(user_id, taken_at)`, `user_dictionary(user_id, kind, key_norm)`,
 `user_nutrition(user_id, key_norm)`,
 `meals(user_id, eaten_at)`, `glucose_readings(user_id, measured_at)`,
 `wellbeing_checkins(user_id, at)`, `activity_samples(user_id, start_at)`,
@@ -67,7 +77,17 @@ seed_symptoms / list_symptoms(limit=12) / upsert_symptom(label)
 save_checkin(session, user, at, score, symptom_labels, note?, source) -> WellbeingCheckin
 load_checkins -> [(WellbeingCheckin, labels)] ; load_checkin_likes -> [CheckinLike]
 load_activity / load_activity_buckets / upsert_activity(samples) -> int
-save_weight / save_labs / save_correction
+save_weight(session, user, measured_at, weight_kg, composition?, source, note?) -> Weight
+load_weights(session, user, since?) -> [Weight]   # только вес и состав, по возрастанию
+get_body_profile / upsert_body_profile(session, user, **fields) -> BodyProfile
+get_active_goal / set_goal(session, user, kind, target_weight_kg, rate, target_kcal) -> BodyGoal
+clear_goal(session, user)
+save_workout(session, user, draft, started_at, media_id?) -> Workout
+load_workouts(session, user, since?) -> [Workout]
+day_energy(session, user, day_start, day_end) -> (consumed_kcal, carbs_g, burned_kcal)
+users_due_for_weight(session, now, default_days=14) -> [(User, BodyProfile)]
+mark_weight_prompt(session, profile, at)
+save_labs / save_correction
 save_medication(session, user, taken_at, name, dose_text?, form?, note?, source, media_id?)
   # slug/cid резолвятся здесь: любой путь записи даёт один ключ справочника
 save_medication_draft(session, user, draft, taken_at, media_id?, source) -> Medication

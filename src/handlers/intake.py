@@ -19,6 +19,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
+from src.analytics import workout as workout_math
 from src.config import load_settings
 from src.db import repo
 from src.handlers import views
@@ -30,12 +31,14 @@ from src.handlers.deps import (
     to_utc,
 )
 from src.handlers.states import (
+    BodyFlow,
     GlucoseFlow,
     LabFlow,
     MealFlow,
     MedicationFlow,
     ProductFlow,
     WellbeingFlow,
+    WorkoutFlow,
 )
 from src.ingest.correction import apply_meal_correction, split_macros
 from src.ingest.text_parse import parse_text
@@ -85,6 +88,13 @@ async def start_glucose_mode(message: Message, state: FSMContext) -> None:
         "«гк 130 mg/dl в 8:30».",
         reply_markup=cancel_only(),
     )
+
+
+@router.message(F.text == "⚖️ Записать вес")
+async def start_weight_mode(message: Message, state: FSMContext) -> None:
+    from src.handlers.body import cmd_weight
+
+    await cmd_weight(message, state)
 
 
 # ------------------------------------------------------------------ photos
@@ -151,6 +161,11 @@ async def _handle_photos(messages: list[Message], state: FSMContext, bot: Bot) -
     if mode == "meal":
         await _process_food(message, state, images, file_ids, hint=caption)
         return
+    if mode == "workout":
+        from src.handlers import workout
+
+        await workout.start_from_photo(message, state, images, file_ids, hint=caption)
+        return
 
     status = await message.answer("🔎 Смотрю, что на фото…")
     kind, confidence = await recognize.classify_photo(images)
@@ -177,6 +192,12 @@ async def _dispatch(
         await _process_labs(message, state, images, file_ids)
     elif kind == "medication":
         await _process_medication(message, state, images, file_ids)
+    elif kind == "body_scale":
+        await _process_body(message, state, images)
+    elif kind == "workout":
+        from src.handlers import workout
+
+        await workout.start_from_photo(message, state, images, file_ids, hint=hint)
     else:
         await state.update_data({PHOTOS_KEY: file_ids})
         await message.answer(
@@ -274,6 +295,21 @@ async def _process_medication(
         )
         return
     await views.show_medication_draft(message, state, draft, file_ids=file_ids)
+
+
+async def _process_body(
+    message: Message, state: FSMContext, images: list[ImagePart]
+) -> None:
+    from src.handlers.body import show_measurement_draft
+
+    try:
+        draft = await recognize.recognize_body_photo(images)
+    except recognize.RecognitionError as exc:
+        await message.answer(
+            f"Не разобрал показания весов: {exc}\nНапишите вес числом — «82,4»."
+        )
+        return
+    await show_measurement_draft(message, state, draft)
 
 
 async def _process_labs(
@@ -413,9 +449,13 @@ async def _route_voice(message: Message, state: FSMContext, text: str) -> bool:
         await handle_free_text(message, state, text)
         return True
 
-    from src.handlers import confirm, meds
+    from src.handlers import body, confirm, meds, workout
 
     routes = {
+        BodyFlow.awaiting.state: body.on_value,
+        WorkoutFlow.editing.state: workout.workout_apply_edit,
+        WorkoutFlow.retiming.state: workout.workout_apply_time,
+        WorkoutFlow.awaiting_hr.state: workout.workout_apply_hr,
         MealFlow.editing.state: confirm.meal_apply_edit,
         MealFlow.editing_macros.state: confirm.meal_apply_macros,
         MealFlow.retiming.state: confirm.meal_apply_time,
@@ -440,6 +480,37 @@ async def on_text(message: Message, state: FSMContext) -> None:
     await handle_text(message, state)
 
 
+async def _handle_body_facts(
+    message: Message, state: FSMContext, parsed, *, text: str, at
+) -> bool:
+    """Вес, рост, пол, биоимпеданс и целевой вес. `True` — сообщение исчерпано."""
+    from src.handlers import body
+
+    facts = parsed.body
+    handled = False
+    if parsed.weight_kg:
+        await body.save_weight_entry(
+            message, weight_kg=parsed.weight_kg, text=text, source="text", at=at
+        )
+        handled = True
+    elif not facts.is_empty and (facts.height_cm or facts.age or facts.sex):
+        async with session_scope() as session:
+            user = await repo.get_or_create_user(session, message.chat.id)
+            await repo.upsert_body_profile(
+                session,
+                user,
+                height_cm=facts.height_cm,
+                sex=facts.sex,
+                birth_year=(local_now(user).year - facts.age) if facts.age else None,
+            )
+        await message.answer("📋 Профиль обновил. Смотрите /body.", reply_markup=main_menu())
+        handled = True
+    if facts.target_weight_kg:
+        await body.offer_goal(message, state, target_weight_kg=facts.target_weight_kg)
+        handled = True
+    return handled
+
+
 async def handle_text(
     message: Message, state: FSMContext, *, text_override: str | None = None
 ) -> None:
@@ -447,6 +518,15 @@ async def handle_text(
     text = (text_override or message.text or "").strip()
     if not text:
         return
+    data = await state.get_data()
+    if data.get(MODE_KEY) == "workout" and parse_text(text).is_empty:
+        # «🏃 Тренировка» → следующий текст про тренировку. Но если в нём
+        # однозначный факт («сахар 8.2»), режим не мешает его записать.
+        from src.handlers import workout
+
+        await state.update_data({MODE_KEY: None})
+        if await workout.start_from_text(message, state, text):
+            return
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, message.chat.id)
         now = local_now(user)
@@ -473,11 +553,6 @@ async def handle_text(
                     + ", ".join(format_value(r.value_mmol, unit) for r in rows)
                     + f" в {stamp_local:%H:%M}"
                 )
-        if parsed.weight_kg:
-            await repo.save_weight(
-                session, user, measured_at=to_utc(stamp_local, user), weight_kg=parsed.weight_kg
-            )
-            saved.append(f"⚖️ вес {parsed.weight_kg:.1f} кг")
         for name, dose in parsed.medications:
             await repo.save_medication(
                 session, user, taken_at=to_utc(stamp_local, user), name=name, dose_text=dose
@@ -497,6 +572,11 @@ async def handle_text(
     if saved:
         await message.answer("Записал: " + "; ".join(saved), reply_markup=main_menu())
 
+    # Тело идёт своим путём: вес пишется вместе с биоимпедансом, а профиль и
+    # цель меняют дневной коридор калорий (`spec/body.md`).
+    if await _handle_body_facts(message, state, parsed, text=text, at=stamp_local):
+        return
+
     leftover = parsed.leftover
     if not leftover or len(leftover) < 3:
         if not saved:
@@ -505,6 +585,12 @@ async def handle_text(
                 reply_markup=main_menu(),
             )
         return
+
+    if workout_math.looks_like_workout(leftover):
+        from src.handlers import workout
+
+        if await workout.start_from_text(message, state, leftover):
+            return
 
     # БЖУ, названные прямо во вводе («овсянка 200 г б 12 ж 6 у 40»), не уходят
     # в модель: она бы вернула свою оценку, а числа пользователя сильнее

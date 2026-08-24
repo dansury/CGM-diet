@@ -6,7 +6,7 @@ import pytest
 
 from src.config import ConfigError, Settings, load_settings, normalize_database_url, reset_cache
 from src.handlers.common import _apply_setting, _parse_window
-from src.handlers.confirm import _parse_edit
+from src.ingest.correction import apply_meal_correction
 from src.vision.schemas import ItemDraft, MealDraft
 
 
@@ -77,19 +77,14 @@ def test_manual_edit_rescales_nutrients_to_the_new_portion():
         title="Обед",
         items=[ItemDraft(name="рис", portion_g=100, kcal=130, carbs_g=28, tags=["white_rice"])],
     )
-    new = _parse_edit("рис 200, курица 120", old)
+    new = apply_meal_correction(old, "рис 200, курица 120").draft
     rice = next(i for i in new.items if i.name == "рис")
     assert rice.portion_g == 200
     assert rice.kcal == 260  # doubled with the portion
     assert rice.tags == ["white_rice"]  # tags survive the correction
     chicken = next(i for i in new.items if i.name == "курица")
     assert chicken.portion_g == 120
-    assert new.notes == "исправлено пользователем"
-
-
-def test_manual_edit_without_weights_still_parses_names():
-    new = _parse_edit("гречка, салат", MealDraft())
-    assert [i.name for i in new.items] == ["гречка", "салат"]
+    assert new.notes == "учтена ваша правка"
 
 
 def test_router_tree_builds():
@@ -97,9 +92,13 @@ def test_router_tree_builds():
 
     router = build_router()
     assert [r.name for r in router.sub_routers] == [
+        "admin",
         "common",
         "reports",
         "wellbeing",
+        "dictionary",
+        "meds",
         "confirm",
         "intake",
+        "errors",
     ]

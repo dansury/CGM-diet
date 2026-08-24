@@ -12,24 +12,44 @@ from datetime import datetime
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
-from src.handlers.states import GlucoseFlow, LabFlow, MealFlow, ProductFlow
+from src.handlers.states import (
+    GlucoseFlow,
+    LabFlow,
+    MealFlow,
+    MedicationFlow,
+    ProductFlow,
+)
 from src.ingest.units import format_value
-from src.keyboards import confirm_glucose, confirm_labs, confirm_meal, product_actions
-from src.reporting import format_labs, format_meal_draft, format_product
+from src.keyboards import (
+    confirm_glucose,
+    confirm_labs,
+    confirm_meal,
+    confirm_medication,
+    product_actions,
+)
+from src.reporting import (
+    format_labs,
+    format_meal_draft,
+    format_medication_draft,
+    format_product,
+)
 from src.vision.schemas import (
     GlucoseDraft,
     LabDraft,
     MealDraft,
+    MedicationDraft,
     ProductDraft,
     glucose_to_dicts,
     lab_to_dict,
     meal_to_dict,
+    med_to_dict,
     product_to_dict,
 )
 
 DRAFT_KEY = "draft"
 FILES_KEY = "draft_files"
 EATEN_AT_KEY = "eaten_at"
+TAKEN_AT_KEY = "taken_at"
 MODE_KEY_VIEW = "draft_mode"
 
 
@@ -40,7 +60,10 @@ async def show_meal_draft(
     *,
     file_ids: list[str] | None = None,
     eaten_at_local: datetime | None = None,
+    applied: list[str] | None = None,
 ) -> None:
+    """`applied` — what a correction just changed, echoed back so the user sees
+    that the edit was *merged*, not that the card was rebuilt from scratch."""
     await state.set_state(MealFlow.confirming)
     await state.update_data(
         {
@@ -50,7 +73,31 @@ async def show_meal_draft(
         }
     )
     await message.answer(
-        format_meal_draft(draft, eaten_at=eaten_at_local), reply_markup=confirm_meal()
+        format_meal_draft(draft, eaten_at=eaten_at_local, applied=applied),
+        reply_markup=confirm_meal(),
+    )
+
+
+async def show_medication_draft(
+    message: Message,
+    state: FSMContext,
+    draft: MedicationDraft,
+    *,
+    file_ids: list[str] | None = None,
+    taken_at_local: datetime | None = None,
+    applied: list[str] | None = None,
+) -> None:
+    await state.set_state(MedicationFlow.confirming)
+    await state.update_data(
+        {
+            DRAFT_KEY: med_to_dict(draft),
+            FILES_KEY: file_ids or [],
+            TAKEN_AT_KEY: taken_at_local.isoformat() if taken_at_local else None,
+        }
+    )
+    await message.answer(
+        format_medication_draft(draft, taken_at=taken_at_local, applied=applied),
+        reply_markup=confirm_medication(),
     )
 
 
@@ -70,7 +117,7 @@ async def show_glucose_draft(
         lines.append(f"• {item.measured_at:%d.%m %H:%M} — {format_value(item.value_mmol, unit)}{trend}")
     if drafts[0].device:
         lines.append(f"\nУстройство: {drafts[0].device}")
-    lines.append("\nВсё верно?")
+    lines.append("\nВсё верно? Скорректировать можно текстом или голосом.")
     await message.answer("\n".join(lines), reply_markup=confirm_glucose())
 
 
@@ -81,6 +128,7 @@ async def show_product_draft(
     *,
     mode: str,
     file_ids: list[str] | None = None,
+    applied: list[str] | None = None,
 ) -> None:
     await state.set_state(ProductFlow.confirming)
     await state.update_data(
@@ -92,6 +140,8 @@ async def show_product_draft(
         text = await product_verdict_text(message.chat.id, draft)
     else:
         text = format_product(draft, mode=mode)
+    if applied:
+        text += "\n\n<b>Учтено из вашей правки:</b>\n" + "\n".join(f"• {a}" for a in applied)
     await message.answer(text, reply_markup=product_actions(mode=mode))
 
 
@@ -101,10 +151,14 @@ async def show_lab_draft(
     draft: LabDraft,
     *,
     file_ids: list[str] | None = None,
+    applied: list[str] | None = None,
 ) -> None:
     await state.set_state(LabFlow.confirming)
     await state.update_data({DRAFT_KEY: lab_to_dict(draft), FILES_KEY: file_ids or []})
-    await message.answer(format_labs(draft), reply_markup=confirm_labs())
+    text = format_labs(draft)
+    if applied:
+        text += "\n\n<b>Учтено из вашей правки:</b>\n" + "\n".join(f"• {a}" for a in applied)
+    await message.answer(text, reply_markup=confirm_labs())
 
 
 __all__ = [
@@ -112,8 +166,10 @@ __all__ = [
     "EATEN_AT_KEY",
     "FILES_KEY",
     "MODE_KEY_VIEW",
+    "TAKEN_AT_KEY",
     "show_glucose_draft",
     "show_lab_draft",
     "show_meal_draft",
+    "show_medication_draft",
     "show_product_draft",
 ]

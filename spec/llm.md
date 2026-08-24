@@ -52,3 +52,21 @@ POST `/chat/completions` (OpenAI-совместимый). Заголовки `HT
 весь текст, срез от первой `{`/`[` до последней `}`/`]`; каждый кандидат
 пробуется как есть и после срезания висячих запятых. Ничего не разобралось →
 `ValueError`.
+
+
+## Модель под слот
+
+`get_client()` отдаёт клиента, модель выбирается на вызове:
+`recognize._ask_json` подставляет `model_selection.current("vision"|"text")`,
+`handlers/intake.on_voice` — `current("stt")`. Это чтение процессного кэша,
+слой распознавания в БД не ходит. Подробности — `spec/models.md`.
+
+`transcribe(audio, mime, *, model=None)` — `model` добавлен в протокол
+`LLMClient`, чтобы слот `stt` тоже был управляемым.
+
+## Фолбэк на 429
+
+`set_free_alternates(ids)` наполняется на старте из каталога свободных моделей;
+`build_client` заворачивает клиента в `FallbackLLMClient`, когда альтернативы
+есть и `FREE_FALLBACK_ENABLED=true`. Цепочка не уходит со свободной модели на
+платную. `spec/models.md` § Фолбэк.

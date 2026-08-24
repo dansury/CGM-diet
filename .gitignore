@@ -13,5 +13,5 @@ data/
 *.egg-info/
 build/
 dist/
-charts/
+/charts/
 .DS_Store

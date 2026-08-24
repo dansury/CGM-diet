@@ -17,8 +17,10 @@ from src.db import repo
 from src.handlers.deps import local_now, session_scope, to_utc
 from src.handlers.states import GlucoseFlow, LabFlow, MealFlow, ProductFlow
 from src.handlers.views import DRAFT_KEY, EATEN_AT_KEY, FILES_KEY
+from src.ingest.correction import apply_meal_correction
 from src.ingest.units import MGDL, MMOL, format_value
 from src.logging_setup import get_logger
+from src.vision import recognize
 from src.vision.schemas import (
     ItemDraft,
     MealDraft,
@@ -58,11 +60,20 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
         meal = await repo.save_meal(
             session, user, draft, eaten_at=to_utc(eaten_local, user), media_id=media_id
         )
+        # Second sighting of a dish turns it into a one-tap button (/my).
+        await repo.remember_meal(session, user, draft)
+        title = meal.title or "приём пищи"
+        shortcut = await repo.suggest_dictionary(session, user, title, kinds=("meal",), limit=1)
     await state.clear()
     await callback.answer("Записано")
+    tail = (
+        "\n⭐️ Это блюдо теперь в личном словаре — в следующий раз хватит одной кнопки (/my)."
+        if shortcut
+        else ""
+    )
     await callback.message.edit_text(
-        f"✅ Записано: <b>{meal.title or 'приём пищи'}</b> в {eaten_local:%H:%M}.\n"
-        "Через час-полтора пришлите сахар — и приём попадёт в статистику."
+        f"✅ Записано: <b>{title}</b> в {eaten_local:%H:%M}.\n"
+        f"Через час-полтора пришлите сахар — и приём попадёт в статистику.{tail}"
     )
 
 
@@ -78,23 +89,55 @@ async def meal_edit(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(MealFlow.editing)
-async def meal_apply_edit(message: Message, state: FSMContext) -> None:
+async def meal_apply_edit(
+    message: Message, state: FSMContext, *, text_override: str | None = None
+) -> None:
+    """Merge the correction into the recognition; never replace it wholesale.
+
+    `text_override` carries a transcribed voice note — a correction can be
+    spoken as easily as typed (`spec/ingest.md` § Корректировки).
+    """
+    instruction = (text_override or message.text or "").strip()
+    if not instruction:
+        await message.answer("Скажите или напишите, что поправить.")
+        return
     data = await state.get_data()
     old = meal_from_dict(data.get(DRAFT_KEY) or {})
-    new = _parse_edit(message.text or "", old)
+
+    result = apply_meal_correction(old, instruction)
+    new = result.draft
+    if result.unmatched or not result.changes:
+        # Something the deterministic pass could not place — hand the draft and
+        # the instruction to the model, which edits rather than re-recognises.
+        try:
+            new = await recognize.correct_meal(old, instruction)
+        except recognize.RecognitionError:
+            if not result.changes:
+                await message.answer(
+                    "Не понял правку. Скажите проще — «убери салат», «гречки было 250», "
+                    "«вместо курицы индейка»."
+                )
+                return
+
     if not new.items:
-        await message.answer("Не разобрал. Формат: <code>гречка 250, курица 100</code>")
+        await message.answer(
+            "После правки не осталось ни одного блюда. Нажмите «🗑 Отменить», "
+            "если запись не нужна."
+        )
         return
+
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, message.chat.id)
+        # The correction itself is data: it outranks the machine recognition
+        # for good (constitution, III) and feeds nothing back to the model.
         await repo.save_correction(
             session,
             user,
             entity_type="meal_draft",
             entity_id=None,
             field="items",
-            old_value=", ".join(f"{i.name} {i.portion_g or ''}".strip() for i in old.items),
-            new_value=message.text,
+            old_value=_items_line(old),
+            new_value=instruction,
         )
     from src.handlers.views import show_meal_draft
 
@@ -106,52 +149,12 @@ async def meal_apply_edit(message: Message, state: FSMContext) -> None:
         eaten_at_local=(
             datetime.fromisoformat(data[EATEN_AT_KEY]) if data.get(EATEN_AT_KEY) else None
         ),
+        applied=[change.describe() for change in result.changes],
     )
 
 
-def _parse_edit(text: str, old: MealDraft) -> MealDraft:
-    """`гречка 250, курица 100` → items, keeping nutrients scaled where known.
-
-    Nutrients from the original recognition are rescaled by the new portion so a
-    corrected weight does not silently keep the old calories.
-    """
-    from src.analytics.tags import infer_tags, normalize_name
-
-    by_name = {normalize_name(i.name): i for i in old.items}
-    items: list[ItemDraft] = []
-    for chunk in text.replace(";", ",").split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        parts = chunk.rsplit(maxsplit=1)
-        portion: float | None = None
-        name = chunk
-        if len(parts) == 2:
-            try:
-                portion = float(parts[1].replace(",", ".").replace("г", "").strip())
-                name = parts[0].strip()
-            except ValueError:
-                portion = None
-        previous = by_name.get(normalize_name(name))
-        item = ItemDraft(name=name, portion_g=portion, tags=infer_tags(name))
-        if previous is not None:
-            item.tags = previous.tags or item.tags
-            scale = 1.0
-            if portion and previous.portion_g:
-                scale = portion / previous.portion_g
-            for field_name in ("kcal", "protein_g", "fat_g", "carbs_g", "fiber_g"):
-                value = getattr(previous, field_name)
-                if value is not None:
-                    setattr(item, field_name, round(value * scale, 1))
-        items.append(item)
-    return MealDraft(
-        title=old.title or (items[0].name if items else ""),
-        items=items,
-        confidence=1.0,
-        notes="исправлено пользователем",
-        source=old.source,
-        raw_text=text,
-    )
+def _items_line(draft: MealDraft) -> str:
+    return ", ".join(f"{i.name} {i.portion_g or ''}".strip() for i in draft.items)
 
 
 @router.callback_query(F.data == "meal:time", MealFlow.confirming)
@@ -162,13 +165,15 @@ async def meal_time(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(MealFlow.retiming)
-async def meal_apply_time(message: Message, state: FSMContext) -> None:
+async def meal_apply_time(
+    message: Message, state: FSMContext, *, text_override: str | None = None
+) -> None:
     from src.ingest.text_parse import parse_text
 
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, message.chat.id)
         now = local_now(user)
-    parsed = parse_text(message.text or "", now=now)
+    parsed = parse_text(text_override or message.text or "", now=now)
     if parsed.at is None:
         await message.answer("Не понял время. Напишите, например, <code>13:40</code>.")
         return
@@ -253,7 +258,9 @@ async def glucose_edit(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(GlucoseFlow.editing)
-async def glucose_apply_edit(message: Message, state: FSMContext) -> None:
+async def glucose_apply_edit(
+    message: Message, state: FSMContext, *, text_override: str | None = None
+) -> None:
     from src.ingest.text_parse import parse_text
     from src.ingest.units import to_mmol
     from src.vision.schemas import GlucoseDraft
@@ -263,7 +270,7 @@ async def glucose_apply_edit(message: Message, state: FSMContext) -> None:
         now = local_now(user)
         unit = user.glucose_unit
     drafts: list[GlucoseDraft] = []
-    for line in (message.text or "").splitlines():
+    for line in (text_override or message.text or "").splitlines():
         parsed = parse_text(line, now=now)
         for value, raw_unit in parsed.glucose:
             drafts.append(
@@ -347,6 +354,96 @@ async def product_more(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
+@router.callback_query(F.data == "prod:edit", ProductFlow.confirming)
+async def product_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(ProductFlow.editing)
+    await callback.answer()
+    await callback.message.answer(
+        "Напишите или наговорите, что поправить на карточке:\n"
+        "<code>это творог 5%</code> · <code>углеводы 12</code> · <code>ккал 86</code>"
+    )
+
+
+@router.message(ProductFlow.editing)
+async def product_apply_edit(
+    message: Message, state: FSMContext, *, text_override: str | None = None
+) -> None:
+    """Merge into the label reading: untouched fields keep what was scanned."""
+    instruction = (text_override or message.text or "").strip()
+    data = await state.get_data()
+    draft = product_from_dict(data.get(DRAFT_KEY) or {})
+    applied = _apply_product_correction(draft, instruction)
+    if not applied:
+        await message.answer(
+            "Не понял правку. Например: <code>углеводы 12</code>, "
+            "<code>это творог 5%</code>."
+        )
+        return
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, message.chat.id)
+        await repo.save_correction(
+            session,
+            user,
+            entity_type="product_draft",
+            entity_id=None,
+            field="label",
+            old_value=draft.name,
+            new_value=instruction,
+        )
+    from src.handlers.views import show_product_draft
+
+    await show_product_draft(
+        message,
+        state,
+        draft,
+        mode=data.get("draft_mode") or "eaten",
+        file_ids=data.get(FILES_KEY),
+        applied=applied,
+    )
+
+
+_PRODUCT_FIELDS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+    ("kcal_100", "ккал", ("ккал", "калори", "энергет")),
+    ("protein_100", "белки", ("белк", "белок", "протеин")),
+    ("fat_100", "жиры", ("жир",)),
+    ("carbs_100", "углеводы", ("углевод",)),
+    ("sugars_100", "сахар", ("сахар",)),
+    ("fiber_100", "клетчатка", ("клетчатк", "волокн")),
+)
+
+
+def _apply_product_correction(draft, instruction: str) -> list[str]:
+    """Mutates `draft` in place; returns human-readable descriptions of changes."""
+    import re
+
+    applied: list[str] = []
+    text = (instruction or "").strip()
+    if not text:
+        return applied
+    for clause in re.split(r"[,;\n]", text):
+        clause = clause.strip(" .")
+        if not clause:
+            continue
+        number = re.search(r"(\d+(?:[.,]\d+)?)", clause)
+        lowered = clause.lower()
+        matched = False
+        for attribute, label, keywords in _PRODUCT_FIELDS:
+            if number and any(keyword in lowered for keyword in keywords):
+                value = float(number.group(1).replace(",", "."))
+                before = getattr(draft, attribute)
+                setattr(draft, attribute, value)
+                applied.append(f"{label} на 100 г — {before if before is not None else '—'} → {value:g}")
+                matched = True
+                break
+        if matched:
+            continue
+        name = re.sub(r"^(?:это|называется|не\s+\S+\s*,?\s*а)\s+", "", clause, flags=re.I).strip()
+        if name and name.lower() != (draft.name or "").lower() and not number:
+            applied.append(f"название — {draft.name or '—'} → {name}")
+            draft.name = name
+    return applied
+
+
 @router.callback_query(F.data == "prod:drop")
 async def product_drop(callback: CallbackQuery, state: FSMContext) -> None:
     await _drop(callback, state, "Продукт не сохранён.")
@@ -377,6 +474,65 @@ async def lab_ok(callback: CallbackQuery, state: FSMContext) -> None:
             + ".\nЭто повод показать результат врачу — я диагнозов не ставлю."
         )
     await callback.message.edit_text(f"✅ Сохранено показателей: {len(rows)}.{tail}")
+
+
+@router.callback_query(F.data == "lab:edit", LabFlow.confirming)
+async def lab_edit(callback: CallbackQuery, state: FSMContext) -> None:
+    await state.set_state(LabFlow.editing)
+    await callback.answer()
+    await callback.message.answer(
+        "Напишите или наговорите правильные значения — маркер и число:\n"
+        "<code>глюкоза 6.1, HbA1c 5.8</code>"
+    )
+
+
+@router.message(LabFlow.editing)
+async def lab_apply_edit(
+    message: Message, state: FSMContext, *, text_override: str | None = None
+) -> None:
+    """Only the markers named are touched; the rest of the panel stays as read."""
+    import re
+
+    instruction = (text_override or message.text or "").strip()
+    data = await state.get_data()
+    draft = lab_from_dict(data.get(DRAFT_KEY) or {})
+    applied: list[str] = []
+    for clause in re.split(r"[,;\n]", instruction):
+        clause = clause.strip(" .")
+        match = re.match(r"^(?P<name>.+?)[\s:=]+(?P<value>\d+(?:[.,]\d+)?)$", clause)
+        if not match:
+            continue
+        name = match.group("name").strip().lower()
+        value = float(match.group("value").replace(",", "."))
+        for marker in draft.markers:
+            if name in marker.marker.lower() or marker.marker.lower() in name:
+                before = marker.value
+                marker.value = value
+                marker.value_text = None
+                applied.append(f"{marker.marker} — {before if before is not None else '—'} → {value:g}")
+                break
+        else:
+            from src.vision.schemas import MarkerDraft
+
+            draft.markers.append(MarkerDraft(marker=match.group("name").strip(), value=value))
+            applied.append(f"добавлен маркер {match.group('name').strip()} — {value:g}")
+    if not applied:
+        await message.answer("Не разобрал. Например: <code>глюкоза 6.1</code>")
+        return
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, message.chat.id)
+        await repo.save_correction(
+            session,
+            user,
+            entity_type="lab_draft",
+            entity_id=None,
+            field="markers",
+            old_value=", ".join(m.marker for m in draft.markers),
+            new_value=instruction,
+        )
+    from src.handlers.views import show_lab_draft
+
+    await show_lab_draft(message, state, draft, file_ids=data.get(FILES_KEY), applied=applied)
 
 
 @router.callback_query(F.data == "lab:drop")

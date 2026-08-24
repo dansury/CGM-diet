@@ -137,6 +137,39 @@ FIXTURES: dict[str, Any] = {
         ],
         "notes": "",
     },
+    "medication_photo": {
+        "name": "Глюкофаж 850 мг",
+        "inn": "метформин",
+        "dose_text": "850 мг",
+        "form": "таблетки",
+        "confidence": 0.83,
+    },
+    "meal_correction": {
+        "title": "Гречка с индейкой",
+        "items": [
+            {
+                "name": "гречневая каша",
+                "portion_g": 250,
+                "kcal": 278,
+                "protein_g": 9.7,
+                "fat_g": 2.8,
+                "carbs_g": 52.8,
+                "fiber_g": 6.3,
+                "tags": ["whole_grain", "starch"],
+            },
+            {
+                "name": "индейка",
+                "portion_g": 120,
+                "kcal": 190,
+                "protein_g": 35.0,
+                "fat_g": 4.0,
+                "carbs_g": 0.0,
+                "fiber_g": 0.0,
+                "tags": ["protein"],
+            },
+        ],
+        "notes": "",
+    },
     "classify_photo": {"kind": "food", "confidence": 0.77},
     "symptom_extract": {"score": None, "symptoms": ["сонливость", "потливость"], "note": ""},
 }
@@ -187,7 +220,9 @@ class MockClient:
     ) -> Completion:
         return self._answer(f"{system or ''}\n{prompt}")
 
-    async def transcribe(self, audio: bytes, mime: str = "audio/ogg") -> str:
+    async def transcribe(
+        self, audio: bytes, mime: str = "audio/ogg", *, model: str | None = None
+    ) -> str:
         return "чувствую сонливость и потливость, самочувствие на три"
 
     async def aclose(self) -> None:

@@ -133,6 +133,13 @@ class Settings:
 
     health_sync_secret: str = ""
 
+    # error reports to the owner (`spec/errors.md`)
+    error_reports_enabled: bool = True
+    error_report_tg_ids: tuple[int, ...] = ()
+
+    # free-model fallback on 429 (`spec/models.md`)
+    free_fallback_enabled: bool = True
+
     extras: dict[str, str] = field(default_factory=dict, compare=False)
 
     def require(self, *keys: str) -> None:
@@ -143,6 +150,14 @@ class Settings:
     @property
     def vision_available(self) -> bool:
         return self.llm_mock or bool(self.openrouter_api_key)
+
+    @property
+    def error_recipients(self) -> tuple[int, ...]:
+        """Who gets error reports: the explicit list, else the owners."""
+        return self.error_report_tg_ids or self.owner_tg_ids
+
+    def is_owner(self, tg_id: int) -> bool:
+        return tg_id in self.owner_tg_ids
 
     @property
     def stt_available(self) -> bool:
@@ -195,6 +210,9 @@ def load_settings(*, dotenv_path: Path | None = None, refresh: bool = False) -> 
         baseline_window=_read_int("BASELINE_WINDOW", 20),
         min_observations=_read_int("MIN_OBSERVATIONS", 3),
         health_sync_secret=_read("HEALTH_SYNC_SECRET") or "",
+        error_reports_enabled=_read_bool("ERROR_REPORTS_ENABLED", True),
+        error_report_tg_ids=_read_int_tuple("ERROR_REPORT_TG_IDS"),
+        free_fallback_enabled=_read_bool("FREE_FALLBACK_ENABLED", True),
     )
     _CACHE = settings
     return settings

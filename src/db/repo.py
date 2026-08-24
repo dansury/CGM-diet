@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.analytics.activity import ActivityBucket
+from src.analytics.meds import MedicationLike
 from src.analytics.symptoms import CheckinLike
 from src.analytics.tags import normalize_name
 from src.analytics.windows import GlucosePoint, MealLike
@@ -21,6 +23,7 @@ from src.db.models import (
     AnalysisResult,
     CheckinSymptom,
     Correction,
+    DictionaryEntry,
     GlucoseReading,
     Meal,
     MealItem,
@@ -28,13 +31,21 @@ from src.db.models import (
     Medication,
     Product,
     ProductPhoto,
+    SettingsKV,
     Symptom,
     User,
     Weight,
     WellbeingCheckin,
     utcnow,
 )
-from src.vision.schemas import GlucoseDraft, LabDraft, MealDraft, ProductDraft
+from src.vision.schemas import (
+    GlucoseDraft,
+    LabDraft,
+    MealDraft,
+    MedicationDraft,
+    ProductDraft,
+    meal_to_dict,
+)
 
 # Seeded symptom glossary — the starting buttons before the user's own
 # vocabulary takes over (see `spec/wellbeing.md` § Dynamic glossary).
@@ -443,11 +454,265 @@ async def save_medication(
     taken_at: datetime,
     name: str,
     dose_text: str | None = None,
+    form: str | None = None,
+    note: str | None = None,
+    source: str = "text",
+    media_id: int | None = None,
 ) -> Medication:
-    row = Medication(user_id=user.id, taken_at=taken_at, name=name, dose_text=dose_text)
+    """Log one dose. `slug`/`cid` are resolved here so every write path — photo,
+    text, dictionary button — lands with the same reference key."""
+    from src.meds.catalog import normalize_drug, resolve_cid
+
+    slug = normalize_drug(name)
+    row = Medication(
+        user_id=user.id,
+        taken_at=taken_at,
+        name=name,
+        slug=slug or None,
+        cid=resolve_cid(name),
+        dose_text=dose_text,
+        form=form,
+        note=note,
+        source=source,
+        media_id=media_id,
+    )
     session.add(row)
     await session.flush()
     return row
+
+
+async def save_medication_draft(
+    session: AsyncSession,
+    user: User,
+    draft: MedicationDraft,
+    *,
+    taken_at: datetime,
+    media_id: int | None = None,
+    source: str = "photo",
+) -> Medication:
+    row = await save_medication(
+        session,
+        user,
+        taken_at=taken_at,
+        name=draft.name,
+        dose_text=draft.dose_text,
+        form=draft.form,
+        note=draft.note,
+        source=source,
+        media_id=media_id,
+    )
+    await bump_dictionary(
+        session,
+        user,
+        kind="medication",
+        label=draft.name,
+        payload={
+            "dose_text": draft.dose_text,
+            "form": draft.form,
+            "inn": draft.inn,
+            "slug": row.slug,
+            "cid": row.cid,
+        },
+    )
+    return row
+
+
+async def load_medications(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[Medication]:
+    stmt = select(Medication).where(Medication.user_id == user.id).order_by(Medication.taken_at)
+    if since is not None:
+        stmt = stmt.where(Medication.taken_at >= since)
+    return list(await session.scalars(stmt))
+
+
+async def load_medication_likes(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[MedicationLike]:
+    """Doses reshaped for the analytics layer (no ORM beyond this module)."""
+    return [
+        MedicationLike(
+            id=row.id,
+            taken_at=_aware(row.taken_at),
+            name=row.name,
+            slug=row.slug or normalize_name(row.name),
+        )
+        for row in await load_medications(session, user, since=since)
+    ]
+
+
+# ------------------------------------------------------------------ dictionary
+
+#: how many sightings a kind needs before it is offered as a shortcut.
+#: Meals must be seen twice ("блюда, которые встретились более 1 раза");
+#: a medication photographed once is already a routine.
+MIN_HITS: dict[str, int] = {"meal": 2, "item": 2, "medication": 1}
+
+DICTIONARY_KINDS: tuple[str, ...] = ("meal", "item", "medication")
+
+
+async def bump_dictionary(
+    session: AsyncSession,
+    user: User,
+    *,
+    kind: str,
+    label: str,
+    payload: dict | None = None,
+    hits: int = 1,
+) -> DictionaryEntry | None:
+    """Count one sighting of `label`; create the entry on the first one.
+
+    A hidden entry (user tapped 🗑) keeps counting but stays hidden — deleting a
+    shortcut must not be undone by the next meal.
+    """
+    label = (label or "").strip()
+    key = normalize_name(label)
+    if not key or kind not in DICTIONARY_KINDS:
+        return None
+    entry = await session.scalar(
+        select(DictionaryEntry).where(
+            DictionaryEntry.user_id == user.id,
+            DictionaryEntry.kind == kind,
+            DictionaryEntry.key_norm == key,
+        )
+    )
+    if entry is None:
+        entry = DictionaryEntry(
+            user_id=user.id,
+            kind=kind,
+            key_norm=key,
+            label=label[:128],
+            payload=payload,
+            hits=hits,
+            last_used_at=utcnow(),
+        )
+        session.add(entry)
+    else:
+        entry.hits += hits
+        entry.last_used_at = utcnow()
+        if payload:
+            entry.payload = payload
+    await session.flush()
+    return entry
+
+
+def _visible(kind_column: Any = DictionaryEntry.kind) -> Any:
+    """`hits >= MIN_HITS[kind]`, expressed for the query layer."""
+    from sqlalchemy import case
+
+    return DictionaryEntry.hits >= case(MIN_HITS, value=kind_column, else_=1)
+
+
+def _order() -> tuple[Any, ...]:
+    return (
+        DictionaryEntry.pinned.desc(),
+        DictionaryEntry.hits.desc(),
+        DictionaryEntry.last_used_at.desc(),
+    )
+
+
+async def suggest_dictionary(
+    session: AsyncSession,
+    user: User,
+    prefix: str,
+    *,
+    kinds: Sequence[str] | None = None,
+    limit: int = 6,
+) -> list[DictionaryEntry]:
+    """Prefix first, substring second — «гре» finds «гречка», «чка» still finds it."""
+    key = normalize_name(prefix)
+    if not key:
+        return []
+    base = select(DictionaryEntry).where(
+        DictionaryEntry.user_id == user.id,
+        DictionaryEntry.is_active.is_(True),
+        _visible(),
+    )
+    if kinds:
+        base = base.where(DictionaryEntry.kind.in_(tuple(kinds)))
+    found: list[DictionaryEntry] = []
+    seen: set[int] = set()
+    for condition in (
+        DictionaryEntry.key_norm.startswith(key),
+        DictionaryEntry.key_norm.contains(key),
+    ):
+        rows = await session.scalars(base.where(condition).order_by(*_order()).limit(limit))
+        for row in rows:
+            if row.id not in seen:
+                seen.add(row.id)
+                found.append(row)
+        if len(found) >= limit:
+            break
+    return found[:limit]
+
+
+async def list_dictionary(
+    session: AsyncSession,
+    user: User,
+    *,
+    kind: str | None = None,
+    limit: int = 30,
+    offset: int = 0,
+    include_hidden: bool = False,
+) -> list[DictionaryEntry]:
+    stmt = select(DictionaryEntry).where(DictionaryEntry.user_id == user.id, _visible())
+    if kind:
+        stmt = stmt.where(DictionaryEntry.kind == kind)
+    if not include_hidden:
+        stmt = stmt.where(DictionaryEntry.is_active.is_(True))
+    stmt = stmt.order_by(*_order()).offset(offset).limit(limit)
+    return list(await session.scalars(stmt))
+
+
+async def get_dictionary_entry(
+    session: AsyncSession, user: User, entry_id: int
+) -> DictionaryEntry | None:
+    return await session.scalar(
+        select(DictionaryEntry).where(
+            DictionaryEntry.id == entry_id, DictionaryEntry.user_id == user.id
+        )
+    )
+
+
+async def touch_dictionary(session: AsyncSession, entry: DictionaryEntry) -> None:
+    entry.hits += 1
+    entry.last_used_at = utcnow()
+    await session.flush()
+
+
+async def hide_dictionary(session: AsyncSession, entry: DictionaryEntry) -> None:
+    entry.is_active = False
+    await session.flush()
+
+
+async def remember_meal(session: AsyncSession, user: User, draft: MealDraft) -> None:
+    """One confirmed meal → dictionary sightings for the dish and its items."""
+    title = (draft.title or "").strip()
+    if title:
+        await bump_dictionary(session, user, kind="meal", label=title, payload=meal_to_dict(draft))
+    for item in draft.items:
+        await bump_dictionary(session, user, kind="item", label=item.name)
+
+
+# ------------------------------------------------------------------ settings kv
+
+async def get_setting(session: AsyncSession, key: str) -> Any:
+    row = await session.get(SettingsKV, key)
+    return row.value if row is not None else None
+
+
+async def set_setting(session: AsyncSession, key: str, value: Any) -> None:
+    row = await session.get(SettingsKV, key)
+    if row is None:
+        session.add(SettingsKV(key=key, value=value))
+    else:
+        row.value = value
+        row.updated_at = utcnow()
+    await session.flush()
+
+
+async def all_settings(session: AsyncSession) -> dict[str, Any]:
+    return {row.key: row.value for row in await session.scalars(select(SettingsKV))}
 
 
 async def save_labs(
@@ -556,6 +821,7 @@ async def delete_user_data(session: AsyncSession, user: User, *, drop_user: bool
         Product,
         MediaFile,
         Correction,
+        DictionaryEntry,
     ):
         if model is CheckinSymptom:
             checkin_ids = select(WellbeingCheckin.id).where(WellbeingCheckin.user_id == user.id)
@@ -596,6 +862,7 @@ async def counts(session: AsyncSession, user: User) -> dict[str, int]:
         ("products", Product),
         ("labs", AnalysisResult),
         ("activity", ActivitySample),
+        ("medications", Medication),
     ):
         out[name] = int(
             await session.scalar(
@@ -611,13 +878,21 @@ def day_bounds(now: datetime, *, days: int = 1) -> datetime:
 
 
 __all__ = [
+    "DICTIONARY_KINDS",
+    "MIN_HITS",
     "SEED_SYMPTOMS",
+    "all_settings",
+    "bump_dictionary",
     "counts",
     "day_bounds",
     "delete_user_data",
     "find_product",
+    "get_dictionary_entry",
     "get_or_create_user",
+    "get_setting",
     "get_user",
+    "hide_dictionary",
+    "list_dictionary",
     "list_symptoms",
     "load_activity",
     "load_activity_buckets",
@@ -626,7 +901,10 @@ __all__ = [
     "load_glucose",
     "load_meal_likes",
     "load_meals",
+    "load_medication_likes",
+    "load_medications",
     "load_points",
+    "remember_meal",
     "save_checkin",
     "save_correction",
     "save_glucose",
@@ -634,9 +912,13 @@ __all__ = [
     "save_meal",
     "save_media",
     "save_medication",
+    "save_medication_draft",
     "save_product",
     "save_weight",
     "seed_symptoms",
+    "set_setting",
+    "suggest_dictionary",
+    "touch_dictionary",
     "upsert_activity",
     "upsert_symptom",
     "delete_user_data",

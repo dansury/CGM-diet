@@ -57,3 +57,30 @@ JSON на запись (`ts, level, logger, msg, exc`). Шумные логге�
 - `scripts/entrypoint.sh` — `alembic upgrade head` с 3 попытками (fail-open),
   затем `python -m src.bot`.
 - `docker-compose.yml` — `db` (postgres:16-alpine) → `migrate` → `bot`.
+
+
+## Логирование: кольцевой буфер и форвардер
+
+`logging_setup` вешает на root второй хендлер `_CaptureHandler`:
+
+- WARNING+ копятся в кольце на 50 записей — `recent_errors(limit)`, это источник
+  для `/errors`;
+- ERROR+ уходят в подключаемый сток `set_error_forwarder(sink)`; сток —
+  `errors_report.forward_log_event`. Это единственный путь, которым fail-soft
+  код (залогировал и деградировал, исключение не бросил) доходит до владельца.
+  Сбой самого стока проглатывается: логирование не должно ломаться.
+
+Подробности доставки — `spec/errors.md`.
+
+## Данные вне репозитория
+
+`data/` в `.gitignore` целиком:
+
+- `data/side_effects/ChSe-Decagon_monopharmacy.csv.gz` — справочник побочек,
+  `python -m scripts.fetch_side_effects`; без него работает committed-выборка
+  `seeds/side_effects_sample.csv`;
+- `data/free_models.json` — суточный кэш каталога свободных моделей.
+
+В `.gitignore` правило для выгруженных графиков — `/charts/`, именно со слэшем:
+без него оно матчилось и на `src/charts/`, и модуль отрисовки не попадал в
+репозиторий.

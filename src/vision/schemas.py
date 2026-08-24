@@ -54,6 +54,19 @@ class ProductDraft:
 
 
 @dataclass(slots=True)
+class MedicationDraft:
+    """One dose the user is about to log. The bot never proposes a dose."""
+
+    name: str = ""
+    inn: str | None = None          # international nonproprietary name, if read
+    dose_text: str | None = None    # «850 мг», «1 таблетка» — as printed/said
+    form: str | None = None         # таблетки|капсулы|раствор…
+    note: str | None = None
+    confidence: float | None = None
+    raw_text: str | None = None
+
+
+@dataclass(slots=True)
 class GlucoseDraft:
     measured_at: datetime
     value_mmol: float
@@ -98,6 +111,7 @@ __all__ = [
     "LabDraft",
     "MarkerDraft",
     "MealDraft",
+    "MedicationDraft",
     "ProductDraft",
 ]
 
@@ -162,6 +176,22 @@ def product_from_dict(data: dict) -> ProductDraft:
     return ProductDraft(**data)
 
 
+def med_to_dict(draft: MedicationDraft) -> dict:
+    return {
+        "name": draft.name,
+        "inn": draft.inn,
+        "dose_text": draft.dose_text,
+        "form": draft.form,
+        "note": draft.note,
+        "confidence": draft.confidence,
+        "raw_text": draft.raw_text,
+    }
+
+
+def med_from_dict(data: dict) -> MedicationDraft:
+    return MedicationDraft(**data)
+
+
 def glucose_to_dicts(drafts: list[GlucoseDraft]) -> list[dict]:
     return [
         {
@@ -223,6 +253,8 @@ __all__ += [
     "lab_to_dict",
     "meal_from_dict",
     "meal_to_dict",
+    "med_from_dict",
+    "med_to_dict",
     "product_from_dict",
     "product_to_dict",
 ]

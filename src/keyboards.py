@@ -24,6 +24,7 @@ def main_menu() -> ReplyKeyboardMarkup:
             [KeyboardButton(text="🍽 Записать еду"), KeyboardButton(text="🩸 Записать сахар")],
             [KeyboardButton(text="🛒 Проверить продукт"), KeyboardButton(text="🙂 Самочувствие")],
             [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📈 График")],
+            [KeyboardButton(text="⭐️ Мой словарь"), KeyboardButton(text="💊 Лекарства")],
         ],
         resize_keyboard=True,
         input_field_placeholder="Пришлите фото, текст или голосовое",
@@ -34,8 +35,8 @@ def confirm_meal() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Верно", callback_data="meal:ok"),
-                InlineKeyboardButton(text="✏️ Исправить", callback_data="meal:edit"),
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data="meal:ok"),
+                InlineKeyboardButton(text="✏️ Скорректировать", callback_data="meal:edit"),
             ],
             [
                 InlineKeyboardButton(text="🕒 Другое время", callback_data="meal:time"),
@@ -50,8 +51,8 @@ def confirm_glucose() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Сохранить", callback_data="glu:ok"),
-                InlineKeyboardButton(text="✏️ Исправить", callback_data="glu:edit"),
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data="glu:ok"),
+                InlineKeyboardButton(text="✏️ Скорректировать", callback_data="glu:edit"),
             ],
             [
                 InlineKeyboardButton(text="🔁 Сменить единицы", callback_data="glu:unit"),
@@ -65,9 +66,26 @@ def confirm_labs() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="✅ Сохранить", callback_data="lab:ok"),
-                InlineKeyboardButton(text="🗑 Отменить", callback_data="lab:drop"),
-            ]
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data="lab:ok"),
+                InlineKeyboardButton(text="✏️ Скорректировать", callback_data="lab:edit"),
+            ],
+            [InlineKeyboardButton(text="🗑 Отменить", callback_data="lab:drop")],
+        ]
+    )
+
+
+def confirm_medication() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✅ Подтвердить", callback_data="med:ok"),
+                InlineKeyboardButton(text="✏️ Скорректировать", callback_data="med:edit"),
+            ],
+            [
+                InlineKeyboardButton(text="🕒 Другое время", callback_data="med:time"),
+                InlineKeyboardButton(text="🗑 Отменить", callback_data="med:drop"),
+            ],
+            [InlineKeyboardButton(text="🤖 Это не лекарство", callback_data="photo:reroute")],
         ]
     )
 
@@ -89,7 +107,79 @@ def product_actions(*, mode: str) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="💾 Только запомнить", callback_data="prod:save"),
         ]
     )
-    rows.append([InlineKeyboardButton(text="🗑 Отменить", callback_data="prod:drop")])
+    rows.append(
+        [
+            InlineKeyboardButton(text="✏️ Скорректировать", callback_data="prod:edit"),
+            InlineKeyboardButton(text="🗑 Отменить", callback_data="prod:drop"),
+        ]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+KIND_ICONS = {"meal": "🍽", "item": "🥄", "medication": "💊"}
+
+
+def dictionary_suggestions(entries: list[tuple[int, str, str]]) -> InlineKeyboardMarkup:
+    """Prediction by the first characters: one tap instead of a fresh recognition.
+
+    `entries` are (id, kind, label); the id is all that travels in callback data
+    (Telegram's 64-byte limit), the payload stays in the database.
+    """
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{KIND_ICONS.get(kind, '•')} {label}"[:64],
+                callback_data=f"dict:use:{entry_id}",
+            )
+        ]
+        for entry_id, kind, label in entries
+    ]
+    rows.append([InlineKeyboardButton(text="➕ Разобрать как новое", callback_data="dict:new")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def dictionary_page(
+    entries: list[tuple[int, str, str]], *, kind: str, mode: str = "use", offset: int = 0
+) -> InlineKeyboardMarkup:
+    """`mode`: `use` — записать одним нажатием, `del` — убрать из словаря."""
+    prefix = "dict:rm" if mode == "del" else "dict:use"
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{'🗑 ' if mode == 'del' else ''}{KIND_ICONS.get(k, '•')} {label}"[:64],
+                callback_data=f"{prefix}:{entry_id}",
+            )
+        ]
+        for entry_id, k, label in entries
+    ]
+    switch = [
+        InlineKeyboardButton(
+            text="🍽 Блюда" if kind != "meal" else "• 🍽 Блюда",
+            callback_data="dict:page:meal:0",
+        ),
+        InlineKeyboardButton(
+            text="💊 Лекарства" if kind != "medication" else "• 💊 Лекарства",
+            callback_data="dict:page:medication:0",
+        ),
+    ]
+    rows.append(switch)
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="✍️ Записать" if mode == "del" else "🗑 Удалить",
+                callback_data=f"dict:mode:{kind}:{'use' if mode == 'del' else 'del'}",
+            ),
+            InlineKeyboardButton(text="✖️ Закрыть", callback_data="dict:close"),
+        ]
+    )
+    if offset:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="⬅️ Назад", callback_data=f"dict:page:{kind}:{max(offset - 12, 0)}"
+                )
+            ]
+        )
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -104,6 +194,7 @@ def photo_kind() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🏷 Этикетка", callback_data="kind:food_label"),
                 InlineKeyboardButton(text="🧪 Анализы", callback_data="kind:lab_report"),
             ],
+            [InlineKeyboardButton(text="💊 Лекарство", callback_data="kind:medication")],
             [InlineKeyboardButton(text="🗑 Отменить", callback_data="kind:drop")],
         ]
     )
@@ -181,10 +272,14 @@ def tag_button_label(tag: str) -> str:
 
 
 __all__ = [
+    "KIND_ICONS",
     "confirm_delete",
     "confirm_glucose",
     "confirm_labs",
     "confirm_meal",
+    "confirm_medication",
+    "dictionary_page",
+    "dictionary_suggestions",
     "main_menu",
     "photo_kind",
     "product_actions",

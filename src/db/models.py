@@ -215,6 +215,7 @@ class Medication(Base, TimestampMixin):
     """A *log* of what the user took. The bot never prescribes or doses."""
 
     __tablename__ = "medications"
+    __table_args__ = (Index("ix_medications_user_taken", "user_id", "taken_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(
@@ -222,8 +223,54 @@ class Medication(Base, TimestampMixin):
     )
     taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # normalized key + the STITCH/PubChem id the side-effect reference is keyed by
+    slug: Mapped[str | None] = mapped_column(String(128), index=True)
+    cid: Mapped[str | None] = mapped_column(String(16))
     dose_text: Mapped[str | None] = mapped_column(String(128))
+    form: Mapped[str | None] = mapped_column(String(64))
+    source: Mapped[str] = mapped_column(String(16), default="text", nullable=False)
+    media_id: Mapped[int | None] = mapped_column(ForeignKey("media_files.id", ondelete="SET NULL"))
     note: Mapped[str | None] = mapped_column(Text)
+
+
+class DictionaryEntry(Base, TimestampMixin):
+    """Personal shortcut list: what this user records over and over.
+
+    Meals earn a place on the *second* sighting, medications on the first —
+    a drug the user photographed once is one they take on a schedule.
+    See `spec/dictionary.md`.
+    """
+
+    __tablename__ = "user_dictionary"
+    __table_args__ = (
+        UniqueConstraint("user_id", "kind", "key_norm", name="uq_dictionary_user_kind_key"),
+        Index("ix_dictionary_lookup", "user_id", "kind", "key_norm"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # meal|item|medication
+    key_norm: Mapped[str] = mapped_column(String(128), nullable=False)
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JSON)
+    hits: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SettingsKV(Base):
+    """Owner-level runtime settings (model selection). One row per key."""
+
+    __tablename__ = "settings_kv"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[dict | None] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
 
 
 class AnalysisResult(Base, TimestampMixin):

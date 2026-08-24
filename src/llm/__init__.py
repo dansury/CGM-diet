@@ -17,6 +17,18 @@ from src.llm.jsonx import extract_json
 from src.llm.mock import MockClient
 
 _client: LLMClient | None = None
+_free_alternates: list[str] = []
+
+
+def set_free_alternates(model_ids: list[str]) -> None:
+    """Free model ids to retry on after a 429 (`spec/models.md` § Фолбэк).
+
+    Filled at startup from the shir-man catalogue; changing it rebuilds the
+    process client on the next `get_client()`.
+    """
+    global _client
+    _free_alternates[:] = [m for m in model_ids if m]
+    _client = None
 
 
 def build_client(settings: Settings | None = None) -> LLMClient:
@@ -25,7 +37,12 @@ def build_client(settings: Settings | None = None) -> LLMClient:
         return MockClient(s)
     from src.llm.openrouter import OpenRouterClient
 
-    return OpenRouterClient(s)
+    client: LLMClient = OpenRouterClient(s)
+    if s.free_fallback_enabled and _free_alternates:
+        from src.llm.fallback import build_chain
+
+        client = build_chain(client, None, list(_free_alternates))
+    return client
 
 
 def get_client(settings: Settings | None = None) -> LLMClient:
@@ -55,4 +72,5 @@ __all__ = [
     "extract_json",
     "get_client",
     "reset_client",
+    "set_free_alternates",
 ]

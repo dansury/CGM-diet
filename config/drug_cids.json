@@ -1,0 +1,608 @@
+{
+ "_note": "Курируемый справочник: препарат → PubChem CID (ключ базы побочек STITCH). См. spec/meds.md. Дополнять только выверенными CID: неверный CID = чужие побочки.",
+ "updated": "2026-08-24",
+ "source": "PubChem CID; побочки — ChSe-Decagon_monopharmacy (SNAP BioSNAP)",
+ "drugs": {
+  "metformin": {
+   "cid": "CID000004091",
+   "inn_ru": "метформин",
+   "inn_en": "metformin",
+   "labels": [
+    "глюкофаж",
+    "сиофор",
+    "метфогамма",
+    "форметин"
+   ]
+  },
+  "gliclazide": {
+   "cid": "CID000003475",
+   "inn_ru": "гликлазид",
+   "inn_en": "gliclazide",
+   "labels": [
+    "диабетон"
+   ]
+  },
+  "glimepiride": {
+   "cid": "CID000003476",
+   "inn_ru": "глимепирид",
+   "inn_en": "glimepiride",
+   "labels": [
+    "амарил"
+   ]
+  },
+  "glibenclamide": {
+   "cid": "CID000003488",
+   "inn_ru": "глибенкламид",
+   "inn_en": "glibenclamide",
+   "labels": [
+    "манинил",
+    "глюкованс"
+   ]
+  },
+  "sitagliptin": {
+   "cid": "CID004369359",
+   "inn_ru": "ситаглиптин",
+   "inn_en": "sitagliptin",
+   "labels": [
+    "янувия",
+    "янумет"
+   ]
+  },
+  "empagliflozin": {
+   "cid": "CID011949646",
+   "inn_ru": "эмпаглифлозин",
+   "inn_en": "empagliflozin",
+   "labels": [
+    "джардинс"
+   ]
+  },
+  "dapagliflozin": {
+   "cid": "CID009887712",
+   "inn_ru": "дапаглифлозин",
+   "inn_en": "dapagliflozin",
+   "labels": [
+    "форсига"
+   ]
+  },
+  "pioglitazone": {
+   "cid": "CID000004829",
+   "inn_ru": "пиоглитазон",
+   "inn_en": "pioglitazone",
+   "labels": []
+  },
+  "acarbose": {
+   "cid": "CID000041774",
+   "inn_ru": "акарбоза",
+   "inn_en": "acarbose",
+   "labels": [
+    "глюкобай"
+   ]
+  },
+  "atorvastatin": {
+   "cid": "CID000060823",
+   "inn_ru": "аторвастатин",
+   "inn_en": "atorvastatin",
+   "labels": [
+    "липримар",
+    "аторис",
+    "торвакард"
+   ]
+  },
+  "simvastatin": {
+   "cid": "CID000054454",
+   "inn_ru": "симвастатин",
+   "inn_en": "simvastatin",
+   "labels": [
+    "зокор"
+   ]
+  },
+  "rosuvastatin": {
+   "cid": "CID000446157",
+   "inn_ru": "розувастатин",
+   "inn_en": "rosuvastatin",
+   "labels": [
+    "крестор",
+    "розулип",
+    "мертенил"
+   ]
+  },
+  "amlodipine": {
+   "cid": "CID000002162",
+   "inn_ru": "амлодипин",
+   "inn_en": "amlodipine",
+   "labels": [
+    "норваск",
+    "амлотоп"
+   ]
+  },
+  "nifedipine": {
+   "cid": "CID000004485",
+   "inn_ru": "нифедипин",
+   "inn_en": "nifedipine",
+   "labels": [
+    "коринфар"
+   ]
+  },
+  "verapamil": {
+   "cid": "CID000002520",
+   "inn_ru": "верапамил",
+   "inn_en": "verapamil",
+   "labels": [
+    "изоптин"
+   ]
+  },
+  "metoprolol": {
+   "cid": "CID000004171",
+   "inn_ru": "метопролол",
+   "inn_en": "metoprolol",
+   "labels": [
+    "эгилок",
+    "беталок"
+   ]
+  },
+  "bisoprolol": {
+   "cid": "CID000002405",
+   "inn_ru": "бисопролол",
+   "inn_en": "bisoprolol",
+   "labels": [
+    "конкор"
+   ]
+  },
+  "carvedilol": {
+   "cid": "CID000002585",
+   "inn_ru": "карведилол",
+   "inn_en": "carvedilol",
+   "labels": []
+  },
+  "losartan": {
+   "cid": "CID000003961",
+   "inn_ru": "лозартан",
+   "inn_en": "losartan",
+   "labels": [
+    "лориста",
+    "козаар"
+   ]
+  },
+  "valsartan": {
+   "cid": "CID000060846",
+   "inn_ru": "валсартан",
+   "inn_en": "valsartan",
+   "labels": [
+    "диован"
+   ]
+  },
+  "telmisartan": {
+   "cid": "CID000065999",
+   "inn_ru": "телмисартан",
+   "inn_en": "telmisartan",
+   "labels": [
+    "микардис"
+   ]
+  },
+  "lisinopril": {
+   "cid": "CID005362119",
+   "inn_ru": "лизиноприл",
+   "inn_en": "lisinopril",
+   "labels": [
+    "диротон"
+   ]
+  },
+  "enalapril": {
+   "cid": "CID005388962",
+   "inn_ru": "эналаприл",
+   "inn_en": "enalapril",
+   "labels": [
+    "энап",
+    "ренитек"
+   ]
+  },
+  "captopril": {
+   "cid": "CID000044093",
+   "inn_ru": "каптоприл",
+   "inn_en": "captopril",
+   "labels": [
+    "капотен"
+   ]
+  },
+  "indapamide": {
+   "cid": "CID000003702",
+   "inn_ru": "индапамид",
+   "inn_en": "indapamide",
+   "labels": [
+    "арифон"
+   ]
+  },
+  "hydrochlorothiazide": {
+   "cid": "CID000003639",
+   "inn_ru": "гидрохлоротиазид",
+   "inn_en": "hydrochlorothiazide",
+   "labels": [
+    "гипотиазид"
+   ]
+  },
+  "furosemide": {
+   "cid": "CID000003440",
+   "inn_ru": "фуросемид",
+   "inn_en": "furosemide",
+   "labels": [
+    "лазикс"
+   ]
+  },
+  "spironolactone": {
+   "cid": "CID000005833",
+   "inn_ru": "спиронолактон",
+   "inn_en": "spironolactone",
+   "labels": [
+    "верошпирон"
+   ]
+  },
+  "digoxin": {
+   "cid": "CID002724385",
+   "inn_ru": "дигоксин",
+   "inn_en": "digoxin",
+   "labels": []
+  },
+  "amiodarone": {
+   "cid": "CID000002157",
+   "inn_ru": "амиодарон",
+   "inn_en": "amiodarone",
+   "labels": [
+    "кордарон"
+   ]
+  },
+  "warfarin": {
+   "cid": "CID054678486",
+   "inn_ru": "варфарин",
+   "inn_en": "warfarin",
+   "labels": []
+  },
+  "clopidogrel": {
+   "cid": "CID000060606",
+   "inn_ru": "клопидогрел",
+   "inn_en": "clopidogrel",
+   "labels": [
+    "плавикс"
+   ]
+  },
+  "aspirin": {
+   "cid": "CID000002244",
+   "inn_ru": "ацетилсалициловая кислота",
+   "inn_en": "aspirin",
+   "labels": [
+    "аспирин",
+    "кардиомагнил",
+    "тромбоасс"
+   ]
+  },
+  "ibuprofen": {
+   "cid": "CID000003672",
+   "inn_ru": "ибупрофен",
+   "inn_en": "ibuprofen",
+   "labels": [
+    "нурофен",
+    "миг"
+   ]
+  },
+  "paracetamol": {
+   "cid": "CID000001983",
+   "inn_ru": "парацетамол",
+   "inn_en": "paracetamol",
+   "labels": [
+    "панадол",
+    "эффералган",
+    "ацетаминофен"
+   ]
+  },
+  "diclofenac": {
+   "cid": "CID000003033",
+   "inn_ru": "диклофенак",
+   "inn_en": "diclofenac",
+   "labels": [
+    "вольтарен",
+    "ортофен"
+   ]
+  },
+  "naproxen": {
+   "cid": "CID000156391",
+   "inn_ru": "напроксен",
+   "inn_en": "naproxen",
+   "labels": []
+  },
+  "tramadol": {
+   "cid": "CID000033741",
+   "inn_ru": "трамадол",
+   "inn_en": "tramadol",
+   "labels": []
+  },
+  "omeprazole": {
+   "cid": "CID000004594",
+   "inn_ru": "омепразол",
+   "inn_en": "omeprazole",
+   "labels": [
+    "омез",
+    "лосек"
+   ]
+  },
+  "famotidine": {
+   "cid": "CID000003325",
+   "inn_ru": "фамотидин",
+   "inn_en": "famotidine",
+   "labels": [
+    "квамател"
+   ]
+  },
+  "metoclopramide": {
+   "cid": "CID000004168",
+   "inn_ru": "метоклопрамид",
+   "inn_en": "metoclopramide",
+   "labels": [
+    "церукал"
+   ]
+  },
+  "ondansetron": {
+   "cid": "CID000004595",
+   "inn_ru": "ондансетрон",
+   "inn_en": "ondansetron",
+   "labels": [
+    "зофран"
+   ]
+  },
+  "loperamide": {
+   "cid": "CID000003955",
+   "inn_ru": "лоперамид",
+   "inn_en": "loperamide",
+   "labels": [
+    "имодиум"
+   ]
+  },
+  "levothyroxine": {
+   "cid": "CID000005819",
+   "inn_ru": "левотироксин",
+   "inn_en": "levothyroxine",
+   "labels": [
+    "эутирокс",
+    "л-тироксин",
+    "l-тироксин"
+   ]
+  },
+  "prednisolone": {
+   "cid": "CID000005755",
+   "inn_ru": "преднизолон",
+   "inn_en": "prednisolone",
+   "labels": []
+  },
+  "prednisone": {
+   "cid": "CID000005865",
+   "inn_ru": "преднизон",
+   "inn_en": "prednisone",
+   "labels": []
+  },
+  "dexamethasone": {
+   "cid": "CID000005743",
+   "inn_ru": "дексаметазон",
+   "inn_en": "dexamethasone",
+   "labels": []
+  },
+  "budesonide": {
+   "cid": "CID005281004",
+   "inn_ru": "будесонид",
+   "inn_en": "budesonide",
+   "labels": [
+    "пульмикорт"
+   ]
+  },
+  "salbutamol": {
+   "cid": "CID000002083",
+   "inn_ru": "сальбутамол",
+   "inn_en": "salbutamol",
+   "labels": [
+    "вентолин",
+    "альбутерол"
+   ]
+  },
+  "montelukast": {
+   "cid": "CID005281040",
+   "inn_ru": "монтелукаст",
+   "inn_en": "montelukast",
+   "labels": [
+    "сингуляр"
+   ]
+  },
+  "loratadine": {
+   "cid": "CID000003957",
+   "inn_ru": "лоратадин",
+   "inn_en": "loratadine",
+   "labels": [
+    "кларитин"
+   ]
+  },
+  "cetirizine": {
+   "cid": "CID000002678",
+   "inn_ru": "цетиризин",
+   "inn_en": "cetirizine",
+   "labels": [
+    "зиртек",
+    "цетрин"
+   ]
+  },
+  "amoxicillin": {
+   "cid": "CID000033613",
+   "inn_ru": "амоксициллин",
+   "inn_en": "amoxicillin",
+   "labels": [
+    "флемоксин",
+    "аугментин",
+    "амоксиклав"
+   ]
+  },
+  "azithromycin": {
+   "cid": "CID000447043",
+   "inn_ru": "азитромицин",
+   "inn_en": "azithromycin",
+   "labels": [
+    "сумамед",
+    "азитрокс"
+   ]
+  },
+  "clarithromycin": {
+   "cid": "CID000084029",
+   "inn_ru": "кларитромицин",
+   "inn_en": "clarithromycin",
+   "labels": [
+    "клацид"
+   ]
+  },
+  "ciprofloxacin": {
+   "cid": "CID000002764",
+   "inn_ru": "ципрофлоксацин",
+   "inn_en": "ciprofloxacin",
+   "labels": [
+    "ципролет"
+   ]
+  },
+  "levofloxacin": {
+   "cid": "CID000149096",
+   "inn_ru": "левофлоксацин",
+   "inn_en": "levofloxacin",
+   "labels": [
+    "таваник"
+   ]
+  },
+  "doxycycline": {
+   "cid": "CID054671203",
+   "inn_ru": "доксициклин",
+   "inn_en": "doxycycline",
+   "labels": [
+    "юнидокс"
+   ]
+  },
+  "metronidazole": {
+   "cid": "CID000004173",
+   "inn_ru": "метронидазол",
+   "inn_en": "metronidazole",
+   "labels": [
+    "трихопол"
+   ]
+  },
+  "fluconazole": {
+   "cid": "CID000003365",
+   "inn_ru": "флуконазол",
+   "inn_en": "fluconazole",
+   "labels": [
+    "дифлюкан",
+    "флюкостат"
+   ]
+  },
+  "acyclovir": {
+   "cid": "CID135398513",
+   "inn_ru": "ацикловир",
+   "inn_en": "acyclovir",
+   "labels": [
+    "зовиракс"
+   ]
+  },
+  "allopurinol": {
+   "cid": "CID000002094",
+   "inn_ru": "аллопуринол",
+   "inn_en": "allopurinol",
+   "labels": []
+  },
+  "colchicine": {
+   "cid": "CID000006167",
+   "inn_ru": "колхицин",
+   "inn_en": "colchicine",
+   "labels": []
+  },
+  "methotrexate": {
+   "cid": "CID000126941",
+   "inn_ru": "метотрексат",
+   "inn_en": "methotrexate",
+   "labels": []
+  },
+  "fluoxetine": {
+   "cid": "CID000003386",
+   "inn_ru": "флуоксетин",
+   "inn_en": "fluoxetine",
+   "labels": [
+    "прозак"
+   ]
+  },
+  "sertraline": {
+   "cid": "CID000068617",
+   "inn_ru": "сертралин",
+   "inn_en": "sertraline",
+   "labels": [
+    "золофт"
+   ]
+  },
+  "escitalopram": {
+   "cid": "CID000146570",
+   "inn_ru": "эсциталопрам",
+   "inn_en": "escitalopram",
+   "labels": [
+    "ципралекс"
+   ]
+  },
+  "amitriptyline": {
+   "cid": "CID000002160",
+   "inn_ru": "амитриптилин",
+   "inn_en": "amitriptyline",
+   "labels": []
+  },
+  "gabapentin": {
+   "cid": "CID000003446",
+   "inn_ru": "габапентин",
+   "inn_en": "gabapentin",
+   "labels": [
+    "нейронтин"
+   ]
+  },
+  "pregabalin": {
+   "cid": "CID005486971",
+   "inn_ru": "прегабалин",
+   "inn_en": "pregabalin",
+   "labels": [
+    "лирика"
+   ]
+  },
+  "diazepam": {
+   "cid": "CID000003016",
+   "inn_ru": "диазепам",
+   "inn_en": "diazepam",
+   "labels": [
+    "реланиум",
+    "сибазон"
+   ]
+  },
+  "melatonin": {
+   "cid": "CID000000896",
+   "inn_ru": "мелатонин",
+   "inn_en": "melatonin",
+   "labels": [
+    "мелаксен"
+   ]
+  },
+  "caffeine": {
+   "cid": "CID000002519",
+   "inn_ru": "кофеин",
+   "inn_en": "caffeine",
+   "labels": []
+  },
+  "cholecalciferol": {
+   "cid": "CID005280795",
+   "inn_ru": "холекальциферол",
+   "inn_en": "cholecalciferol",
+   "labels": [
+    "витамин д3",
+    "аквадетрим",
+    "вигантол"
+   ]
+  },
+  "folic_acid": {
+   "cid": "CID000006037",
+   "inn_ru": "фолиевая кислота",
+   "inn_en": "folic acid",
+   "labels": []
+  }
+ }
+}

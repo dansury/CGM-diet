@@ -19,10 +19,18 @@ class GlucoseFlow(StatesGroup):
 class ProductFlow(StatesGroup):
     confirming = State()
     awaiting_second_side = State()
+    editing = State()
 
 
 class LabFlow(StatesGroup):
     confirming = State()
+    editing = State()
+
+
+class MedicationFlow(StatesGroup):
+    confirming = State()
+    editing = State()
+    retiming = State()
 
 
 class WellbeingFlow(StatesGroup):
@@ -39,6 +47,7 @@ __all__ = [
     "GlucoseFlow",
     "LabFlow",
     "MealFlow",
+    "MedicationFlow",
     "ProductFlow",
     "SettingsFlow",
     "WellbeingFlow",

@@ -12,7 +12,7 @@ from typing import Any
 
 from src.analytics.tags import normalize_tags
 from src.ingest.units import canonical_unit, guess_unit, is_plausible, to_mmol
-from src.llm import ChatMessage, ImagePart, LLMClient, extract_json, get_client
+from src.llm import ChatMessage, ImagePart, LLMClient, extract_json, get_client, model_selection
 from src.llm.base import LLMError
 from src.logging_setup import get_logger
 from src.vision import prompts
@@ -22,6 +22,7 @@ from src.vision.schemas import (
     LabDraft,
     MarkerDraft,
     MealDraft,
+    MedicationDraft,
     ProductDraft,
 )
 
@@ -49,14 +50,21 @@ async def _ask_json(
     images: list[ImagePart] | None = None,
     max_tokens: int = 1400,
 ) -> Any:
+    # `current()` reads a process cache filled at startup — the recognition
+    # layer never touches the DB (`CLAUDE.md` #7).
     try:
         if images:
             completion = await client.vision(
-                images, prompt, system=prompts.SYSTEM, max_tokens=max_tokens
+                images,
+                prompt,
+                system=prompts.SYSTEM,
+                model=model_selection.current("vision"),
+                max_tokens=max_tokens,
             )
         else:
             completion = await client.chat(
                 [ChatMessage("system", prompts.SYSTEM), ChatMessage("user", prompt)],
+                model=model_selection.current("text"),
                 max_tokens=max_tokens,
             )
     except LLMError as exc:
@@ -70,7 +78,7 @@ async def _ask_json(
 
 # ---------------------------------------------------------------- routing
 
-PHOTO_KINDS = ("food", "glucose_screen", "food_label", "lab_report", "other")
+PHOTO_KINDS = ("food", "glucose_screen", "food_label", "lab_report", "medication", "other")
 
 
 async def classify_photo(
@@ -300,6 +308,65 @@ async def recognize_labs(
 
 # ---------------------------------------------------------------- wellbeing
 
+async def correct_meal(
+    draft: MealDraft, instruction: str, *, client: LLMClient | None = None
+) -> MealDraft:
+    """Model-side correction: the draft goes in, a corrected draft comes out.
+
+    Only reached for wording the deterministic pass in `ingest/correction.py`
+    could not place. The model is given the current items so it edits them
+    instead of re-recognising the photo from scratch.
+    """
+    import json
+
+    from src.vision.schemas import meal_to_dict
+
+    client = client or get_client()
+    prompt = (
+        prompts.MEAL_CORRECTION
+        + "\nТекущий приём пищи:\n"
+        + json.dumps(meal_to_dict(draft), ensure_ascii=False)
+        + "\nУточнение пользователя:\n"
+        + instruction
+    )
+    payload = await _ask_json(client, prompt=prompt)
+    if not isinstance(payload, dict) or not payload.get("items"):
+        raise RecognitionError("не понял правку")
+    corrected = _meal_from_payload(payload, source=draft.source, raw_text=instruction)
+    corrected.confidence = 1.0
+    corrected.notes = "учтена ваша правка"
+    return corrected
+
+
+# ---------------------------------------------------------------- medications
+
+async def recognize_medication(
+    images: list[ImagePart], *, client: LLMClient | None = None
+) -> MedicationDraft:
+    """Read the package: name, substance, dose as printed. Nothing else.
+
+    Deliberately narrow — the model is never asked what the drug is *for* or
+    how to take it (`spec/meds.md`, constitution I).
+    """
+    client = client or get_client()
+    payload = await _ask_json(
+        client, prompt=prompts.MEDICATION_PHOTO, images=images, max_tokens=400
+    )
+    if not isinstance(payload, dict):
+        raise RecognitionError("не разобрал упаковку")
+    name = str(payload.get("name") or "").strip()
+    inn = str(payload.get("inn") or "").strip()
+    if not name and not inn:
+        raise RecognitionError("не вижу названия препарата")
+    return MedicationDraft(
+        name=name or inn,
+        inn=inn or None,
+        dose_text=(str(payload.get("dose_text") or "").strip() or None),
+        form=(str(payload.get("form") or "").strip() or None),
+        confidence=_f(payload.get("confidence")),
+    )
+
+
 async def extract_symptoms(
     text: str, *, client: LLMClient | None = None
 ) -> tuple[int | None, list[str], str]:
@@ -318,10 +385,12 @@ __all__ = [
     "PHOTO_KINDS",
     "RecognitionError",
     "classify_photo",
+    "correct_meal",
     "extract_symptoms",
     "parse_meal_text",
     "recognize_glucose_screenshot",
     "recognize_label",
     "recognize_labs",
     "recognize_meal_photo",
+    "recognize_medication",
 ]

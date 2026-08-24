@@ -11,6 +11,7 @@ from sqlalchemy import text
 from src.config import Settings, load_settings
 from src.db import repo
 from src.db.engine import get_engine
+from src.errors_report import report_error
 from src.handlers.deps import session_scope
 from src.health.samsung import HealthSyncError, parse_samples, verify_token
 from src.logging_setup import get_logger, setup_logging
@@ -18,10 +19,43 @@ from src.logging_setup import get_logger, setup_logging
 log = get_logger("web")
 
 
+def _request_context(request: Request) -> dict[str, str]:
+    client = request.client.host if request.client else "?"
+    return {
+        "query": str(request.url.query)[:200],
+        "client": client,
+        "ua": request.headers.get("user-agent", "")[:200],
+    }
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     setup_logging()
     s = settings or load_settings()
     app = FastAPI(title="CGM-diet", version="0.1.0", docs_url=None, redoc_url=None)
+
+    @app.middleware("http")
+    async def error_report_middleware(request: Request, call_next: Any) -> Any:
+        """4xx are client mistakes; 5xx and crashes are ours (`spec/errors.md`)."""
+        try:
+            response = await call_next(request)
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                await report_error(
+                    source="web",
+                    where=f"{request.method} {request.url.path}",
+                    exc=exc,
+                    context=_request_context(request),
+                )
+            raise
+        except Exception as exc:
+            await report_error(
+                source="web",
+                where=f"{request.method} {request.url.path}",
+                exc=exc,
+                context=_request_context(request),
+            )
+            raise
+        return response
 
     bot = None
     dispatcher = None
@@ -33,6 +67,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         @app.on_event("startup")
         async def _startup() -> None:  # pragma: no cover - network
+            from src.bot import prepare_runtime
+
+            await prepare_runtime(bot, s)
             await bot.set_my_commands(COMMANDS)
             if s.webhook_base_url:
                 url = f"{s.webhook_base_url.rstrip('/')}/telegram/webhook"

@@ -18,7 +18,7 @@ from src.analytics.stats import KeyStats
 from src.analytics.symptoms import SymptomStats
 from src.analytics.tags import tag_label
 from src.ingest.units import format_delta, format_value
-from src.vision.schemas import LabDraft, MealDraft, ProductDraft
+from src.vision.schemas import LabDraft, MealDraft, MedicationDraft, ProductDraft
 
 DISCLAIMER = (
     "⚠️ Бот не ставит диагнозы и не назначает лекарства. "
@@ -39,7 +39,26 @@ def _num(value: float | None, digits: int = 1, suffix: str = "") -> str:
 
 # ------------------------------------------------------------------ meals
 
-def format_meal_draft(draft: MealDraft, *, eaten_at: datetime | None = None) -> str:
+CORRECTION_HINT = (
+    "Скорректировать можно текстом или голосовым: «убери салат», "
+    "«гречки было 250», «вместо курицы индейка»."
+)
+
+
+def _applied_block(applied: list[str] | None) -> list[str]:
+    """Echo what a correction changed — the user must see it was merged in,
+    not that the card was rebuilt from scratch."""
+    if not applied:
+        return []
+    return ["", "<b>Учтено из вашей правки:</b>", *(f"• {line}" for line in applied)]
+
+
+def format_meal_draft(
+    draft: MealDraft,
+    *,
+    eaten_at: datetime | None = None,
+    applied: list[str] | None = None,
+) -> str:
     totals = draft.totals()
     lines = [f"🍽 <b>{draft.title or 'Приём пищи'}</b>"]
     if eaten_at:
@@ -57,8 +76,10 @@ def format_meal_draft(draft: MealDraft, *, eaten_at: datetime | None = None) -> 
         lines.append(f"Уверенность распознавания: {draft.confidence * 100:.0f}%")
     if draft.notes:
         lines.append(f"<i>{draft.notes}</i>")
+    lines.extend(_applied_block(applied))
     lines.append("")
     lines.append("Всё верно?")
+    lines.append(f"<i>{CORRECTION_HINT}</i>")
     return "\n".join(lines)
 
 
@@ -245,16 +266,106 @@ def format_labs(draft: LabDraft) -> str:
         lines.append(f"{marks[marker.flag]} {marker.marker}: <b>{value}</b> {marker.unit or ''}{ref}")
     lines.append("")
     lines.append("Сохранить в дневник?")
+    lines.append(
+        "<i>Скорректировать можно текстом или голосовым: «глюкоза 6.1», "
+        "«HbA1c 5.8».</i>"
+    )
+    return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ medications
+
+def format_medication_draft(
+    draft: MedicationDraft,
+    *,
+    taken_at: datetime | None = None,
+    applied: list[str] | None = None,
+) -> str:
+    lines = [f"💊 <b>{draft.name or 'Препарат'}</b>"]
+    if draft.inn and draft.inn.lower() not in (draft.name or "").lower():
+        lines.append(f"Действующее вещество: {draft.inn}")
+    if draft.dose_text:
+        lines.append(f"Дозировка на упаковке: {draft.dose_text}")
+    if draft.form:
+        lines.append(f"Форма: {draft.form}")
+    if taken_at:
+        lines.append(f"🕒 приём {taken_at:%d.%m %H:%M}")
+    if draft.confidence is not None:
+        lines.append(f"Уверенность распознавания: {draft.confidence * 100:.0f}%")
+    lines.extend(_applied_block(applied))
+    lines.append("")
+    lines.append("Записать этот приём?")
+    lines.append(
+        "<i>Это только журнал: бот не назначает препараты и не считает дозы. "
+        "Скорректировать можно текстом или голосовым — «метформин 1000».</i>"
+    )
+    return "\n".join(lines)
+
+
+def format_medications(rows: list[tuple[datetime, str, str | None]], *, days: int = 30) -> str:
+    """Journal of doses; `rows` are (local time, name, dose)."""
+    if not rows:
+        return (
+            "💊 <b>Лекарства</b>\n\nПока пусто. Сфотографируйте упаковку или напишите "
+            "«выпил метформин 850» — запись попадёт в дневник и в личный словарь."
+        )
+    lines = [f"💊 <b>Лекарства за {days} дн.</b>", ""]
+    for at, name, dose in rows[-30:]:
+        lines.append(f"• {at:%d.%m %H:%M} — {name}{(' ' + dose) if dose else ''}")
+    return "\n".join(lines)
+
+
+def format_med_coverage(coverages: list) -> str | None:
+    """A drug present in most of the observations is a confounder the user must
+    see: without it «после риса выше» is silently a claim about the drug."""
+    rows = [c for c in coverages if c.share >= 0.3]
+    if not rows:
+        return None
+    lines = ["💊 <b>Что ещё было в эти окна</b>"]
+    for row in rows[:3]:
+        lines.append(
+            f"• {row.name}: приём попал в {row.n_covered} из {row.n_total} наблюдений "
+            f"({row.share * 100:.0f}%)"
+        )
+    lines.append(
+        "<i>Это не оценка препарата, а контекст: цифры по еде читаются с поправкой "
+        "на то, что было принято.</i>"
+    )
+    return "\n".join(lines)
+
+
+def format_med_side_effects(links: list) -> str | None:
+    """Reference lookup, never a causal claim (`spec/meds.md` § Формулировки)."""
+    if not links:
+        return None
+    lines = ["💊 <b>Справка по побочным эффектам</b>", ""]
+    for link in links[:5]:
+        effect = link.effect_ru or link.symptom
+        lines.append(
+            f"• «{link.symptom}» отмечено {link.n_after_dose} раз(а) в течение "
+            f"8 часов после приёма «{link.name}»; в справочнике побочных эффектов "
+            f"для этого препарата значится «{effect}»."
+        )
+    lines.append("")
+    lines.append(
+        "<i>Совпадение по времени — не доказательство причины. Не меняйте приём "
+        "и дозу самостоятельно: покажите это врачу.</i>"
+    )
     return "\n".join(lines)
 
 
 __all__ = [
     "CONFIDENCE_LABEL",
+    "CORRECTION_HINT",
     "DISCLAIMER",
     "format_activity",
     "format_cgm_summary",
     "format_labs",
     "format_meal_draft",
+    "format_med_coverage",
+    "format_med_side_effects",
+    "format_medication_draft",
+    "format_medications",
     "format_product",
     "format_product_verdict",
     "format_recommendations",

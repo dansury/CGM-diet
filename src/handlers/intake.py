@@ -28,11 +28,18 @@ from src.handlers.deps import (
     session_scope,
     to_utc,
 )
-from src.handlers.states import ProductFlow, WellbeingFlow
+from src.handlers.states import (
+    GlucoseFlow,
+    LabFlow,
+    MealFlow,
+    MedicationFlow,
+    ProductFlow,
+    WellbeingFlow,
+)
 from src.ingest.text_parse import parse_text
 from src.ingest.units import to_mmol
 from src.keyboards import main_menu, photo_kind
-from src.llm import ImagePart, get_client
+from src.llm import ImagePart, get_client, model_selection
 from src.logging_setup import get_logger
 from src.vision import recognize
 from src.vision.schemas import GlucoseDraft
@@ -162,6 +169,8 @@ async def _dispatch(
         await _process_label(message, state, images, file_ids, mode="eaten")
     elif kind == "lab_report":
         await _process_labs(message, state, images, file_ids)
+    elif kind == "medication":
+        await _process_medication(message, state, images, file_ids)
     else:
         await state.update_data({PHOTOS_KEY: file_ids})
         await message.answer(
@@ -247,6 +256,20 @@ async def _process_label(
     await views.show_product_draft(message, state, draft, mode=mode, file_ids=file_ids)
 
 
+async def _process_medication(
+    message: Message, state: FSMContext, images: list[ImagePart], file_ids: list[str]
+) -> None:
+    try:
+        draft = await recognize.recognize_medication(images)
+    except recognize.RecognitionError as exc:
+        await message.answer(
+            f"Не разобрал упаковку: {exc}\n"
+            "Можно написать словами — «выпил метформин 850»."
+        )
+        return
+    await views.show_medication_draft(message, state, draft, file_ids=file_ids)
+
+
 async def _process_labs(
     message: Message,
     state: FSMContext,
@@ -302,7 +325,11 @@ async def on_voice(message: Message, state: FSMContext, bot: Bot) -> None:
     buffer = await bot.download(voice.file_id)
     data = buffer.read() if hasattr(buffer, "read") else bytes(buffer)
     try:
-        text = await client.transcribe(data, mime=voice.mime_type or "audio/ogg")
+        text = await client.transcribe(
+            data,
+            mime=voice.mime_type or "audio/ogg",
+            model=model_selection.current("stt"),
+        )
     except Exception as exc:
         log.warning("stt failed: %s", exc)
         await message.answer(
@@ -313,13 +340,43 @@ async def on_voice(message: Message, state: FSMContext, bot: Bot) -> None:
         await message.answer("Ничего не расслышал, попробуйте ещё раз.")
         return
     await message.answer(f"🎤 Расслышал: «{text}»")
+    if await _route_voice(message, state, text):
+        return
+    await handle_text(message, state, text_override=text)
+
+
+async def _route_voice(message: Message, state: FSMContext, text: str) -> bool:
+    """A correction can be spoken: hand the transcript to the waiting flow.
+
+    Without this a voice note in `MealFlow.editing` would fall through to the
+    catch-all text handler and start a *new* meal instead of correcting the
+    open card (`spec/ingest.md` § Корректировки).
+    """
     current = await state.get_state()
+    if current is None:
+        return False
     if current == WellbeingFlow.free_text.state:
         from src.handlers.wellbeing import handle_free_text
 
         await handle_free_text(message, state, text)
-        return
-    await handle_text(message, state, text_override=text)
+        return True
+
+    from src.handlers import confirm, meds
+
+    routes = {
+        MealFlow.editing.state: confirm.meal_apply_edit,
+        MealFlow.retiming.state: confirm.meal_apply_time,
+        GlucoseFlow.editing.state: confirm.glucose_apply_edit,
+        LabFlow.editing.state: confirm.lab_apply_edit,
+        ProductFlow.editing.state: confirm.product_apply_edit,
+        MedicationFlow.editing.state: meds.med_apply_edit,
+        MedicationFlow.retiming.state: meds.med_apply_time,
+    }
+    handler = routes.get(current)
+    if handler is None:
+        return False
+    await handler(message, state, text_override=text)
+    return True
 
 
 # ------------------------------------------------------------------ text
@@ -393,6 +450,13 @@ async def handle_text(
                 "Не понял. Пришлите фото еды, напишите «сахар 8.2» или нажмите кнопку меню.",
                 reply_markup=main_menu(),
             )
+        return
+
+    # The personal dictionary answers before the model does: «то же, что вчера»
+    # costs one tap and no API call (`spec/dictionary.md`).
+    from src.handlers.dictionary import offer_suggestions
+
+    if await offer_suggestions(message, state, leftover):
         return
 
     # Anything left over is treated as a meal description.

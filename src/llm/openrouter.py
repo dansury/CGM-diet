@@ -108,7 +108,9 @@ class OpenRouterClient:
         data = await self._post("/chat/completions", payload, model=model)
         return self._parse(data, model)
 
-    async def transcribe(self, audio: bytes, mime: str = "audio/ogg") -> str:
+    async def transcribe(
+        self, audio: bytes, mime: str = "audio/ogg", *, model: str | None = None
+    ) -> str:
         """Speech-to-text via an OpenAI-compatible /audio/transcriptions endpoint."""
         s = self._settings
         if not (s.stt_base_url and s.stt_api_key):
@@ -120,7 +122,7 @@ class OpenRouterClient:
             resp = await client.post(
                 url,
                 headers={"Authorization": f"Bearer {s.stt_api_key}"},
-                data={"model": s.stt_model},
+                data={"model": model or s.stt_model},
                 files=files,
             )
         if resp.status_code >= 400:

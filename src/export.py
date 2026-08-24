@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.models import (
     ActivitySample,
     AnalysisResult,
+    DictionaryEntry,
     GlucoseReading,
     Meal,
     MealItem,
@@ -50,7 +51,16 @@ _TABLES: tuple[tuple[str, Any, tuple[str, ...]], ...] = (
         ("id", "measured_at", "value_mmol", "unit_input", "source", "device", "trend"),
     ),
     ("weights", Weight, ("id", "measured_at", "weight_kg", "note")),
-    ("medications", Medication, ("id", "taken_at", "name", "dose_text", "note")),
+    (
+        "medications",
+        Medication,
+        ("id", "taken_at", "name", "slug", "cid", "dose_text", "form", "source", "note"),
+    ),
+    (
+        "user_dictionary",
+        DictionaryEntry,
+        ("id", "kind", "key_norm", "label", "hits", "pinned", "is_active", "last_used_at"),
+    ),
     (
         "analysis_results",
         AnalysisResult,

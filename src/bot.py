@@ -24,6 +24,8 @@ log = get_logger("bot")
 
 COMMANDS = [
     BotCommand(command="start", description="Начало и инструкция"),
+    BotCommand(command="my", description="Личный словарь — запись одной кнопкой"),
+    BotCommand(command="meds", description="Лекарства: журнал и справка"),
     BotCommand(command="today", description="Записи за сегодня"),
     BotCommand(command="stats", description="Статистика по продуктам"),
     BotCommand(command="graph", description="График еды и сахара"),
@@ -53,10 +55,43 @@ def build_dispatcher() -> Dispatcher:
     return dispatcher
 
 
+async def prepare_runtime(bot: Bot, settings: Settings) -> None:
+    """Everything that must be live before the first update is served.
+
+    Error reports need a Bot to send through; the model cache must be filled
+    from the DB (`spec/models.md`), and the free-model catalogue feeds the 429
+    fallback chain. All three degrade quietly — none of them may keep the bot
+    from starting.
+    """
+    from src.errors_report import wire_error_reporter
+
+    wire_error_reporter(bot, settings)
+
+    from src.handlers.admin import load_active_models
+
+    try:
+        mapping = await load_active_models()
+        log.info("active models: %s", mapping)
+    except Exception:
+        log.warning("could not load model selection; falling back to .env", exc_info=True)
+
+    if settings.free_fallback_enabled and not settings.llm_mock:
+        from src.llm import set_free_alternates
+        from src.llm.free_catalog import load_free_models
+
+        try:
+            free = await load_free_models()
+            set_free_alternates([m.id for m in free[:4]])
+            log.info("free-model fallback: %d candidates", len(free))
+        except Exception:
+            log.warning("free-model catalogue unavailable; no 429 fallback", exc_info=True)
+
+
 async def run_polling(settings: Settings | None = None) -> None:
     s = settings or load_settings()
     bot = build_bot(s)
     dispatcher = build_dispatcher()
+    await prepare_runtime(bot, s)
     await bot.set_my_commands(COMMANDS)
     await bot.delete_webhook(drop_pending_updates=False)
     log.info("starting long polling (env=%s, mock=%s)", s.app_env, s.llm_mock)

@@ -15,6 +15,10 @@
 | [spec/wellbeing.md](spec/wellbeing.md) | опрос 1–5, динамический глоссарий симптомов | `src/handlers/wellbeing.py`, `src/analytics/symptoms.py` |
 | [spec/charts.md](spec/charts.md) | таймлайн, рейтинг, самочувствие | `src/charts/render.py` |
 | [spec/health_sync.md](spec/health_sync.md) | Samsung Health / Health Connect, HTTP-релей, вебхук | `src/health/*`, `src/web/app.py` |
+| [spec/meds.md](spec/meds.md) | лекарства: фото, журнал, справочник побочек | `src/meds/*`, `src/analytics/meds.py`, `src/handlers/meds.py` |
+| [spec/dictionary.md](spec/dictionary.md) | личный словарь, подсказки по первым буквам | `src/handlers/dictionary.py`, `src/db/repo.py` |
+| [spec/errors.md](spec/errors.md) | отчёты об ошибках: админу подробно, пользователю коротко | `src/errors_report.py`, `src/handlers/errors.py`, `src/logging_setup.py` |
+| [spec/models.md](spec/models.md) | выбор модели владельцем, свободные модели, фолбэк 429 | `src/llm/{model_selection,free_catalog,fallback}.py`, `src/handlers/admin.py` |
 | [spec/clinical.md](spec/clinical.md) | что можно и чего нельзя говорить пользователю | `src/reporting.py` |
 
 ## Другие документы

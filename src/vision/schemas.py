@@ -100,3 +100,129 @@ __all__ = [
     "MealDraft",
     "ProductDraft",
 ]
+
+
+# --------------------------------------------------------------- (de)serialisation
+# Drafts live in the FSM store between the recognition message and the user's
+# tap, so they must survive a JSON round-trip.
+
+def meal_to_dict(draft: MealDraft) -> dict:
+    return {
+        "title": draft.title,
+        "confidence": draft.confidence,
+        "notes": draft.notes,
+        "source": draft.source,
+        "raw_text": draft.raw_text,
+        "items": [
+            {
+                "name": i.name,
+                "portion_g": i.portion_g,
+                "kcal": i.kcal,
+                "protein_g": i.protein_g,
+                "fat_g": i.fat_g,
+                "carbs_g": i.carbs_g,
+                "fiber_g": i.fiber_g,
+                "tags": i.tags,
+            }
+            for i in draft.items
+        ],
+    }
+
+
+def meal_from_dict(data: dict) -> MealDraft:
+    return MealDraft(
+        title=data.get("title") or "",
+        confidence=data.get("confidence"),
+        notes=data.get("notes") or "",
+        source=data.get("source") or "photo",
+        raw_text=data.get("raw_text"),
+        items=[ItemDraft(**item) for item in data.get("items") or []],
+    )
+
+
+def product_to_dict(draft: ProductDraft) -> dict:
+    return {
+        "name": draft.name,
+        "brand": draft.brand,
+        "barcode": draft.barcode,
+        "kcal_100": draft.kcal_100,
+        "protein_100": draft.protein_100,
+        "fat_100": draft.fat_100,
+        "carbs_100": draft.carbs_100,
+        "sugars_100": draft.sugars_100,
+        "fiber_100": draft.fiber_100,
+        "ingredients": draft.ingredients,
+        "additives": draft.additives,
+        "flags": draft.flags,
+        "confidence": draft.confidence,
+    }
+
+
+def product_from_dict(data: dict) -> ProductDraft:
+    return ProductDraft(**data)
+
+
+def glucose_to_dicts(drafts: list[GlucoseDraft]) -> list[dict]:
+    return [
+        {
+            "measured_at": d.measured_at.isoformat(),
+            "value_mmol": d.value_mmol,
+            "unit_input": d.unit_input,
+            "trend": d.trend,
+            "device": d.device,
+        }
+        for d in drafts
+    ]
+
+
+def glucose_from_dicts(data: list[dict]) -> list[GlucoseDraft]:
+    return [
+        GlucoseDraft(
+            measured_at=datetime.fromisoformat(d["measured_at"]),
+            value_mmol=d["value_mmol"],
+            unit_input=d.get("unit_input") or "mmol/L",
+            trend=d.get("trend"),
+            device=d.get("device"),
+        )
+        for d in data
+    ]
+
+
+def lab_to_dict(draft: LabDraft) -> dict:
+    return {
+        "panel": draft.panel,
+        "taken_at": draft.taken_at.isoformat() if draft.taken_at else None,
+        "confidence": draft.confidence,
+        "markers": [
+            {
+                "marker": m.marker,
+                "value": m.value,
+                "value_text": m.value_text,
+                "unit": m.unit,
+                "ref_low": m.ref_low,
+                "ref_high": m.ref_high,
+            }
+            for m in draft.markers
+        ],
+    }
+
+
+def lab_from_dict(data: dict) -> LabDraft:
+    return LabDraft(
+        panel=data.get("panel"),
+        taken_at=datetime.fromisoformat(data["taken_at"]) if data.get("taken_at") else None,
+        confidence=data.get("confidence"),
+        markers=[MarkerDraft(**m) for m in data.get("markers") or []],
+    )
+
+
+__all__ += [
+    "glucose_from_dicts",
+    "glucose_to_dicts",
+    "lab_from_dict",
+    "lab_to_dict",
+    "meal_from_dict",
+    "meal_to_dict",
+    "product_from_dict",
+    "product_to_dict",
+]

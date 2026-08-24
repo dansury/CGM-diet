@@ -1,0 +1,51 @@
+# Local / staging stack: postgres + migrations + bot.
+# Usage: cp .env.example .env && docker compose up -d --build
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cgmdiet
+      POSTGRES_USER: cgmdiet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev_password}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cgmdiet"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build: .
+    command: python -m alembic upgrade head
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cgmdiet:${POSTGRES_PASSWORD:-dev_password}@db:5432/cgmdiet
+    env_file: [.env]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: on-failure
+
+  bot:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://cgmdiet:${POSTGRES_PASSWORD:-dev_password}@db:5432/cgmdiet
+      APP_ENV: staging
+    env_file: [.env]
+    ports:
+      # only needed for BOT_MODE=webhook and the Samsung Health relay
+      - "${WEB_PORT:-8080}:8080"
+    volumes:
+      - app_data:/app/data
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+
+volumes:
+  pg_data:
+  app_data:

@@ -102,6 +102,18 @@ TEXT_MEAL = f"""TASK: text_meal
 Текст пользователя:
 """
 
+CLASSIFY = """TASK: classify_photo
+Определи, что изображено. Верни JSON:
+{"kind": "food" | "glucose_screen" | "food_label" | "lab_report" | "other",
+ "confidence": 0.0-1.0}
+Пояснения:
+- food — тарелка/блюдо/еда как она есть;
+- glucose_screen — экран приложения CGM или глюкометра с показателями сахара;
+- food_label — упаковка продукта, состав, пищевая ценность, штрихкод;
+- lab_report — бланк лабораторного анализа;
+- other — всё остальное.
+"""
+
 SYMPTOM_EXTRACT = """TASK: symptom_extract
 Пользователь описал самочувствие (текст или расшифровка голосового).
 Верни JSON:
@@ -115,6 +127,7 @@ SYMPTOM_EXTRACT = """TASK: symptom_extract
 """
 
 __all__ = [
+    "CLASSIFY",
     "FOOD_PHOTO",
     "GLUCOSE_SCREENSHOT",
     "LABEL_PHOTO",

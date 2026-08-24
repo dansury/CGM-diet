@@ -137,6 +137,7 @@ FIXTURES: dict[str, Any] = {
         ],
         "notes": "",
     },
+    "classify_photo": {"kind": "food", "confidence": 0.77},
     "symptom_extract": {"score": None, "symptoms": ["сонливость", "потливость"], "note": ""},
 }
 

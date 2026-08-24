@@ -68,6 +68,33 @@ async def _ask_json(
         raise RecognitionError("модель вернула неразборчивый ответ") from exc
 
 
+# ---------------------------------------------------------------- routing
+
+PHOTO_KINDS = ("food", "glucose_screen", "food_label", "lab_report", "other")
+
+
+async def classify_photo(
+    images: list[ImagePart], *, client: LLMClient | None = None
+) -> tuple[str, float]:
+    """Cheap first pass: what did the user just send?
+
+    Auto-routing keeps the common case (фото тарелки) to a single tap, and the
+    handler still offers “это не еда” buttons when the guess is wrong.
+    Falls back to `other` on any failure so the handler asks instead of guessing.
+    """
+    client = client or get_client()
+    try:
+        payload = await _ask_json(client, prompt=prompts.CLASSIFY, images=images, max_tokens=120)
+    except RecognitionError:
+        return "other", 0.0
+    if not isinstance(payload, dict):
+        return "other", 0.0
+    kind = str(payload.get("kind") or "other").strip().lower()
+    if kind not in PHOTO_KINDS:
+        kind = "other"
+    return kind, _f(payload.get("confidence")) or 0.0
+
+
 # ---------------------------------------------------------------- meals
 
 def _meal_from_payload(payload: dict, *, source: str, raw_text: str | None = None) -> MealDraft:
@@ -288,7 +315,9 @@ async def extract_symptoms(
 
 
 __all__ = [
+    "PHOTO_KINDS",
     "RecognitionError",
+    "classify_photo",
     "extract_symptoms",
     "parse_meal_text",
     "recognize_glucose_screenshot",

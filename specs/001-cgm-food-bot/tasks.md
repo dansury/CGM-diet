@@ -53,7 +53,7 @@
 - [X] T033 FastAPI: webhook, /health, приём активности — `src/web/app.py`
 - [X] T034 [P] Dockerfile, docker-compose, entrypoint
 - [X] T035 [P] Seed демо-данных на 14 дней — `seeds/seed_demo.py`
-- [X] T036 Тесты (137) — `tests/`
+- [X] T036 Тесты (157) — `tests/`
 
 ## Phase 6 — Дальше (не в MVP)
 

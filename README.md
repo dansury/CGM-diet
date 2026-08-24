@@ -194,7 +194,7 @@ HbA1c, LBGI/HBGI, MAGE, J-index. Доли времени взвешены по �
 ## Разработка
 
 ```bash
-python -m pytest -q                     # 137 тестов, ~20 с, без сети
+python -m pytest -q                     # 157 тестов, ~20 с, без сети
 python -m ruff check src tests seeds
 DATABASE_URL="sqlite+aiosqlite:///data/build.db" \
   python -m alembic revision --autogenerate -m "описание"

@@ -15,7 +15,7 @@
 **Language/Version**: Python 3.11
 **Primary Dependencies**: aiogram 3, SQLAlchemy 2 (async), Alembic, httpx, FastAPI, matplotlib
 **Storage**: SQLite (личный инстанс) / PostgreSQL + asyncpg (прод)
-**Testing**: pytest + pytest-asyncio, 137 тестов, mock-провайдер LLM
+**Testing**: pytest + pytest-asyncio, 157 тестов, mock-провайдер LLM
 **Target Platform**: Linux-контейнер; long polling или webhook
 **Project Type**: telegram-bot + небольшой HTTP-сервис
 **Performance Goals**: ответ на фото ≤ 15 с; `/stats` за 30 дней ≤ 1 с на SQLite

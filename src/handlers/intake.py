@@ -28,7 +28,7 @@ from src.handlers.deps import (
     session_scope,
     to_utc,
 )
-from src.handlers.states import WellbeingFlow
+from src.handlers.states import ProductFlow, WellbeingFlow
 from src.ingest.text_parse import parse_text
 from src.ingest.units import to_mmol
 from src.keyboards import main_menu, photo_kind
@@ -109,6 +109,25 @@ async def _handle_photos(messages: list[Message], state: FSMContext, bot: Bot) -
     data = await state.get_data()
     mode = data.get(MODE_KEY)
     caption = " ".join(filter(None, (m.caption for m in messages))).strip()
+
+    if await state.get_state() == ProductFlow.awaiting_second_side.state:
+        # «➕ Вторая сторона»: re-send the first photo together with the new one
+        # so the model sees front and back in a single turn and merges them.
+        previous = data.get(views.FILES_KEY) or []
+        earlier: list[ImagePart] = []
+        for file_id in previous:
+            try:
+                earlier.append(await download_photo(bot, file_id))
+            except Exception:
+                log.warning("could not re-download the first side %s", file_id)
+        await _process_label(
+            message,
+            state,
+            earlier + images,
+            [*previous, *file_ids],
+            mode=data.get(views.MODE_KEY_VIEW) or "eaten",
+        )
+        return
 
     if mode == "check_product":
         await _process_label(message, state, images, file_ids, mode="check")

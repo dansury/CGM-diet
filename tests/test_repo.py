@@ -132,3 +132,16 @@ async def test_delete_user_data_wipes_everything_but_keeps_the_account(session):
     totals = await repo.counts(session, user)
     assert set(totals.values()) == {0}
     assert await repo.get_user(session, 9) is not None
+
+
+async def test_tapping_a_seeded_symptom_does_not_create_a_duplicate(session):
+    """Seeded rows have an English slug and a Russian label — match on the label."""
+    user = await repo.get_or_create_user(session, 10)
+    before = len(await repo.list_symptoms(session, user, limit=100))
+    seeded = next(s for s in await repo.list_symptoms(session, user, limit=100)
+                  if s.label == "сонливость")
+    await repo.save_checkin(session, user, at=NOW, score=2, symptom_labels=["Сонливость"])
+    after = await repo.list_symptoms(session, user, limit=100)
+    assert len(after) == before
+    await session.refresh(seeded)
+    assert seeded.hits == 1

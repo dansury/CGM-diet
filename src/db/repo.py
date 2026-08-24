@@ -333,15 +333,23 @@ async def list_symptoms(session: AsyncSession, user: User, *, limit: int = 12) -
 
 
 async def upsert_symptom(session: AsyncSession, user: User, label: str) -> Symptom:
-    """Add a symptom the user typed/said; the glossary grows per user."""
-    slug = normalize_name(label).replace(" ", "_")[:64] or "symptom"
-    found = await session.scalar(
-        select(Symptom).where(Symptom.user_id == user.id, Symptom.slug == slug)
-    )
-    if found is None:
-        found = Symptom(user_id=user.id, slug=slug, label=label.strip()[:128])
-        session.add(found)
-        await session.flush()
+    """Add a symptom the user typed/said; the glossary grows per user.
+
+    Matching is by *normalised label* first and only then by slug: seeded rows
+    carry an English slug (`sleepiness`) with a Russian label (`сонливость`), so
+    a slug-only lookup would create a duplicate every time the user taps a
+    seeded button — and split that symptom's statistics in half.
+    """
+    norm = normalize_name(label)
+    if not norm:
+        norm = "symptom"
+    existing = await session.scalars(select(Symptom).where(Symptom.user_id == user.id))
+    for symptom in existing:
+        if normalize_name(symptom.label) == norm or symptom.slug == norm.replace(" ", "_"):
+            return symptom
+    found = Symptom(user_id=user.id, slug=norm.replace(" ", "_")[:64], label=label.strip()[:128])
+    session.add(found)
+    await session.flush()
     return found
 
 

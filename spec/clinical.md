@@ -40,6 +40,9 @@
 ```
 DISCLAIMER ; CONFIDENCE_LABEL{high|medium|low}
 format_meal_draft(draft, eaten_at?, applied?) -> str
+    # строка позиции: «• имя — [≈ ]порция г · ккал · угл N г»,
+    # каждое поле печатается, только если оно ненулевое (kcal/порция)
+    # или задано (carbs); нулевые калории — пропуск, а не измерение
 format_remembered_macros(draft, names:[str]) -> str   # «📌 Запомнил ваши БЖУ …»
 format_product(draft, mode="eaten"|"check") -> str
 format_product_verdict(draft, matches:[KeyStats], unit) -> str

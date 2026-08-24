@@ -65,9 +65,18 @@ def format_meal_draft(
         lines.append(f"🕒 {eaten_at:%d.%m %H:%M}")
     for item in draft.items:
         about = "≈ " if item.estimated else ""
-        portion = f" — {about}{item.portion_g:.0f} г" if item.portion_g else ""
-        carbs = f", угл {item.carbs_g:.0f} г" if item.carbs_g is not None else ""
-        lines.append(f"• {item.name}{portion}{carbs}")
+        # Per-item kcal: in the grand total they are invisible, and it is the
+        # per-item number that shows the user a steak was priced as a salad.
+        # A zero is never printed — it is a gap, not a measurement.
+        parts: list[str] = []
+        if item.portion_g:
+            parts.append(f"{item.portion_g:.0f} г")
+        if item.kcal:
+            parts.append(f"{item.kcal:.0f} ккал")
+        if item.carbs_g is not None:
+            parts.append(f"угл {item.carbs_g:.0f} г")
+        tail = f" — {about}{' · '.join(parts)}" if parts else ""
+        lines.append(f"• {item.name}{tail}")
     lines.append("")
     if any(totals[k] for k in ("kcal", "protein_g", "fat_g", "carbs_g")):
         about = "≈ " if any(i.estimated for i in draft.items) else ""

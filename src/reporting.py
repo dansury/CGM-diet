@@ -905,9 +905,13 @@ def format_body_card(
             details.append(f"возраст {age}")
         if profile.sex:
             details.append("мужской" if profile.sex == "m" else "женский")
+        if profile.pregnant:
+            details.append("беременность")
         if details:
             lines.append("Профиль: " + ", ".join(details))
         lines.append(f"Активность: {ACTIVITY_LABELS.get(profile.activity, profile.activity)}")
+        if profile.conditions:
+            lines.append(f"Особые состояния: {profile.conditions}")
     if bmi_value:
         note = f" — по классификации ВОЗ это {bmi_note}" if bmi_note else ""
         lines.append(f"ИМТ: {bmi_value:g}{note}")

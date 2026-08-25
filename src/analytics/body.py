@@ -187,6 +187,7 @@ def build_plan(
     sex: str | None = None,
     activity: str | None = None,
     body_fat_pct: float | None = None,
+    pregnant: bool = False,
     today: date | None = None,
 ) -> EnergyPlan:
     """Собрать дневной коридор калорий под цель, урезав её до безопасной.
@@ -205,6 +206,11 @@ def build_plan(
         # Без роста и возраста считать нечего; берём грубый ориентир 30 ккал/кг,
         # помечаем оценкой и просим дозаполнить профиль.
         maintenance = round((weight_kg or DEFAULT_WEIGHT_KG) * 30.0, 0)
+
+    if kind == "lose" and pregnant:
+        # Дефицит при беременности небезопасен независимо от ИМТ — цель не строим
+        # вовсе (`spec/clinical.md`, принцип I).
+        raise PlanImpossible("pregnant")
 
     current_bmi = bmi(weight_kg, height_cm)
     if kind == "lose" and current_bmi is not None and current_bmi < BMI_UNDERWEIGHT:

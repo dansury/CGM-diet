@@ -85,6 +85,22 @@ async def test_the_chosen_rate_becomes_a_stored_goal_with_a_daily_target(engine,
     assert goal.target_kcal and goal.target_kcal > 1500
 
 
+async def test_pregnancy_blocks_a_weight_loss_goal(engine, session, state):
+    await intake.handle_text(FakeMessage(text="рост 170 мне 30 пол женский"), state)
+    user = await repo.get_user(session, TG_ID)
+    await repo.upsert_body_profile(session, user, pregnant=True)
+    await session.commit()
+
+    await intake.handle_text(FakeMessage(text="вес 70"), state)
+    await intake.handle_text(FakeMessage(text="цель 65"), state)
+
+    callback = FakeCallback(data="bd:rate:50", message=FakeMessage())
+    await body.on_rate(callback, state)
+
+    assert "беременности" in callback.message.texts[-1]
+    assert await repo.get_active_goal(session, user) is None
+
+
 async def test_a_confirmed_meal_shows_the_daily_corridor_once_a_goal_exists(
     engine, session, state
 ):

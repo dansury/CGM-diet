@@ -57,6 +57,7 @@ class FakeMessage:
     document: Any = None
     voice: Any = None
     audio: Any = None
+    bot: Any = None
     chat: FakeChat = field(default_factory=FakeChat)
     from_user: FakeUser = field(default_factory=FakeUser)
     sent: list[dict] = field(default_factory=list)
@@ -180,6 +181,25 @@ async def test_editing_the_draft_records_a_correction(engine, session, state):
     corrections = list(await session.scalars(select(Correction)))
     assert len(corrections) == 1
     assert "овсянка 300" in corrections[0].new_value
+
+
+async def test_a_correction_photo_is_merged_into_the_draft(engine, session, state):
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    await confirm.meal_edit(FakeCallback(data="meal:edit", message=FakeMessage()), state)
+    assert await state.get_state() == MealFlow.editing.state
+
+    photo_message = FakeMessage(photo=[FakePhoto()], caption="ещё индейка")
+    await confirm.meal_apply_edit_photo(photo_message, state, FakeBot())
+    assert await state.get_state() == MealFlow.confirming.state
+    assert any("Гречка" in t for t in photo_message.texts)  # ответ мока на фото-правку
+
+    from sqlalchemy import select
+
+    from src.db.models import Correction
+
+    corrections = list(await session.scalars(select(Correction)))
+    assert len(corrections) == 1
+    assert corrections[0].new_value == "ещё индейка"
 
 
 async def test_the_bju_button_stores_the_numbers_and_says_so(engine, session, state):

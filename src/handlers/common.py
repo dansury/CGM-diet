@@ -9,7 +9,7 @@ from aiogram.types import CallbackQuery, Message
 
 from src.db import repo
 from src.handlers.deps import local_now, session_scope
-from src.handlers.features import maybe_send_hint, menu_of
+from src.handlers.features import menu_of
 from src.keyboards import CANCEL_DATA, main_menu
 from src.logging_setup import get_logger
 from src.reporting import DISCLAIMER
@@ -115,6 +115,9 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         if user.consent_at is None:
             user.consent_at = local_now(user)
         user.onboarded = True
+        # Возможности показываем постепенно и не при первом знакомстве:
+        # отсчёт недели начинается со `/start` (`spec/features.md`).
+        await repo.defer_hints(session, user)
         hidden = await repo.hidden_features(session, user)
     await message.answer(WELCOME, reply_markup=main_menu(hidden))
     # Анкета о теле и целях — сразу за приветствием и только при первом
@@ -127,13 +130,6 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
             await start_onboarding(message, state)
         except Exception:
             log.exception("onboarding start failed")
-    # Одна возможность про запас — при старте и потом раз в неделю
-    # (`spec/features.md`). Сбой подсказки не имеет права сорвать онбординг.
-    if message.bot is not None:
-        try:
-            await maybe_send_hint(message.bot, message.chat.id, first=True)
-        except Exception:
-            log.exception("start hint failed")
 
 
 @router.message(Command("help"))

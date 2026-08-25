@@ -831,18 +831,16 @@ def format_lab_review(review: LabReview, *, header: str = "🧪 <b>Ваши ан
 
 # ------------------------------------------------------------------ feature hints
 
-def format_feature_hint(feature, *, first: bool = False) -> str:
+def format_feature_hint(feature) -> str:
     """Рассказ об одной неиспользованной возможности — коротко и по делу."""
-    opener = (
-        "💡 <b>Одна возможность, которой вы ещё не пользовались</b>"
-        if not first
-        else "💡 <b>Пока вы не начали — одна возможность про запас</b>"
-    )
-    lines = [opener, "", f"<b>{feature.title}</b>", feature.blurb]
+    lines = [
+        "💡 <b>Одна возможность, которой вы ещё не пользовались</b>",
+        "",
+        f"<b>{feature.title}</b>",
+        feature.blurb,
+    ]
     if feature.command:
         lines.append(f"Команда: {feature.command}")
-    lines.append("")
-    lines.append("«Не нужно» — уберу из меню и больше не напомню.")
     return "\n".join(lines)
 
 

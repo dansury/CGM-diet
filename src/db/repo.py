@@ -1362,6 +1362,20 @@ async def mark_feature_shown(
     return row
 
 
+async def defer_hints(
+    session: AsyncSession, user: User, *, at: datetime | None = None
+) -> None:
+    """Start the weekly countdown without telling anything yet.
+
+    `/start` is the worst moment for a feature story: the user has not seen a
+    single report. Stamping `last_hint_at` moves the first hint a full period
+    away — see `spec/features.md`.
+    """
+    if user.last_hint_at is None:
+        user.last_hint_at = at or utcnow()
+        await session.flush()
+
+
 async def set_feature_status(
     session: AsyncSession, user: User, key: str, status: str
 ) -> FeatureFlag:
@@ -1521,6 +1535,7 @@ __all__ = [
     "set_feature_status",
     "mark_feature_used",
     "users_due_for_hint",
+    "defer_hints",
     "save_labs",
     "save_meal",
     "save_media",

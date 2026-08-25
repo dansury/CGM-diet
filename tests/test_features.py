@@ -121,7 +121,7 @@ async def user(engine, session):
 
 async def test_the_hint_is_sent_once_and_counted(engine, session, user):
     bot = FakeBot()
-    key = await features_handler.maybe_send_hint(bot, TG_ID, first=True)
+    key = await features_handler.maybe_send_hint(bot, TG_ID)
     assert key == "plate"
     assert "Гарвардская тарелка" in bot.messages[0]["text"]
 
@@ -181,6 +181,36 @@ async def test_hidden_is_empty_by_default(engine, session, user):
     message = FakeMessage()
     await features_handler.cmd_hidden(message)
     assert "Скрытых возможностей нет" in message.texts[-1]
+
+
+# ------------------------------------------------------------------ /start
+
+async def test_start_tells_nothing_about_features_and_starts_the_week(engine, session):
+    """При первом знакомстве — только приветствие и анкета, без подсказок."""
+    from aiogram.fsm.context import FSMContext
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+
+    from src.handlers import common
+    from tests.test_handlers_flow import TG_ID as FLOW_TG_ID
+    from tests.test_handlers_flow import FakeMessage
+
+    message = FakeMessage()
+    state = FSMContext(
+        storage=MemoryStorage(),
+        key=StorageKey(bot_id=1, chat_id=FLOW_TG_ID, user_id=FLOW_TG_ID),
+    )
+    await common.cmd_start(message, state)
+
+    assert all("возможность" not in text for text in message.texts)
+    started = await repo.get_or_create_user(session, FLOW_TG_ID)
+    assert started.last_hint_at is not None  # отсчёт недели пошёл со /start
+
+
+async def test_deferring_hints_never_moves_an_existing_countdown(engine, session, user):
+    user.last_hint_at = NOW
+    await repo.defer_hints(session, user, at=NOW + timedelta(days=3))
+    assert user.last_hint_at == NOW
 
 
 # ------------------------------------------------------------------ расписание

@@ -97,6 +97,7 @@ load_plate_meals(session, user, since?) -> [PlateMeal]   # позиции с п�
 feature_states(session, user) -> dict[key, FeatureState]
 hidden_features(session, user) -> {key}
 mark_feature_shown(session, user, key, at?)   # пишет и users.last_hint_at
+defer_hints(session, user, at?)               # last_hint_at если пуст: отсчёт недели с /start
 set_feature_status(session, user, key, status) / mark_feature_used(session, user, key)
 users_due_for_hint(session, now?, period_days=7) -> [User]
 save_medication(session, user, taken_at, name, dose_text?, form?, note?, source, media_id?)

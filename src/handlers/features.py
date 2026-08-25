@@ -86,7 +86,7 @@ async def sync_commands(bot: Bot, chat_id: int, hidden: set[str]) -> None:
         log.warning("could not sync command menu for %s", chat_id, exc_info=True)
 
 
-async def maybe_send_hint(bot: Bot, chat_id: int, *, first: bool = False) -> str | None:
+async def maybe_send_hint(bot: Bot, chat_id: int) -> str | None:
     """Отправить одну подсказку, если есть о чём рассказать.
 
     Возвращает ключ возможности или `None`. Отметку о показе ставим до
@@ -103,7 +103,7 @@ async def maybe_send_hint(bot: Bot, chat_id: int, *, first: bool = False) -> str
     try:
         await bot.send_message(
             chat_id,
-            format_feature_hint(feature, first=first),
+            format_feature_hint(feature),
             reply_markup=feature_hint(feature.key),
         )
     except Exception:  # noqa: BLE001 — заблокированный чат не должен шуметь

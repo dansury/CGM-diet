@@ -1,8 +1,9 @@
 # features — рассказ о возможностях и скрытое меню
 
-Один раз при `/start` и не чаще раза в неделю — ровно одна возможность,
-которой пользователь ещё не пользовался. Об одной возможности — не больше двух
-сообщений за всё время.
+Не чаще раза в неделю — ровно одна возможность, которой пользователь ещё не
+пользовался. Об одной возможности — не больше двух сообщений за всё время.
+При `/start` подсказку не шлём: `repo.defer_hints` ставит `last_hint_at`, и
+первый рассказ приходит не раньше чем через `HINT_PERIOD_DAYS`.
 
 ## Каталог (`src/features.py`)
 
@@ -44,7 +45,7 @@ feat:close       закрыть список
 ## Обработчик (`src/handlers/features.py`)
 
 ```
-maybe_send_hint(bot, chat_id, first=False)->key|None  # отметка ставится до отправки
+maybe_send_hint(bot, chat_id)->key|None  # отметка ставится до отправки
 menu_for(session, user)->ReplyKeyboardMarkup ; menu_of(chat_id)->ReplyKeyboardMarkup
 mark_used(chat_id, key) ; sync_commands(bot, chat_id, hidden)
 /hidden -> список скрытого + кнопки возврата

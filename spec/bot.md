@@ -166,6 +166,41 @@ sha256(data)
 отдельным сообщением «📌 Запомнил ваши БЖУ …» — так же, как и БЖУ, названные
 сразу во вводе (`spec/dictionary.md` § Память БЖУ).
 
+## Примеры в подсказках
+
+Примеры в приглашениях не фиксированы: пул ротируется на каждое приглашение,
+и **не чаще чем через раз** (`tick % 2 == 0`) последним пунктом подмешивается
+пример из личного словаря пользователя. Счётчики — в процессе
+(`reporting._rotation`, ключ `(slot, chat_id)`), в БД ничего не пишется;
+после рестарта ротация начинается заново.
+
+Пулы и сборка — `src/reporting.py` (пользовательские тексты только там):
+
+```
+correction_examples(user_key, personal) -> list[str]   # правка карточки, личный — с весом
+food_examples(user_key, personal) -> list[str]         # описание еды словами
+glucose_examples(user_key) -> list[str]                # сахар: имён нет, личных примеров нет
+dish_example(user_key, personal) -> str                # название блюда для примера с БЖУ
+items_example(user_key, personal) -> str               # «продукт 250, продукт 100, …»
+quoted(examples) -> str                                # «a», «b», «c»
+correction_hint | correction_retry | describe_food_hint | describe_food_retry
+glucose_prompt | glucose_hint | macros_prompt | macros_retry | meal_edit_prompt
+reset_examples()                                       # только для тестов
+```
+
+Личные примеры — названия из личного словаря (`repo.example_labels`, виды
+`item` и `meal`, порядок ротации словаря). Названия подставляются **в
+именительном падеже и только с весом или как есть** («сырники 200 г»):
+склонять слова пользователя бот не берётся. Личных примеров нет (пустой
+словарь, сбой запроса) — подсказка остаётся с общими; `items_example`
+требует минимум двух названий, иначе формат «через запятую» не виден.
+
+Где это видно: подсказка под карточкой еды (`views.show_meal_draft`),
+`meal:edit` и «не понял правку» (`confirm`), `meal:macros` и «не понял числа»
+(`confirm`), «опишите еду» (`intake`, `dictionary`), приглашение и ошибка
+распознавания сахара (`intake`). `/start` и `/help` — справочные карточки,
+они не ротируются: словаря у нового пользователя ещё нет.
+
 ## Отчёты (`src/handlers/reports.py`)
 
 `_compute_stats(session, user, window, key_type, days=30)` — общий путь для

@@ -32,6 +32,7 @@ from src.keyboards import (
 )
 from src.logging_setup import get_logger
 from src.reporting import (
+    correction_examples,
     format_labs,
     format_meal_draft,
     format_medication_draft,
@@ -81,9 +82,31 @@ async def show_meal_draft(
         }
     )
     await message.answer(
-        format_meal_draft(draft, eaten_at=eaten_at_local, applied=applied),
+        format_meal_draft(
+            draft,
+            eaten_at=eaten_at_local,
+            applied=applied,
+            examples=correction_examples(
+                message.chat.id, await personal_examples(message.chat.id)
+            ),
+        ),
         reply_markup=confirm_meal(),
     )
+
+
+async def personal_examples(chat_id: int, *, limit: int = 5) -> list[str]:
+    """Названия из личного словаря — их подмешивают в примеры подсказок.
+
+    Fail-soft: без словаря и при сбое запроса подсказка просто остаётся с
+    общими примерами (`spec/bot.md` § Примеры в подсказках).
+    """
+    try:
+        async with session_scope() as session:
+            user = await repo.get_or_create_user(session, chat_id)
+            return await repo.example_labels(session, user, limit=limit)
+    except Exception:
+        log.exception("personal examples lookup failed")
+        return []
 
 
 async def fill_from_memory(message: Message, draft: MealDraft) -> None:
@@ -221,6 +244,7 @@ __all__ = [
     "show_glucose_draft",
     "show_lab_draft",
     "fill_from_memory",
+    "personal_examples",
     "remember_typed_macros",
     "show_meal_draft",
     "show_medication_draft",

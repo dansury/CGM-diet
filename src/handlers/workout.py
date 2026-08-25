@@ -274,7 +274,11 @@ async def workout_ok(callback: CallbackQuery, state: FSMContext) -> None:
         )
         from src.handlers.body import day_progress_text
 
-        progress = await day_progress_text(session, user, now=local_now(user))
+        try:
+            progress = await day_progress_text(session, user, now=local_now(user))
+        except Exception:
+            log.exception("day progress failed")
+            progress = None
     await state.clear()
     await callback.answer("Записано")
     title = draft.title or workout_math.kind_label(draft.kind)

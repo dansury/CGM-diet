@@ -35,6 +35,7 @@ from src.logging_setup import get_logger
 from src.reporting import (
     format_body_card,
     format_day_progress,
+    format_day_totals,
     format_goal_plan,
     format_measurement_draft,
     format_weight_saved,
@@ -146,17 +147,15 @@ async def _plan_for(session, user: User, *, weight_kg: float | None = None) -> b
 # ------------------------------------------------------------------ прогресс
 
 async def day_progress_text(session, user: User, *, now: datetime) -> str | None:
-    """Полоса дневного коридора — то, что показывается после каждого приёма пищи.
+    """Итог дня — то, что показывается после каждого приёма пищи.
 
-    `None`, если цели нет: без неё «73 % нормы» ничего не значит.
+    С целью — полоса коридора и остаток; без цели «73 % нормы» ничего не
+    значит, поэтому остаются только съеденные калории и подсказка завести цель.
+    `None` — когда за день нечего показать (`spec/body.md` § Дневной коридор).
     """
     goal = await repo.get_active_goal(session, user)
-    if goal is None:
-        return None
-    plan = await _plan_for(session, user)
-    target = plan.target_kcal if plan else goal.target_kcal
-    if not target:
-        return None
+    plan = await _plan_for(session, user) if goal is not None else None
+    target = (plan.target_kcal if plan else None) or (goal.target_kcal if goal else None)
     start_local = now.replace(hour=0, minute=0, second=0, microsecond=0)
     totals = await repo.day_energy(
         session,
@@ -164,6 +163,12 @@ async def day_progress_text(session, user: User, *, now: datetime) -> str | None
         start=to_utc(start_local, user),
         end=to_utc(start_local + timedelta(days=1), user),
     )
+    if not target:
+        # Цели нет (или коридор не посчитался) — но съеденное за день человек
+        # вправе видеть всегда; процентов и остатка без цели не показываем.
+        if not totals["consumed_kcal"] and not totals["burned_kcal"]:
+            return None
+        return format_day_totals(body_math.day_balance(target_kcal=0.0, **totals))
     balance = body_math.day_balance(target_kcal=target, **totals)
     series = [
         (to_local(row.measured_at, user), row.weight_kg)

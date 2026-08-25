@@ -119,14 +119,14 @@ async def test_a_confirmed_meal_shows_the_daily_corridor_once_a_goal_exists(
     assert "▓" in written or "░" in written
 
 
-async def test_without_a_goal_the_meal_card_stays_as_it_was(engine, session, state):
-    """Без цели нет дневного коридора — тарелка при этом остаётся на месте."""
+async def test_without_a_goal_there_is_no_corridor_bar(engine, session, state):
+    """Без цели нет коридора и процентов — только съеденное за день."""
     await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
     card = FakeMessage()
     await confirm.meal_ok(FakeCallback(data="meal:ok", message=card), state)
     written = card.texts[-1]
-    assert "Сегодня" not in written
     assert "ккал)" not in written
+    assert "Осталось на сегодня" not in written
 
 
 async def test_the_guided_weight_prompt_writes_what_the_user_typed(engine, session, state):
@@ -232,6 +232,49 @@ async def test_a_workout_adds_to_the_daily_allowance(engine, session, state):
     assert "тренировки" in after
     assert before != after
 
+
+
+# ------------------------------------------------------------------ итог дня
+
+
+async def test_the_day_bar_follows_every_confirmed_meal(engine, session, state):
+    await intake.handle_text(FakeMessage(text="рост 178 мне 44 пол мужской"), state)
+    await intake.handle_text(FakeMessage(text="вес 90"), state)
+    await intake.handle_text(FakeMessage(text="цель 80"), state)
+    await body.on_rate(FakeCallback(data="bd:rate:25", message=FakeMessage()), state)
+
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    card = FakeMessage()
+    await confirm.meal_ok(FakeCallback(data="meal:ok", message=card), state)
+
+    assert "Осталось на сегодня" in card.texts[-1]
+
+
+async def test_without_a_goal_a_meal_still_shows_the_day_total(engine, session, state):
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    card = FakeMessage()
+    await confirm.meal_ok(FakeCallback(data="meal:ok", message=card), state)
+
+    text = card.texts[-1]
+    assert "Сегодня" in text and "съедено" in text
+    assert "/body" in text  # подсказка завести цель
+    assert "Осталось на сегодня" not in text  # остатка без цели не бывает
+
+
+async def test_a_broken_day_bar_does_not_eat_the_confirmation(
+    engine, session, state, monkeypatch
+):
+    async def boom(*args, **kwargs):
+        raise RuntimeError("no plan today")
+
+    monkeypatch.setattr(body, "day_progress_text", boom)
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    card = FakeMessage()
+    await confirm.meal_ok(FakeCallback(data="meal:ok", message=card), state)
+
+    assert "Записано" in card.texts[-1]
+    user = await repo.get_user(session, TG_ID)
+    assert (await repo.counts(session, user))["meals"] == 1
 
 # ------------------------------------------------------------------ напоминание
 

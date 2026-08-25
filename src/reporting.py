@@ -666,6 +666,23 @@ def format_day_progress(balance, *, goal=None, trend=None) -> str:
     return "\n".join(lines)
 
 
+GOAL_HINT = "🎯 Задайте цель — /body — и буду показывать коридор и остаток на день."
+
+
+def format_day_totals(balance) -> str:
+    """Итог дня без коридора: цели нет — процентов и остатка тоже нет.
+
+    Съеденное за день человек вправе видеть всегда; «73 % нормы» без цели —
+    выдуманная норма (`spec/body.md` § Дневной коридор).
+    """
+    parts = [f"съедено {balance.consumed_kcal:.0f} ккал"]
+    if balance.carbs_g:
+        parts.append(f"углеводы {balance.carbs_g:.0f} г")
+    if balance.burned_kcal:
+        parts.append(f"тренировки ≈ {balance.burned_kcal:.0f} ккал")
+    return "📊 <b>Сегодня</b>: " + " · ".join(parts) + f"\n{GOAL_HINT}"
+
+
 # ------------------------------------------------------------------ Harvard plate
 
 PLATE_RULE = (
@@ -1080,6 +1097,7 @@ __all__ = [
     "format_body_card",
     "format_cgm_summary",
     "format_day_progress",
+    "format_day_totals",
     "format_goal_plan",
     "format_measurement_draft",
     "format_labs",

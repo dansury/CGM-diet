@@ -89,10 +89,15 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
         await repo.remember_meal_macros(session, user, draft, source="label")
         title = meal.title or "приём пищи"
         shortcut = await repo.suggest_dictionary(session, user, title, kinds=("meal",), limit=1)
-        # Полоса дневного коридора — только если цель задана (`spec/body.md`).
+        # Итог дня: с целью — полоса коридора, без цели — съеденные калории
+        # (`spec/body.md`). Сбой расчёта не имеет права съесть подтверждение.
         from src.handlers.body import day_progress_text
 
-        progress = await day_progress_text(session, user, now=local_now(user))
+        try:
+            progress = await day_progress_text(session, user, now=local_now(user))
+        except Exception:
+            log.exception("day progress failed")
+            progress = None
         # Гарвардская тарелка — после каждой записи, если не выключена
         # (`spec/plate.md`); сбой оценки не имеет права съесть подтверждение.
         from src.handlers.plate import plate_advice_text

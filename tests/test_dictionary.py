@@ -136,3 +136,19 @@ async def test_an_item_button_carries_the_card_with_it(session):
         await repo.remember_meal(session, user, draft)
     entry = (await repo.list_dictionary(session, user, kind="item"))[0]
     assert [i["name"] for i in entry.payload["items"]] == ["овсянка"]
+
+
+async def test_example_labels_take_food_only(session):
+    user = await _user(session)
+    for _ in range(2):
+        await repo.bump_dictionary(session, user, kind="item", label="сырники")
+    await repo.bump_dictionary(session, user, kind="medication", label="Глюкофаж 850")
+    await repo.bump_dictionary(session, user, kind="symptom", label="сонливость")
+    # лекарство и симптом примером «как записать еду» быть не могут
+    assert await repo.example_labels(session, user) == ["сырники"]
+
+
+async def test_example_labels_wait_for_the_second_sighting(session):
+    user = await _user(session)
+    await repo.bump_dictionary(session, user, kind="item", label="сырники")
+    assert await repo.example_labels(session, user) == []

@@ -62,6 +62,9 @@ suggest_dictionary(session, user, prefix, *, kinds=None, limit=6) -> list[DictEn
   # 1) префикс по key_norm  2) вхождение подстроки  3) ротация (§ Ротация);
   #    неактивные исключены
 list_dictionary(session, user, *, kind=None, limit=30, include_hidden=False)
+example_labels(session, user, *, kinds=("item","meal"), limit=5) -> list[str]
+  # названия для примеров в подсказках (`spec/bot.md` § Примеры в подсказках);
+  #    те же пороги и та же ротация, лекарства и симптомы не берутся
 get_dictionary_entry(session, user, entry_id) -> DictEntry | None
 touch_dictionary(session, entry) -> None            # hits+1, last_used_at=now
 hide_dictionary(session, entry) -> None             # is_active=False

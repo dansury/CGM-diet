@@ -17,13 +17,22 @@ from aiogram.types import CallbackQuery, Message
 from src.db import repo
 from src.handlers.deps import local_now, session_scope, to_utc
 from src.handlers.states import GlucoseFlow, LabFlow, MealFlow, ProductFlow
-from src.handlers.views import DRAFT_KEY, EATEN_AT_KEY, FILES_KEY
+from src.handlers.views import DRAFT_KEY, EATEN_AT_KEY, FILES_KEY, personal_examples
 from src.ingest.correction import apply_meal_correction
 from src.ingest.nutrition import Remembered
 from src.ingest.units import MGDL, MMOL, format_value
 from src.keyboards import cancel_only
 from src.logging_setup import get_logger
-from src.reporting import format_remembered_label
+from src.reporting import (
+    correction_examples,
+    correction_retry,
+    dish_example,
+    format_remembered_label,
+    items_example,
+    macros_prompt,
+    macros_retry,
+    meal_edit_prompt,
+)
 from src.vision import recognize
 from src.vision.schemas import (
     ItemDraft,
@@ -38,15 +47,6 @@ from src.vision.schemas import (
 
 router = Router(name="confirm")
 log = get_logger("handlers.confirm")
-
-MACROS_PROMPT = (
-    "✏️ <b>БЖУ</b>\n"
-    "Напишите или наговорите числа — например:\n"
-    "<code>б 12 ж 6 у 40</code> — если блюдо одно;\n"
-    "<code>овсянка 200 г б 12 ж 6 у 40 292 ккал</code> — если блюд несколько.\n"
-    "Числа — на съеденную порцию. Ккал можно не называть: посчитаю сам.\n"
-    "Запомню их за этим блюдом и в следующий раз подставлю без оценки."
-)
 
 PRODUCT_MACROS_PROMPT = (
     "✏️ <b>БЖУ с этикетки</b>\n"
@@ -111,10 +111,9 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
 async def meal_edit(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(MealFlow.editing)
     await callback.answer()
+    chat_id = callback.message.chat.id
     await callback.message.answer(
-        "Напишите, что поправить — например:\n"
-        "<code>гречка 250, курица 100, салат 150</code>\n"
-        "Формат: продукт и граммы через запятую.",
+        meal_edit_prompt(items_example(chat_id, await personal_examples(chat_id))),
         reply_markup=cancel_only(),
     )
 
@@ -145,8 +144,11 @@ async def meal_apply_edit(
         except recognize.RecognitionError:
             if not result.changes:
                 await message.answer(
-                    "Не понял правку. Скажите проще — «убери салат», «гречки было 250», "
-                    "«вместо курицы индейка»."
+                    correction_retry(
+                        correction_examples(
+                            message.chat.id, await personal_examples(message.chat.id)
+                        )
+                    )
                 )
                 return
 
@@ -196,7 +198,11 @@ async def meal_macros(callback: CallbackQuery, state: FSMContext) -> None:
     """«✏️ БЖУ» — отдельный вход для чисел: карточка не пересобирается."""
     await state.set_state(MealFlow.editing_macros)
     await callback.answer()
-    await callback.message.answer(MACROS_PROMPT, reply_markup=cancel_only())
+    chat_id = callback.message.chat.id
+    await callback.message.answer(
+        macros_prompt(dish_example(chat_id, await personal_examples(chat_id))),
+        reply_markup=cancel_only(),
+    )
 
 
 @router.message(MealFlow.editing_macros)
@@ -211,8 +217,9 @@ async def meal_apply_macros(
     macro_changes = [change for change in result.changes if change.kind in ("macros", "portion")]
     if not macro_changes:
         await message.answer(
-            "Не понял числа. Напишите, например: <code>б 12 ж 6 у 40</code> "
-            "или <code>овсянка 200 г б 12 ж 6 у 40</code>."
+            macros_retry(
+                dish_example(message.chat.id, await personal_examples(message.chat.id))
+            )
         )
         return
     from src.handlers.views import remember_typed_macros, show_meal_draft

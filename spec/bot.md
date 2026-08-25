@@ -5,10 +5,11 @@
 `BOT_MODE=polling` (по умолчанию) → `dispatcher.start_polling`.
 `BOT_MODE=webhook` → uvicorn с `src.web.app:create_app`.
 `build_bot(settings)` — `ParseMode.HTML` по умолчанию.
-`COMMANDS` — 17 команд (`/workouts` в меню не выносится), регистрируются в меню Telegram при старте.
+`COMMANDS` — 20 команд (`/workouts` в меню не выносится), регистрируются в меню Telegram при старте.
 `prepare_runtime(bot, settings)` до первого апдейта (и в polling, и в webhook):
 `wire_error_reporter` → `load_active_models` → каталог свободных моделей →
-`scheduler.start(bot)` (напоминание о взвешивании, `spec/body.md`).
+`scheduler.start(bot)` (напоминание о взвешивании — `spec/body.md`; недельная
+подсказка о возможностях — `spec/features.md`).
 Каждый шаг деградирует молча — ни один не мешает боту стартовать.
 
 ## Команды
@@ -21,7 +22,10 @@
 | `/help` | подробная справка | `handlers/common.py` |
 | `/menu` | вернуть клавиатуру | `handlers/common.py` |
 | `/cancel` | отменить текущий ввод (то же, что `❌`) | `handlers/common.py` |
-| `/settings`, `/set` | пояс, единицы, окна, базовая линия, частота взвешиваний (`weighin`) | `handlers/common.py` |
+| `/settings`, `/set` | пояс, единицы, окна, базовая линия, `weighin`, `plate`, `meals` | `handlers/common.py` |
+| `/plate` | Гарвардская тарелка: что настроено и как менять | `handlers/plate.py` |
+| `/labs` | анализы: маркеры вне референса и продукты-источники | `handlers/labs.py` |
+| `/hidden` | скрытые возможности и возврат их в меню | `handlers/features.py` |
 | `/eat`, `/sugar`, `/check` | явные режимы ввода | `handlers/intake.py` |
 | `/wellbeing` | опрос самочувствия | `handlers/wellbeing.py` |
 | `/body` | профиль тела, замеры, цель, дневной коридор | `handlers/body.py` |
@@ -37,9 +41,11 @@
 
 ## Клавиатуры (`src/keyboards.py`)
 
-Reply-меню: `🍽 Записать еду`, `🩸 Записать сахар`, `🛒 Проверить продукт`,
-`🙂 Самочувствие`, `🏃 Тренировка`, `⚖️ Вес и цель`, `📊 Статистика`, `📈 График`,
-`⭐️ Мой словарь`, `💊 Лекарства`.
+Reply-меню (`MENU_ROWS`): `🍽 Записать еду`, `🩸 Записать сахар`,
+`🛒 Проверить продукт`, `🙂 Самочувствие`, `🏃 Тренировка`, `⚖️ Вес и цель`,
+`📊 Статистика`, `📈 График`, `⭐️ Мой словарь`, `💊 Лекарства`.
+`main_menu(hidden?)` убирает кнопки возможностей, от которых пользователь
+отказался (`spec/features.md`); клавиатуру собирает `features.menu_of(chat_id)`.
 
 На каждой карточке распознавания — расшифровка текстом и кнопки
 `✅ Подтвердить`, `✏️ Скорректировать`, `✏️ БЖУ`, `❌ Отменить` (правку принимаем текстом
@@ -76,6 +82,7 @@ mdl:lvl:<global|slot|free> | mdl:slot:<slot> | mdl:set:<target>:<idx> | mdl:clos
 wb:score:<1..5> | wb:sym:<id> | wb:other | wb:voice | wb:done
 stats:w:<1h|2h> | stats:k:<tag|item> | stats:chart
 del:yes|no                     hs:how|keys|app|menu
+feat:ok:<key>|no:<key>|show:<key>|close
 bd:menu|profile|weight|goal|chart|close | bd:field:<name> | bd:sex:<m|f>
 bd:act:<level> | bd:rate:<кг/нед ×100> | bd:save|bd:drop
 wo:ok|edit|time|hr|drop | wo:dur:<мин|other> | wo:int:<low|moderate|high>
@@ -107,8 +114,8 @@ SettingsFlow.editing
 
 ## Порядок роутеров (`src/handlers/__init__.py`)
 
-`admin → common → reports → wellbeing → body → workout → dictionary → meds →
-confirm → intake → errors`.
+`admin → common → reports → features → plate → labs → wellbeing → body →
+workout → dictionary → meds → confirm → intake → errors`.
 `admin` первый и полностью отфильтрован (владелец + личка): чужому апдейту он
 просто не соответствует и тот идёт дальше. `intake` предпоследний: он ловит
 любой текст и любое фото. `errors` — наблюдатель `router.errors`, обработчиков
@@ -127,7 +134,9 @@ sha256(data)
 ## Потоки
 
 **Еда:** фото → `classify_photo` → `recognize_meal_photo` → `views.show_meal_draft`
-(FSM `MealFlow.confirming`) → `meal:ok` → `repo.save_meal`.
+(FSM `MealFlow.confirming`) → `meal:ok` → `repo.save_meal`. В том же сообщении —
+полоса дневного коридора (`spec/body.md`) и оценка тарелки (`spec/plate.md`);
+обе части не обязательны и не могут отменить запись.
 `meal:edit` → строка `гречка 250, курица 100` → `_parse_edit` пересчитывает
 нутриенты пропорционально порции, сохраняет теги, пишет `corrections`.
 
@@ -139,7 +148,8 @@ sha256(data)
 превращает продукт в `MealDraft` с порцией 100 г (редактируемой).
 
 **Анализы:** фото/PDF/текст → `recognize_labs` → карточка с пометками
-`🔺/🔻/✅` → `lab:ok`.
+`🔺/🔻/✅` → `lab:ok` → сохранение + отдельным сообщением продукты-источники по
+маркерам вне референса (`spec/labs.md`).
 
 **Лекарство:** фото упаковки → `recognize_medication` → карточка `med:*` →
 `repo.save_medication_draft` (журнал + личный словарь). `spec/meds.md`.

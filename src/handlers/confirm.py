@@ -93,6 +93,15 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
         from src.handlers.body import day_progress_text
 
         progress = await day_progress_text(session, user, now=local_now(user))
+        # Гарвардская тарелка — после каждой записи, если не выключена
+        # (`spec/plate.md`); сбой оценки не имеет права съесть подтверждение.
+        from src.handlers.plate import plate_advice_text
+
+        try:
+            plate_text = await plate_advice_text(session, user, now=local_now(user))
+        except Exception:
+            log.exception("plate advice failed")
+            plate_text = None
     await state.clear()
     await callback.answer("Записано")
     tail = (
@@ -104,6 +113,7 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
         f"✅ Записано: <b>{title}</b> в {eaten_local:%H:%M}.\n"
         f"Через час-полтора пришлите сахар — и приём попадёт в статистику.{tail}"
         + (f"\n\n{progress}" if progress else "")
+        + (f"\n\n{plate_text}" if plate_text else "")
     )
 
 
@@ -649,6 +659,17 @@ async def lab_ok(callback: CallbackQuery, state: FSMContext) -> None:
             media = await repo.save_media(session, user, kind="lab", tg_file_id=file_ids[0])
             media_id = media.id
         rows = await repo.save_labs(session, user, draft, media_id=media_id)
+        await repo.mark_feature_used(session, user, "labs")
+        # Продукты-источники по маркерам вне референса (`spec/labs.md`).
+        from src.handlers.labs import lab_review_text
+
+        try:
+            review = await lab_review_text(
+                session, user, header="🧪 <b>С учётом этого результата</b>"
+            )
+        except Exception:
+            log.exception("lab review failed")
+            review = None
     await state.clear()
     await callback.answer("Сохранено")
     flagged = [r for r in rows if r.flag in {"high", "low"}]
@@ -660,6 +681,8 @@ async def lab_ok(callback: CallbackQuery, state: FSMContext) -> None:
             + ".\nЭто повод показать результат врачу — я диагнозов не ставлю."
         )
     await callback.message.edit_text(f"✅ Сохранено показателей: {len(rows)}.{tail}")
+    if review:
+        await callback.message.answer(review)
 
 
 @router.callback_query(F.data == "lab:edit", LabFlow.confirming)

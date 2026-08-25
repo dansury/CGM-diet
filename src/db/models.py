@@ -58,8 +58,13 @@ class User(Base, TimestampMixin):
     window_2h_start: Mapped[int] = mapped_column(Integer, default=90, nullable=False)
     window_2h_end: Mapped[int] = mapped_column(Integer, default=150, nullable=False)
     baseline_window: Mapped[int] = mapped_column(Integer, default=20, nullable=False)
+    # Harvard plate: on by default, switched off in /settings (`spec/plate.md`)
+    plate_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # NULL = «сколько приёмов пищи в день» берём из собственной статистики
+    meals_per_day: Mapped[int | None] = mapped_column(Integer)
     consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    last_hint_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class MediaFile(Base, TimestampMixin):
@@ -426,6 +431,28 @@ class AnalysisResult(Base, TimestampMixin):
     raw_text: Mapped[str | None] = mapped_column(Text)
 
 
+class FeatureFlag(Base, TimestampMixin):
+    """Per-user state of one feature hint (`spec/features.md`).
+
+    `status`: new|shown|accepted|declined. `declined` is final — the feature
+    leaves the menu and is never mentioned again; `used_at` marks features that
+    leave no row of their own (графики, статистика, выгрузка).
+    """
+
+    __tablename__ = "feature_flags"
+    __table_args__ = (UniqueConstraint("user_id", "feature", name="uq_feature_user"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    feature: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="new", nullable=False)
+    shown: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_shown_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Symptom(Base, TimestampMixin):
     """Dynamic per-user symptom glossary; `user_id` NULL = seeded global entry."""
 
@@ -551,6 +578,7 @@ __all__ = [
     "BodyProfile",
     "CheckinSymptom",
     "Correction",
+    "FeatureFlag",
     "FoodStat",
     "GlucoseReading",
     "Meal",

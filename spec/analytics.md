@@ -1,5 +1,8 @@
 # analytics — окна, статистика, метрики
 
+Отдельными спеками описаны два модуля пакета: `src/analytics/plate.py` —
+`spec/plate.md`, `src/analytics/labs.py` — `spec/labs.md`.
+
 ## Components (`src/analytics/tags.py`)
 
 Два уровня ключей:

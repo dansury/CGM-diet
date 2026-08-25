@@ -15,7 +15,8 @@ from aiogram.types import CallbackQuery, Message
 
 from src.db import repo
 from src.handlers.deps import local_now, session_scope, to_utc
-from src.keyboards import KIND_TABS, dictionary_page, dictionary_suggestions, main_menu
+from src.handlers.features import mark_used, menu_of
+from src.keyboards import KIND_TABS, dictionary_page, dictionary_suggestions
 from src.logging_setup import get_logger
 from src.reporting import describe_food_retry, food_examples
 from src.vision.schemas import MealDraft, meal_from_dict
@@ -46,6 +47,7 @@ def _rows(entries: list) -> list[tuple[int, str, str]]:
 @router.message(F.text == "⭐️ Мой словарь")
 @router.message(Command("my"))
 async def show_dictionary(message: Message) -> None:
+    await mark_used(message.chat.id, "dictionary")
     await _render(message, kind="meal", mode="use", offset=0)
 
 
@@ -131,7 +133,7 @@ async def on_new(callback: CallbackQuery, state: FSMContext) -> None:
         chat_id = callback.message.chat.id
         await callback.message.answer(
             describe_food_retry(food_examples(chat_id, await views.personal_examples(chat_id))),
-            reply_markup=main_menu(),
+            reply_markup=await menu_of(callback.from_user.id),
         )
         return
     await views.show_meal_draft(callback.message, state, draft)
@@ -173,7 +175,7 @@ async def on_use(callback: CallbackQuery, state: FSMContext) -> None:
     if kind == "medication":
         await callback.answer("Записано")
         await callback.message.answer(
-            f"✅ Записан приём: <b>{name}</b> в {taken_local:%H:%M}.", reply_markup=main_menu()
+            f"✅ Записан приём: <b>{name}</b> в {taken_local:%H:%M}.", reply_markup=await menu_of(callback.from_user.id)
         )
         return
 

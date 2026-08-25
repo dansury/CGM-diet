@@ -35,18 +35,64 @@ def cancel_only() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[cancel_button()]])
 
 
-def main_menu() -> ReplyKeyboardMarkup:
+MENU_ROWS: tuple[tuple[str, ...], ...] = (
+    ("🍽 Записать еду", "🩸 Записать сахар"),
+    ("🛒 Проверить продукт", "🙂 Самочувствие"),
+    ("🏃 Тренировка", "⚖️ Вес и цель"),
+    ("📊 Статистика", "📈 График"),
+    ("⭐️ Мой словарь", "💊 Лекарства"),
+)
+
+
+def main_menu(hidden: set[str] | None = None) -> ReplyKeyboardMarkup:
+    """Меню без того, от чего пользователь отказался (`spec/features.md`).
+
+    Скрытая кнопка не отключает возможность: команда работает, а вернуть её в
+    меню можно из `/hidden`.
+    """
+    from src.features import BUTTON_FEATURE
+
+    skip = hidden or set()
+    keyboard = []
+    for row in MENU_ROWS:
+        buttons = [
+            KeyboardButton(text=text)
+            for text in row
+            if BUTTON_FEATURE.get(text) not in skip
+        ]
+        if buttons:
+            keyboard.append(buttons)
     return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="🍽 Записать еду"), KeyboardButton(text="🩸 Записать сахар")],
-            [KeyboardButton(text="🛒 Проверить продукт"), KeyboardButton(text="🙂 Самочувствие")],
-            [KeyboardButton(text="🏃 Тренировка"), KeyboardButton(text="⚖️ Вес и цель")],
-            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📈 График")],
-            [KeyboardButton(text="⭐️ Мой словарь"), KeyboardButton(text="💊 Лекарства")],
-        ],
+        keyboard=keyboard,
         resize_keyboard=True,
         input_field_placeholder="Пришлите фото, текст или голосовое",
     )
+
+
+def feature_hint(key: str) -> InlineKeyboardMarkup:
+    """Две кнопки под рассказом о возможности — и третьей быть не должно."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="👍 Отлично", callback_data=f"feat:ok:{key}"),
+                InlineKeyboardButton(text="🚫 Не нужно", callback_data=f"feat:no:{key}"),
+            ]
+        ]
+    )
+
+
+def hidden_features(features) -> InlineKeyboardMarkup:
+    """`/hidden`: вернуть скрытую возможность в меню одной кнопкой."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"↩️ {feature.title}", callback_data=f"feat:show:{feature.key}"
+            )
+        ]
+        for feature in features
+    ]
+    rows.append([InlineKeyboardButton(text="Закрыть", callback_data="feat:close")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def confirm_meal() -> InlineKeyboardMarkup:
@@ -497,6 +543,7 @@ __all__ = [
     "CANCEL_DATA",
     "CANCEL_TEXT",
     "KIND_ICONS",
+    "MENU_ROWS",
     "KIND_TABS",
     "activity_picker",
     "body_menu",
@@ -511,7 +558,9 @@ __all__ = [
     "confirm_workout",
     "dictionary_page",
     "dictionary_suggestions",
+    "feature_hint",
     "health_setup",
+    "hidden_features",
     "main_menu",
     "photo_kind",
     "product_actions",

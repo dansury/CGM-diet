@@ -29,6 +29,8 @@ COMMANDS = [
     BotCommand(command="today", description="Записи за сегодня"),
     BotCommand(command="stats", description="Статистика по продуктам"),
     BotCommand(command="graph", description="График еды и сахара"),
+    BotCommand(command="plate", description="Гарвардская тарелка: оценка и настройки"),
+    BotCommand(command="labs", description="Анализы и продукты-источники"),
     BotCommand(command="wellbeing", description="Отметить самочувствие"),
     BotCommand(command="body", description="Вес, состав тела и цель"),
     BotCommand(command="weight", description="Записать вес"),
@@ -39,6 +41,7 @@ COMMANDS = [
     BotCommand(command="delete", description="Удалить все данные"),
     BotCommand(command="cancel", description="Отменить текущий ввод"),
     BotCommand(command="settings", description="Настройки"),
+    BotCommand(command="hidden", description="Скрытые возможности"),
     BotCommand(command="help", description="Справка"),
 ]
 

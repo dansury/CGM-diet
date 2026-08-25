@@ -15,6 +15,8 @@ from datetime import datetime
 
 from src.analytics.activity import ActivityContrast
 from src.analytics.cgm_metrics import CGMSummary
+from src.analytics.labs import FoodHint, LabReview, LabValue
+from src.analytics.plate import TARGET_SHARES, PlateAdvice, PlateScore, category_label
 from src.analytics.stats import KeyStats
 from src.analytics.symptoms import SymptomStats
 from src.analytics.tags import tag_label
@@ -664,6 +666,184 @@ def format_day_progress(balance, *, goal=None, trend=None) -> str:
     return "\n".join(lines)
 
 
+# ------------------------------------------------------------------ Harvard plate
+
+PLATE_RULE = (
+    "Гарвардская тарелка: ½ — овощи и фрукты, ¼ — цельные злаки, ¼ — белок. "
+    "Картофель и белая мука в «половину овощей» не идут."
+)
+PLATE_OFF_HINT = "Отключить оценку тарелки: <code>/set plate off</code>"
+
+_PLATE_ORDER = ("veg", "fruit", "grain", "protein", "refined", "extra")
+
+
+def format_plate_score(score: PlateScore) -> str:
+    """Состав тарелки по массе — только доли, без оценок «правильно/нет»."""
+    if score.mass_g <= 0:
+        return ""
+    lines = [f"🥗 <b>Тарелка</b> — {score.score:.0f} из 100"]
+    lines.append(progress_bar(score.score / 100.0))
+    for category in _PLATE_ORDER:
+        grams = score.grams.get(category)
+        if not grams:
+            continue
+        share = score.shares.get(category, 0.0) * 100
+        target = TARGET_SHARES.get(category)
+        aim = f" (ориентир {target * 100:.0f}%)" if target else ""
+        lines.append(f"• {category_label(category)}: {share:.0f}%{aim} — {grams:.0f} г")
+    if score.estimated_mass:
+        lines.append("<i>Часть порций я оценил сам — назовите граммы, и доли станут точнее.</i>")
+    return "\n".join(lines)
+
+
+def format_plate_advice(advice: PlateAdvice, *, with_rule: bool = False) -> str:
+    """Что добрать в этот приём пищи и что остаётся на день.
+
+    Рекомендация по питанию — она разрешена (`spec/clinical.md`), но говорит
+    только о пропорциях тарелки и никогда о болезнях и «нормах» человека.
+    """
+    parts = [format_plate_score(advice.score)]
+    rhythm = advice.rhythm
+    if advice.now:
+        gaps = ", ".join(f"{category_label(gap.category)} +{gap.grams:.0f} г" for gap in advice.now)
+        parts.append(f"➕ <b>До полной тарелки:</b> {gaps}")
+    else:
+        parts.append("✅ Пропорции тарелки в этот приём пищи собраны.")
+    source = {
+        "user": "вы задали",
+        "stats": "по вашей статистике",
+        "default": "по умолчанию",
+    }[rhythm.meals_source]
+    tail = (
+        f"Приём {advice.meals_done} из {rhythm.meals_per_day} за день ({source})."
+        if advice.meals_left
+        else f"Это {advice.meals_done}-й приём пищи из {rhythm.meals_per_day} ({source})."
+    )
+    parts.append(tail)
+    if advice.meals_left and advice.day_gaps:
+        rest = ", ".join(
+            f"{category_label(gap.category)} +{gap.grams:.0f} г" for gap in advice.day_gaps
+        )
+        word = "приём" if advice.meals_left == 1 else "приёма"
+        parts.append(f"🗓 На оставшиеся {advice.meals_left} {word}: {rest}")
+    elif not advice.day_gaps:
+        parts.append("🗓 За день пропорции тарелки уже набраны.")
+    if with_rule:
+        parts.append(f"<i>{PLATE_RULE}</i>")
+    parts.append(f"<i>{PLATE_OFF_HINT}</i>")
+    return "\n".join(part for part in parts if part)
+
+
+def format_plate_settings(
+    *, enabled: bool, meals_per_day: int | None, measured: int | None, session_min: int
+) -> str:
+    """Карточка /plate: что настроено и как это можно поменять."""
+    lines = ["🥗 <b>Гарвардская тарелка</b>", PLATE_RULE, ""]
+    lines.append(f"Оценка после каждой еды: {'включена' if enabled else 'выключена'}")
+    if meals_per_day:
+        lines.append(f"Приёмов пищи в день: {meals_per_day} (задано вами)")
+    elif measured:
+        lines.append(f"Приёмов пищи в день: {measured} (по вашей статистике)")
+    else:
+        lines.append("Приёмов пищи в день: 3 (по умолчанию — статистики пока мало)")
+    lines.append(
+        f"Один приём пищи — это все блюда подряд в течение {session_min} мин"
+        + (" (по вашей статистике)" if session_min != 60 else "")
+    )
+    lines.append("")
+    lines.append(
+        "Изменить: <code>/set plate on|off</code>, "
+        "<code>/set meals 4</code>, <code>/set meals auto</code>"
+    )
+    return "\n".join(lines)
+
+
+# ------------------------------------------------------------------ labs → food
+
+LAB_ADVICE_DISCLAIMER = (
+    "⚠️ Это не расшифровка анализов и не назначение. Сравниваю только с референсом "
+    "из вашего же документа, а продукты называю как пищевые источники нутриента. "
+    "Показатель вне референса — повод показать результат врачу; БАДы и дозы — тоже к нему."
+)
+
+
+def format_lab_value(value: LabValue) -> str:
+    marks = {"high": "🔺", "low": "🔻", "normal": "✅"}
+    ref = ""
+    if value.ref_low is not None or value.ref_high is not None:
+        ref = f" (референс {_num(value.ref_low)}–{_num(value.ref_high)})"
+    from src.analytics.labs import direction as _direction
+
+    mark = marks.get(_direction(value) or "normal", "•")
+    return f"{mark} {value.marker}: <b>{value.display}</b> {value.unit or ''}{ref}".strip()
+
+
+def format_food_hint(hint: FoodHint) -> str:
+    side = "ниже" if hint.direction == "low" else "выше"
+    lines = [
+        f"<b>{hint.value.marker}</b> — {side} референса из документа "
+        f"({hint.value.display} {hint.value.unit or ''}).".replace("  ", " "),
+        f"Пищевые источники ({hint.nutrient.label}): " + ", ".join(hint.foods) + ".",
+    ]
+    if hint.nutrient.note:
+        lines.append(f"<i>{hint.nutrient.note}.</i>")
+    return "\n".join(lines)
+
+
+def format_lab_review(review: LabReview, *, header: str = "🧪 <b>Ваши анализы</b>") -> str:
+    """Последние значения маркеров + продукты-источники для тех, что вне нормы."""
+    if review.n_markers == 0:
+        return (
+            "🧪 Анализов пока нет. Пришлите фото, PDF или текст результата — "
+            "сохраню маркеры с референсами из документа."
+        )
+    lines = [header, ""]
+    for value in review.out_of_range:
+        lines.append(format_lab_value(value))
+    if not review.out_of_range:
+        lines.append("✅ Все сохранённые маркеры в пределах референсов из ваших документов.")
+    if review.hints:
+        lines.append("")
+        lines.append("🥑 <b>Продукты-источники</b>")
+        for hint in review.hints:
+            lines.append(format_food_hint(hint))
+            lines.append("")
+    lines.append(LAB_ADVICE_DISCLAIMER)
+    return "\n".join(lines).strip()
+
+
+# ------------------------------------------------------------------ feature hints
+
+def format_feature_hint(feature, *, first: bool = False) -> str:
+    """Рассказ об одной неиспользованной возможности — коротко и по делу."""
+    opener = (
+        "💡 <b>Одна возможность, которой вы ещё не пользовались</b>"
+        if not first
+        else "💡 <b>Пока вы не начали — одна возможность про запас</b>"
+    )
+    lines = [opener, "", f"<b>{feature.title}</b>", feature.blurb]
+    if feature.command:
+        lines.append(f"Команда: {feature.command}")
+    lines.append("")
+    lines.append("«Не нужно» — уберу из меню и больше не напомню.")
+    return "\n".join(lines)
+
+
+def format_hidden_list(features) -> str:
+    if not features:
+        return (
+            "Скрытых возможностей нет — в меню всё, что бот умеет.\n"
+            "Скрыть что-то можно кнопкой «🚫 Не нужно» в подсказке."
+        )
+    lines = ["🙈 <b>Скрытые возможности</b>", "", "Они работают — просто убраны из меню:"]
+    for feature in features:
+        command = f" — {feature.command}" if feature.command else ""
+        lines.append(f"• <b>{feature.title}</b>{command}")
+    lines.append("")
+    lines.append("Кнопкой ниже верну любую обратно в меню.")
+    return "\n".join(lines)
+
+
 def format_goal_plan(plan, *, kind: str, target_weight_kg: float | None) -> str:
     """Из чего получился ориентир — и что в цели пришлось урезать."""
     words = {"lose": "снижение", "gain": "набор", "maintain": "удержание"}
@@ -872,6 +1052,9 @@ __all__ = [
     "BODY_DISCLAIMER",
     "CONFIDENCE_LABEL",
     "DISCLAIMER",
+    "LAB_ADVICE_DISCLAIMER",
+    "PLATE_OFF_HINT",
+    "PLATE_RULE",
     "WEIGHT_PROMPT",
     "correction_examples",
     "correction_hint",
@@ -901,6 +1084,14 @@ __all__ = [
     "format_med_side_effects",
     "format_medication_draft",
     "format_medications",
+    "format_feature_hint",
+    "format_food_hint",
+    "format_hidden_list",
+    "format_lab_review",
+    "format_lab_value",
+    "format_plate_advice",
+    "format_plate_score",
+    "format_plate_settings",
     "format_product",
     "format_product_verdict",
     "format_recommendations",

@@ -14,7 +14,9 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.analytics.activity import ActivityBucket
+from src.analytics.labs import LabValue
 from src.analytics.meds import MedicationLike
+from src.analytics.plate import PlateItem, PlateMeal
 from src.analytics.symptoms import CheckinLike
 from src.analytics.tags import normalize_name
 from src.analytics.windows import GlucosePoint, MealLike
@@ -26,6 +28,7 @@ from src.db.models import (
     CheckinSymptom,
     Correction,
     DictionaryEntry,
+    FeatureFlag,
     GlucoseReading,
     Meal,
     MealItem,
@@ -42,6 +45,7 @@ from src.db.models import (
     Workout,
     utcnow,
 )
+from src.features import FeatureState
 from src.ingest.nutrition import Remembered, per_100
 from src.vision.schemas import (
     GlucoseDraft,
@@ -1259,6 +1263,138 @@ async def upsert_activity(
     return inserted
 
 
+# ------------------------------------------------------------------ plate
+
+async def load_plate_meals(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[PlateMeal]:
+    """Meals reshaped for the plate math: components with their portions."""
+    meals = await load_meals(session, user, since=since)
+    out: list[PlateMeal] = []
+    for meal in meals:
+        items = [
+            PlateItem(name=item.name, portion_g=item.portion_g, tags=list(item.tags or []))
+            for item in meal.items
+        ]
+        out.append(PlateMeal(id=meal.id, eaten_at=_aware(meal.eaten_at), items=items))
+    return out
+
+
+# ------------------------------------------------------------------ labs
+
+async def load_lab_values(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[LabValue]:
+    """Stored markers reshaped for `src/analytics/labs.py`."""
+    stmt = (
+        select(AnalysisResult)
+        .where(AnalysisResult.user_id == user.id)
+        .order_by(AnalysisResult.taken_at)
+    )
+    if since is not None:
+        stmt = stmt.where(AnalysisResult.taken_at >= since)
+    rows = list(await session.scalars(stmt))
+    return [
+        LabValue(
+            marker=row.marker,
+            taken_at=_aware(row.taken_at),
+            value=row.value,
+            value_text=row.value_text,
+            unit=row.unit,
+            ref_low=row.ref_low,
+            ref_high=row.ref_high,
+            flag=row.flag,
+            panel=row.panel,
+        )
+        for row in rows
+    ]
+
+
+# ------------------------------------------------------------------ feature hints
+
+async def _feature_row(session: AsyncSession, user: User, key: str) -> FeatureFlag:
+    row = await session.scalar(
+        select(FeatureFlag).where(FeatureFlag.user_id == user.id, FeatureFlag.feature == key)
+    )
+    if row is None:
+        row = FeatureFlag(user_id=user.id, feature=key)
+        session.add(row)
+        await session.flush()
+    return row
+
+
+async def feature_states(session: AsyncSession, user: User) -> dict[str, FeatureState]:
+    rows = await session.scalars(select(FeatureFlag).where(FeatureFlag.user_id == user.id))
+    return {
+        row.feature: FeatureState(
+            status=row.status, shown=row.shown, used=row.used_at is not None
+        )
+        for row in rows
+    }
+
+
+async def hidden_features(session: AsyncSession, user: User) -> set[str]:
+    from src.features import STATUS_DECLINED
+
+    rows = await session.scalars(
+        select(FeatureFlag.feature).where(
+            FeatureFlag.user_id == user.id, FeatureFlag.status == STATUS_DECLINED
+        )
+    )
+    return set(rows)
+
+
+async def mark_feature_shown(
+    session: AsyncSession, user: User, key: str, *, at: datetime | None = None
+) -> FeatureFlag:
+    """Отметку ставим до отправки: сбой сети не должен превращаться во второе
+    сообщение о той же возможности."""
+    from src.features import STATUS_ACCEPTED, STATUS_DECLINED, STATUS_SHOWN
+
+    moment = at or utcnow()
+    row = await _feature_row(session, user, key)
+    row.shown += 1
+    row.last_shown_at = moment
+    if row.status not in {STATUS_ACCEPTED, STATUS_DECLINED}:
+        row.status = STATUS_SHOWN
+    user.last_hint_at = moment
+    await session.flush()
+    return row
+
+
+async def set_feature_status(
+    session: AsyncSession, user: User, key: str, status: str
+) -> FeatureFlag:
+    row = await _feature_row(session, user, key)
+    row.status = status
+    await session.flush()
+    return row
+
+
+async def mark_feature_used(
+    session: AsyncSession, user: User, key: str, *, at: datetime | None = None
+) -> None:
+    """Возможностям без собственной строки в БД (график, статистика, выгрузка)
+    отметка обращения — единственный способ понять, что ими пользовались."""
+    row = await _feature_row(session, user, key)
+    if row.used_at is None:
+        row.used_at = at or utcnow()
+        await session.flush()
+
+
+async def users_due_for_hint(
+    session: AsyncSession, *, now: datetime | None = None, period_days: int = 7
+) -> list[User]:
+    """Кому пора рассказать об очередной незнакомой возможности."""
+    moment = now or utcnow()
+    cutoff = moment - timedelta(days=period_days)
+    stmt = select(User).where(
+        User.onboarded.is_(True),
+        (User.last_hint_at.is_(None)) | (User.last_hint_at <= cutoff),
+    )
+    return list(await session.scalars(stmt))
+
+
 # ------------------------------------------------------------------ erasure
 
 async def delete_user_data(session: AsyncSession, user: User, *, drop_user: bool = False) -> None:
@@ -1330,6 +1466,7 @@ async def counts(session: AsyncSession, user: User) -> dict[str, int]:
         ("medications", Medication),
         ("weights", Weight),
         ("workouts", Workout),
+        ("dictionary", DictionaryEntry),
     ):
         out[name] = int(
             await session.scalar(
@@ -1376,6 +1513,14 @@ __all__ = [
     "save_checkin",
     "save_correction",
     "save_glucose",
+    "load_plate_meals",
+    "load_lab_values",
+    "feature_states",
+    "hidden_features",
+    "mark_feature_shown",
+    "set_feature_status",
+    "mark_feature_used",
+    "users_due_for_hint",
     "save_labs",
     "save_meal",
     "save_media",

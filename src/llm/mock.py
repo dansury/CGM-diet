@@ -101,6 +101,13 @@ FIXTURES: dict[str, Any] = {
             },
             {"marker": "HbA1c", "value": 5.9, "unit": "%", "ref_low": 4.0, "ref_high": 6.0},
             {
+                "marker": "Ферритин",
+                "value": 8.0,
+                "unit": "нг/мл",
+                "ref_low": 13.0,
+                "ref_high": 150.0,
+            },
+            {
                 "marker": "Инсулин",
                 "value": 14.2,
                 "unit": "мкЕд/мл",

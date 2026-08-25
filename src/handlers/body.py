@@ -19,6 +19,7 @@ from src.charts.render import render_body_composition, render_weight
 from src.db import repo
 from src.db.models import User
 from src.handlers.deps import local_now, session_scope, to_local, to_utc
+from src.handlers.features import menu_of
 from src.handlers.states import BodyFlow
 from src.ingest.text_parse import parse_text
 from src.keyboards import (
@@ -26,7 +27,6 @@ from src.keyboards import (
     body_menu,
     cancel_only,
     confirm_measurement,
-    main_menu,
     rate_picker,
     sex_picker,
 )
@@ -284,7 +284,7 @@ async def on_value(message: Message, state: FSMContext, *, text_override: str | 
             answer = f"🎂 Возраст: {int(value)}"
         else:
             answer = "Не понял, какое поле заполняем. Откройте /body."
-    await message.answer(answer, reply_markup=main_menu())
+    await message.answer(answer, reply_markup=await menu_of(message.chat.id))
 
 
 def _first_number(text: str) -> float | None:
@@ -310,13 +310,13 @@ async def offer_goal(message: Message, state: FSMContext, *, target_weight_kg: f
         await state.clear()
         await message.answer(
             "Сначала нужен текущий вес — напишите «вес 82,4», и я вернусь к цели.",
-            reply_markup=main_menu(),
+            reply_markup=await menu_of(message.chat.id),
         )
         return
     if kind == "maintain":
         await state.clear()
         text = await _save_goal(message.chat.id, target_weight_kg=target_weight_kg, rate=0.0)
-        await message.answer(text, reply_markup=main_menu())
+        await message.answer(text, reply_markup=await menu_of(message.chat.id))
         return
     options = body_math.rate_options(weight, kind)
     low, high = body_math.safe_rate_range(weight, kind)
@@ -425,7 +425,7 @@ async def save_weight_entry(
         progress = await day_progress_text(session, user, now=now)
     if progress:
         answer += "\n\n" + progress
-    await message.answer(answer, reply_markup=main_menu())
+    await message.answer(answer, reply_markup=await menu_of(message.chat.id))
 
 
 # ------------------------------------------------------------------ фото весов

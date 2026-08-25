@@ -1,0 +1,168 @@
+"""Тарелка и анализы в потоке обработчиков: что видит пользователь."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+import pytest
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.base import StorageKey
+from aiogram.fsm.storage.memory import MemoryStorage
+
+from src.db import repo
+from src.handlers import common, confirm, labs, plate
+from src.vision.schemas import ItemDraft, MealDraft
+
+TG_ID = 626262
+NOW = datetime(2026, 8, 25, 13, 0, tzinfo=UTC)
+
+
+@dataclass
+class FakeUser:
+    id: int = TG_ID
+    username: str | None = "tester"
+    first_name: str | None = "Тест"
+
+
+@dataclass
+class FakeChat:
+    id: int = TG_ID
+
+
+@dataclass
+class FakeMessage:
+    text: str | None = None
+    chat: FakeChat = field(default_factory=FakeChat)
+    from_user: FakeUser = field(default_factory=FakeUser)
+    bot: Any = None
+    sent: list[dict] = field(default_factory=list)
+
+    async def answer(self, text: str, **kwargs: Any) -> FakeMessage:
+        self.sent.append({"text": text, **kwargs})
+        return self
+
+    async def edit_text(self, text: str, **kwargs: Any) -> FakeMessage:
+        self.sent.append({"edited": text, **kwargs})
+        return self
+
+    @property
+    def texts(self) -> list[str]:
+        return [s.get("text") or s.get("edited") or "" for s in self.sent]
+
+
+@dataclass
+class FakeCallback:
+    data: str
+    message: FakeMessage
+    from_user: FakeUser = field(default_factory=FakeUser)
+    answers: list[str | None] = field(default_factory=list)
+
+    async def answer(self, text: str | None = None, **kwargs: Any) -> None:
+        self.answers.append(text)
+
+
+@pytest.fixture
+def state() -> FSMContext:
+    return FSMContext(
+        storage=MemoryStorage(), key=StorageKey(bot_id=1, chat_id=TG_ID, user_id=TG_ID)
+    )
+
+
+async def _confirm_meal(state: FSMContext) -> FakeMessage:
+    from src.handlers import views
+
+    draft = MealDraft(
+        title="Гречка с курицей",
+        items=[
+            ItemDraft(name="гречка", portion_g=200, carbs_g=45, tags=["whole_grain"]),
+            ItemDraft(name="курица", portion_g=150, tags=["protein"]),
+        ],
+    )
+    await views.show_meal_draft(FakeMessage(), state, draft)
+    card = FakeMessage()
+    await confirm.meal_ok(FakeCallback(data="meal:ok", message=card), state)
+    return card
+
+
+async def test_the_plate_is_scored_right_after_the_meal_is_written(engine, session, state):
+    card = await _confirm_meal(state)
+    written = card.texts[-1]
+    assert "Тарелка" in written
+    assert "овощи" in written
+    assert "приём" in written.lower()
+
+
+async def test_the_plate_can_be_switched_off_in_settings(engine, session, state):
+    await common.cmd_set(FakeMessage(text="/set plate off"))
+    user = await repo.get_user(session, TG_ID)
+    await session.refresh(user)
+    assert user.plate_enabled is False
+
+    card = await _confirm_meal(state)
+    assert "Тарелка" not in card.texts[-1]
+
+
+async def test_meals_per_day_is_settable_and_resettable(engine, session):
+    message = FakeMessage(text="/set meals 5")
+    await common.cmd_set(message)
+    user = await repo.get_user(session, TG_ID)
+    await session.refresh(user)
+    assert user.meals_per_day == 5
+    assert "5" in message.texts[-1]
+
+    await common.cmd_set(FakeMessage(text="/set meals auto"))
+    await session.refresh(user)
+    assert user.meals_per_day is None
+
+    bad = FakeMessage(text="/set meals 99")
+    await common.cmd_set(bad)
+    assert "Не понял значение" in bad.texts[-1]
+
+
+async def test_the_plate_card_shows_the_measured_rhythm(engine, session):
+    await repo.get_or_create_user(session, TG_ID)
+    await session.commit()
+    message = FakeMessage()
+    await plate.cmd_plate(message)
+    text = message.texts[-1]
+    assert "Гарвардская тарелка" in text
+    assert "Приёмов пищи в день: 3" in text
+
+
+async def test_repo_hands_the_plate_math_portions_and_tags(engine, session, state):
+    await _confirm_meal(state)
+    user = await repo.get_user(session, TG_ID)
+    meals = await repo.load_plate_meals(session, user)
+    assert [item.portion_g for item in meals[0].items] == [200, 150]
+    assert meals[0].items[0].tags == ["whole_grain"]
+
+
+async def test_saving_a_lab_panel_answers_with_food_sources(engine, session, state):
+    from src.handlers import views
+    from src.vision import recognize
+
+    draft = await recognize.recognize_labs(text="ферритин 8", now=NOW)
+    await views.show_lab_draft(FakeMessage(), state, draft)
+    card = FakeMessage()
+    await confirm.lab_ok(FakeCallback(data="lab:ok", message=card), state)
+
+    written = "\n".join(card.texts)
+    assert "Сохранено показателей" in written
+    assert "Ферритин" in written
+    assert "чечевица" in written
+    assert "врачу" in written
+
+
+async def test_labs_command_reports_the_latest_panel(engine, session, state):
+    from src.handlers import views
+    from src.vision import recognize
+
+    draft = await recognize.recognize_labs(text="ферритин 8", now=NOW)
+    await views.show_lab_draft(FakeMessage(), state, draft)
+    await confirm.lab_ok(FakeCallback(data="lab:ok", message=FakeMessage()), state)
+
+    message = FakeMessage()
+    await labs.cmd_labs(message)
+    assert "Ферритин" in message.texts[-1]

@@ -21,8 +21,9 @@ from src.db import repo
 from src.db.models import User
 from src.export import build_export
 from src.handlers.deps import local_now, session_scope, to_local
+from src.handlers.features import mark_used, menu_of
 from src.ingest.units import format_value
-from src.keyboards import confirm_delete, health_setup, main_menu, stats_windows
+from src.keyboards import confirm_delete, health_setup, stats_windows
 from src.reporting import (
     DISCLAIMER,
     format_activity,
@@ -135,7 +136,7 @@ async def cmd_today(message: Message) -> None:
         progress = await day_progress_text(session, user, now=now)
         if progress:
             lines.append(progress)
-    await message.answer("\n".join(lines), reply_markup=main_menu())
+    await message.answer("\n".join(lines), reply_markup=await menu_of(message.chat.id))
 
 
 # ------------------------------------------------------------------ /stats
@@ -143,6 +144,7 @@ async def cmd_today(message: Message) -> None:
 @router.message(Command("stats"))
 @router.message(F.text == "📊 Статистика")
 async def cmd_stats(message: Message) -> None:
+    await mark_used(message.chat.id, "stats")
     await _send_stats(message, window="1h", key_type="tag", edit=False)
 
 
@@ -198,6 +200,7 @@ async def _send_stats(message: Message, *, window: str, key_type: str, edit: boo
 @router.message(Command("graph"))
 @router.message(F.text == "📈 График")
 async def cmd_graph(message: Message) -> None:
+    await mark_used(message.chat.id, "graph")
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, message.chat.id)
         now = local_now(user)
@@ -246,6 +249,7 @@ async def _send_ranking_chart(message: Message, *, window: str, key_type: str) -
 
 @router.message(Command("export"))
 async def cmd_export(message: Message) -> None:
+    await mark_used(message.chat.id, "export")
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, message.chat.id)
         archive = await build_export(session, user)
@@ -295,6 +299,7 @@ async def on_delete_no(callback: CallbackQuery) -> None:
 
 @router.message(Command("health"))
 async def cmd_health(message: Message) -> None:
+    await mark_used(message.chat.id, "health")
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, message.chat.id)
         samples = await repo.load_activity(session, user, since=local_now(user) - timedelta(days=7))

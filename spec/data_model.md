@@ -12,6 +12,7 @@
 ```
 users              id tg_id* username first_name locale tz glucose_unit sensor
                    window_1h_start/end window_2h_start/end baseline_window
+                   plate_enabled meals_per_day? last_hint_at?
                    consent_at onboarded created_at
 media_files        id user_id kind(meal|glucose|label|lab|voice) tg_file_id tg_unique_id
                    mime size_bytes sha256 local_path
@@ -53,6 +54,8 @@ activity_samples   id user_id external_id kind(steps|workout|sleep|heart_rate)
 food_stats         id user_id key_type(item|tag|product) key window n
                    mean_delta median_delta max_delta ci_low ci_high confidence updated_at
 corrections        id user_id entity_type entity_id field old_value new_value created_at
+feature_flags      id user_id feature status(new|shown|accepted|declined) shown
+                   last_shown_at? used_at?   -- uq(user_id,feature)
 ```
 
 Индексы: `body_goals(user_id, is_active)`, `workouts(user_id, started_at)`,
@@ -88,6 +91,13 @@ day_energy(session, user, day_start, day_end) -> (consumed_kcal, carbs_g, burned
 users_due_for_weight(session, now, default_days=14) -> [(User, BodyProfile)]
 mark_weight_prompt(session, profile, at)
 save_labs / save_correction
+load_lab_values(session, user, since?) -> [LabValue]     # для analytics/labs
+load_plate_meals(session, user, since?) -> [PlateMeal]   # позиции с порциями и тегами
+feature_states(session, user) -> dict[key, FeatureState]
+hidden_features(session, user) -> {key}
+mark_feature_shown(session, user, key, at?)   # пишет и users.last_hint_at
+set_feature_status(session, user, key, status) / mark_feature_used(session, user, key)
+users_due_for_hint(session, now?, period_days=7) -> [User]
 save_medication(session, user, taken_at, name, dose_text?, form?, note?, source, media_id?)
   # slug/cid резолвятся здесь: любой путь записи даёт один ключ справочника
 save_medication_draft(session, user, draft, taken_at, media_id?, source) -> Medication
@@ -104,7 +114,7 @@ load_nutrition_memory(session, user, names?) -> dict[key_norm, Remembered]
 remember_meal_macros(session, user, draft) -> [name]     # позиции с macros_source=="user"
 
 get_setting / set_setting / all_settings                     # settings_kv
-counts(session, user) -> dict[str,int]
+counts(session, user) -> dict[str,int]   # + dictionary (для features)
 delete_user_data(session, user, drop_user=False)
 ```
 
@@ -113,7 +123,8 @@ delete_user_data(session, user, drop_user=False)
 раздражительность, приливы, слабость, тошнота).
 
 `delete_user_data` чистит и `user_dictionary`, и `user_nutrition`; `settings_kv`
-к пользователю не относится и переживает `/delete`.
+к пользователю не относится и переживает `/delete`. `feature_flags` — тоже
+настройка, а не запись дневника: скрытое меню переживает `/delete`.
 
 `delete_user_data` делает явные `DELETE` по таблицам: SQLite не выполняет
 каскады без `PRAGMA foreign_keys=ON`, а строка пользователя должна пережить

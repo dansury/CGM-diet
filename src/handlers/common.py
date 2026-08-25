@@ -9,10 +9,15 @@ from aiogram.types import CallbackQuery, Message
 
 from src.db import repo
 from src.handlers.deps import local_now, session_scope
+from src.handlers.features import maybe_send_hint, menu_of
 from src.keyboards import CANCEL_DATA, main_menu
+from src.logging_setup import get_logger
 from src.reporting import DISCLAIMER
 
 router = Router(name="common")
+log = get_logger("handlers.common")
+
+
 
 WELCOME = """👋 Это дневник <b>еда → сахар → самочувствие</b>.
 
@@ -31,11 +36,15 @@ WELCOME = """👋 Это дневник <b>еда → сахар → самоч�
 • показываю это графиком и цифрами с уровнем достоверности;
 • спрашиваю о самочувствии и сопоставляю симптомы с сахаром;
 • веду вес и состав тела, считаю дневной коридор калорий под вашу цель
-  и показываю прогресс-бар после каждого приёма пищи.
+  и показываю прогресс-бар после каждого приёма пищи;
+• оцениваю каждый приём пищи по Гарвардской тарелке и подсказываю, чего
+  добрать сегодня (/plate, отключается в настройках);
+• храню анализы с референсами из ваших документов и называю продукты-источники
+  по маркерам вне референса (/labs).
 
 <b>Чего я не делаю:</b> не ставлю диагнозы, не назначаю лекарства и не считаю дозы.
 
-Команды: /today /stats /graph /body /workout /wellbeing /health /export /delete /help"""
+Команды: /today /stats /graph /plate /labs /body /workout /wellbeing /health /export /delete /help"""
 
 HELP = """<b>Как пользоваться</b>
 
@@ -72,6 +81,19 @@ HELP = """<b>Как пользоваться</b>
 рукописного дневника. Уточню длительность, интенсивность и вспотели ли вы —
 и посчитаю примерные энергозатраты.
 
+🥗 <b>Гарвардская тарелка</b> (/plate) — после каждого фото еды показываю доли
+тарелки (½ овощи и фрукты, ¼ цельные злаки, ¼ белок) и что добрать до конца дня.
+Приём пищи собирается из всех блюд подряд примерно за час — точнее, за ваше
+собственное среднее время еды. Число приёмов в день задаётся
+(<code>/set meals 4</code>) или считается по вашей статистике.
+
+🧪 <b>Анализы</b> (/labs) — фото, PDF или текст результата. Сохраню маркеры с
+референсами <i>из самого документа</i>, отмечу, что вне нормы, и назову
+продукты-источники нужного нутриента. Это не расшифровка: диагноз и БАДы — к врачу.
+
+🙈 <b>Скрытые возможности</b> (/hidden) — то, что вы убрали кнопкой «Не нужно».
+Оттуда же можно вернуть обратно в меню.
+
 📊 /stats — статистика по компонентам · /graph — график · /today — сегодня
 📤 /export — выгрузка CSV · 🗑 /delete — удалить все данные
 ⌚️ /health — подключение Samsung Health
@@ -92,19 +114,27 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         if user.consent_at is None:
             user.consent_at = local_now(user)
         user.onboarded = True
-    await message.answer(WELCOME, reply_markup=main_menu())
+        hidden = await repo.hidden_features(session, user)
+    await message.answer(WELCOME, reply_markup=main_menu(hidden))
+    # Одна возможность про запас — при старте и потом раз в неделю
+    # (`spec/features.md`). Сбой подсказки не имеет права сорвать онбординг.
+    if message.bot is not None:
+        try:
+            await maybe_send_hint(message.bot, message.chat.id, first=True)
+        except Exception:
+            log.exception("start hint failed")
 
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(HELP, reply_markup=main_menu())
+    await message.answer(HELP, reply_markup=await menu_of(message.chat.id))
 
 
 @router.message(Command("menu"))
 @router.message(F.text == "◀️ Меню")
 async def cmd_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
-    await message.answer("Главное меню", reply_markup=main_menu())
+    await message.answer("Главное меню", reply_markup=await menu_of(message.chat.id))
 
 
 CANCELLED = "❌ Отменено. Ничего не записал."
@@ -128,7 +158,7 @@ async def on_cancel(callback: CallbackQuery, state: FSMContext) -> None:
 async def cmd_cancel(message: Message, state: FSMContext) -> None:
     """То же самое текстом — на случай, если карточка уехала вверх по чату."""
     await state.clear()
-    await message.answer(CANCELLED, reply_markup=main_menu())
+    await message.answer(CANCELLED, reply_markup=await menu_of(message.chat.id))
 
 
 @router.message(Command("settings"))
@@ -137,6 +167,7 @@ async def cmd_settings(message: Message) -> None:
         user = await repo.get_or_create_user(session, message.from_user.id)
         profile = await repo.get_body_profile(session, user)
         days = profile.weight_prompt_days if profile else 14
+        meals = user.meals_per_day or "по статистике"
         text = (
             "⚙️ <b>Настройки</b>\n"
             f"Часовой пояс: <code>{user.tz}</code>\n"
@@ -144,11 +175,14 @@ async def cmd_settings(message: Message) -> None:
             f"Окно «через 1 час»: {user.window_1h_start}–{user.window_1h_end} мин\n"
             f"Окно «через 2 часа»: {user.window_2h_start}–{user.window_2h_end} мин\n"
             f"Базовая линия до еды: {user.baseline_window} мин\n"
-            f"Напоминать взвеситься: раз в {days} дн.\n\n"
+            f"Напоминать взвеситься: раз в {days} дн.\n"
+            f"Гарвардская тарелка: {'вкл' if user.plate_enabled else 'выкл'}\n"
+            f"Приёмов пищи в день: {meals}\n\n"
             "Изменить: <code>/set tz Europe/Moscow</code>, "
             "<code>/set unit mg/dL</code>, <code>/set window1 45-90</code>, "
             "<code>/set window2 90-150</code>, <code>/set baseline 20</code>, "
-            "<code>/set weighin 14</code>"
+            "<code>/set weighin 14</code>, <code>/set plate on|off</code>, "
+            "<code>/set meals 3|auto</code>"
         )
     await message.answer(text)
 
@@ -209,6 +243,26 @@ def _apply_setting(user, key: str, value: str) -> str:
         else:
             user.window_2h_start, user.window_2h_end = start, end
         return f"окно {key}: {start}–{end} мин"
+    if key == "plate":
+        # Гарвардская тарелка отключается целиком (`spec/plate.md`)
+        if value.lower() in {"on", "вкл", "да", "1", "true"}:
+            user.plate_enabled = True
+            return "оценка тарелки: включена"
+        if value.lower() in {"off", "выкл", "нет", "0", "false"}:
+            user.plate_enabled = False
+            return "оценка тарелки: выключена"
+        raise ValueError("нужно on или off")
+    if key == "meals":
+        from src.analytics.plate import MAX_MEALS_PER_DAY, MIN_MEALS_PER_DAY
+
+        if value.lower() in {"auto", "авто", "0"}:
+            user.meals_per_day = None
+            return "приёмов пищи в день: по вашей статистике"
+        count = int(value)
+        if not MIN_MEALS_PER_DAY <= count <= MAX_MEALS_PER_DAY:
+            raise ValueError(f"приёмов пищи в день — от {MIN_MEALS_PER_DAY} до {MAX_MEALS_PER_DAY}")
+        user.meals_per_day = count
+        return f"приёмов пищи в день: {count}"
     if key == "baseline":
         minutes = int(value)
         if not 5 <= minutes <= 60:

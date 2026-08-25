@@ -30,6 +30,7 @@ from src.handlers.deps import (
     session_scope,
     to_utc,
 )
+from src.handlers.features import mark_used, menu_of
 from src.handlers.states import (
     BodyFlow,
     GlucoseFlow,
@@ -43,7 +44,7 @@ from src.handlers.states import (
 from src.ingest.correction import apply_meal_correction, split_macros
 from src.ingest.text_parse import parse_text
 from src.ingest.units import to_mmol
-from src.keyboards import cancel_only, main_menu, photo_kind
+from src.keyboards import cancel_only, photo_kind
 from src.llm import ImagePart, get_client, model_selection
 from src.logging_setup import get_logger
 from src.vision import recognize
@@ -61,6 +62,7 @@ PHOTOS_KEY = "pending_photos"
 @router.message(F.text == "🛒 Проверить продукт")
 @router.message(Command("check"))
 async def start_check_mode(message: Message, state: FSMContext) -> None:
+    await mark_used(message.chat.id, "check")
     await state.update_data({MODE_KEY: "check_product"})
     await message.answer(
         "🛒 Режим проверки перед покупкой.\n"
@@ -503,7 +505,7 @@ async def _handle_body_facts(
                 sex=facts.sex,
                 birth_year=(local_now(user).year - facts.age) if facts.age else None,
             )
-        await message.answer("📋 Профиль обновил. Смотрите /body.", reply_markup=main_menu())
+        await message.answer("📋 Профиль обновил. Смотрите /body.", reply_markup=await menu_of(message.chat.id))
         handled = True
     if facts.target_weight_kg:
         await body.offer_goal(message, state, target_weight_kg=facts.target_weight_kg)
@@ -570,7 +572,7 @@ async def handle_text(
             saved.append(f"🙂 самочувствие {parsed.wellbeing}/5")
 
     if saved:
-        await message.answer("Записал: " + "; ".join(saved), reply_markup=main_menu())
+        await message.answer("Записал: " + "; ".join(saved), reply_markup=await menu_of(message.chat.id))
 
     # Тело идёт своим путём: вес пишется вместе с биоимпедансом, а профиль и
     # цель меняют дневной коридор калорий (`spec/body.md`).
@@ -582,7 +584,7 @@ async def handle_text(
         if not saved:
             await message.answer(
                 "Не понял. Пришлите фото еды, напишите «сахар 8.2» или нажмите кнопку меню.",
-                reply_markup=main_menu(),
+                reply_markup=await menu_of(message.chat.id),
             )
         return
 
@@ -601,7 +603,7 @@ async def handle_text(
             await message.answer(
                 "Не понял, что записать. Опишите еду («овсянка с бананом») "
                 "или пришлите фото.",
-                reply_markup=main_menu(),
+                reply_markup=await menu_of(message.chat.id),
             )
         return
 
@@ -622,7 +624,7 @@ async def handle_text(
             await message.answer(
                 "Не понял, что записать. Опишите еду («овсянка с бананом») "
                 "или пришлите фото.",
-                reply_markup=main_menu(),
+                reply_markup=await menu_of(message.chat.id),
             )
         return
     if macro_instruction:

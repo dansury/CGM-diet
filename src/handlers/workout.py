@@ -19,11 +19,11 @@ from src.analytics import workout as workout_math
 from src.db import repo
 from src.db.models import User
 from src.handlers.deps import local_now, session_scope, to_local, to_utc
+from src.handlers.features import menu_of
 from src.handlers.states import WorkoutFlow
 from src.keyboards import (
     cancel_only,
     confirm_workout,
-    main_menu,
     workout_duration,
     workout_intensity,
     workout_sweat,
@@ -87,7 +87,7 @@ async def cmd_workouts(message: Message) -> None:
             )
             for row in await repo.load_workouts(session, user, since=since)
         ]
-    await message.answer(format_workouts(rows), reply_markup=main_menu())
+    await message.answer(format_workouts(rows), reply_markup=await menu_of(message.chat.id))
 
 
 async def start_from_text(message: Message, state: FSMContext, text: str) -> bool:

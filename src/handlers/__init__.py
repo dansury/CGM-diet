@@ -13,8 +13,11 @@ def build_router() -> Router:
         confirm,
         dictionary,
         errors,
+        features,
         intake,
+        labs,
         meds,
+        plate,
         reports,
         wellbeing,
         workout,
@@ -24,6 +27,9 @@ def build_router() -> Router:
     root.include_router(admin.router)  # owner-only, filtered; falls through otherwise
     root.include_router(common.router)
     root.include_router(reports.router)
+    root.include_router(features.router)
+    root.include_router(plate.router)
+    root.include_router(labs.router)
     root.include_router(wellbeing.router)
     root.include_router(body.router)
     root.include_router(workout.router)

@@ -12,6 +12,9 @@
 | [spec/ingest.md](spec/ingest.md) | маршрутизация ввода, промпты, распознавание, голос (SpeechKit), текст, единицы, PDF | `src/vision/*`, `src/ingest/*` |
 | [spec/analytics.md](spec/analytics.md) | компоненты, окна, статистика, CGM-метрики, симптомы, активность | `src/analytics/*` |
 | [spec/bot.md](spec/bot.md) | команды, клавиатуры, FSM, обработчики, отчёты | `src/bot.py`, `src/handlers/*`, `src/keyboards.py` |
+| [spec/plate.md](spec/plate.md) | Гарвардская тарелка: категории, приём пищи как серия, режим питания, совет | `src/analytics/plate.py`, `src/handlers/plate.py` |
+| [spec/labs.md](spec/labs.md) | анализы: маркеры вне референса → продукты-источники | `src/analytics/labs.py`, `src/handlers/labs.py`, `config/nutrient_foods.json` |
+| [spec/features.md](spec/features.md) | рассказ о неиспользованных возможностях, скрытое меню, `/hidden` | `src/features.py`, `src/handlers/features.py`, `src/scheduler.py` |
 | [spec/body.md](spec/body.md) | рост, вес, биоимпеданс, цель, дневной коридор калорий, напоминание о взвешивании | `src/analytics/body.py`, `src/handlers/body.py`, `src/scheduler.py` |
 | [spec/workout.md](spec/workout.md) | тренировки и ходьба: ввод, доп. вопросы, энергозатраты по MET | `src/analytics/workout.py`, `src/handlers/workout.py` |
 | [spec/wellbeing.md](spec/wellbeing.md) | опрос 1–5, динамический глоссарий симптомов | `src/handlers/wellbeing.py`, `src/analytics/symptoms.py` |

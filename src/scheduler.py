@@ -1,4 +1,5 @@
-"""Фоновые напоминания. Пока одно — «пора взвеситься» (`spec/body.md`).
+"""Фоновые напоминания: «пора взвеситься» (`spec/body.md`) и еженедельный
+рассказ об одной неиспользованной возможности (`spec/features.md`).
 
 Отдельная задача asyncio, а не cron: бот и так живёт процессом (polling или
 uvicorn), и одна корутина с часовым тиком дешевле любой внешней обвязки.
@@ -27,34 +28,39 @@ QUIET_START = 9
 QUIET_END = 20
 
 _task: asyncio.Task | None = None
+_hints_task: asyncio.Task | None = None
 
 
 def start_scheduler(bot: Bot, *, interval_s: int = TICK_SECONDS) -> asyncio.Task | None:
-    """Поднять фоновый цикл. Повторный вызов не плодит вторую задачу."""
-    global _task
-    if _task is not None and not _task.done():
-        return _task
+    """Поднять фоновые циклы. Повторный вызов не плодит вторую задачу."""
+    global _task, _hints_task
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         log.warning("scheduler needs a running loop; skipped")
         return None
+    if _hints_task is None or _hints_task.done():
+        _hints_task = loop.create_task(feature_hint_loop(bot, interval_s=interval_s))
+    if _task is not None and not _task.done():
+        return _task
     _task = loop.create_task(weight_reminder_loop(bot, interval_s=interval_s))
     return _task
 
 
 async def stop_scheduler() -> None:
-    global _task
-    if _task is None:
-        return
-    _task.cancel()
-    try:
-        await _task
-    except Exception:  # остановка не должна шуметь, включая CancelledError
-        pass
-    except asyncio.CancelledError:
-        pass
+    global _task, _hints_task
+    for task in (_task, _hints_task):
+        if task is None:
+            continue
+        task.cancel()
+        try:
+            await task
+        except Exception:  # остановка не должна шуметь, включая CancelledError
+            pass
+        except asyncio.CancelledError:
+            pass
     _task = None
+    _hints_task = None
 
 
 async def weight_reminder_loop(bot: Bot, *, interval_s: int = TICK_SECONDS) -> None:
@@ -95,10 +101,50 @@ async def run_weight_reminders(bot: Bot, *, now: datetime | None = None) -> int:
     return sent
 
 
+async def feature_hint_loop(bot: Bot, *, interval_s: int = TICK_SECONDS) -> None:
+    while True:
+        try:
+            await run_feature_hints(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("feature hint tick failed")
+        await asyncio.sleep(interval_s)
+
+
+async def run_feature_hints(bot: Bot, *, now: datetime | None = None) -> int:
+    """Один тик: кому неделю ничего не рассказывали — тому одну возможность.
+
+    Больше `MAX_HINTS` раз об одной и той же возможности не говорим никогда, а
+    отказ («Не нужно») снимает её с рассылки навсегда — всё это решает
+    `features.pick_hint`.
+    """
+    from src.features import HINT_PERIOD_DAYS
+    from src.handlers.features import maybe_send_hint
+
+    moment = now or datetime.now(UTC)
+    async with session_scope() as session:
+        due = await repo.users_due_for_hint(
+            session, now=moment, period_days=HINT_PERIOD_DAYS
+        )
+        targets = [
+            user.tg_id
+            for user in due
+            if QUIET_START <= to_local(moment, user).hour < QUIET_END
+        ]
+    sent = 0
+    for tg_id in targets:
+        if await maybe_send_hint(bot, tg_id):
+            sent += 1
+    return sent
+
+
 __all__ = [
     "QUIET_END",
     "QUIET_START",
     "TICK_SECONDS",
+    "feature_hint_loop",
+    "run_feature_hints",
     "run_weight_reminders",
     "start_scheduler",
     "stop_scheduler",

@@ -104,10 +104,13 @@ async def test_a_confirmed_meal_shows_the_daily_corridor_once_a_goal_exists(
 
 
 async def test_without_a_goal_the_meal_card_stays_as_it_was(engine, session, state):
+    """Без цели нет дневного коридора — тарелка при этом остаётся на месте."""
     await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
     card = FakeMessage()
     await confirm.meal_ok(FakeCallback(data="meal:ok", message=card), state)
-    assert "▓" not in card.texts[-1]
+    written = card.texts[-1]
+    assert "Сегодня" not in written
+    assert "ккал)" not in written
 
 
 async def test_the_guided_weight_prompt_writes_what_the_user_typed(engine, session, state):

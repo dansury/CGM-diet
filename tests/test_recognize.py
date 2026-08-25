@@ -109,6 +109,7 @@ async def test_labs_flag_out_of_range_markers():
     flags = {m.marker: m.flag for m in draft.markers}
     assert flags["Глюкоза"] == "high"
     assert flags["HbA1c"] == "normal"
+    assert flags["Ферритин"] == "low"
 
 
 async def test_recognition_error_on_empty_result():

@@ -32,9 +32,10 @@ async def plate_advice_text(
 ) -> str | None:
     """Текст оценки тарелки после только что записанного приёма пищи.
 
-    `None` — если оценка выключена в настройках или сегодня ещё нечего
-    оценивать. Fail-soft у вызывающего: подсказка не имеет права съесть
-    подтверждение записи.
+    `None`, когда говорить не о чем: оценка выключена, сегодня ещё нечего
+    оценивать, последняя запись — перекус (кофе, горсть орехов), а не блюдо,
+    или пропорции тарелки и так собраны. Fail-soft у вызывающего: подсказка
+    не имеет права съесть подтверждение записи.
     """
     if not user.plate_enabled:
         return None
@@ -50,9 +51,16 @@ async def plate_advice_text(
     if not today:
         return None
     sessions = plate_math.group_sessions(today, window_min=rhythm.session_min)
-    advice = plate_math.advise(
-        current=sessions[-1], day_sessions=sessions, rhythm=rhythm
-    )
+    current = sessions[-1]
+    # Перекус сам по себе — не тарелка. Если существенная еда придёт в
+    # ближайшее время, `group_sessions` склеит её с этим перекусом, и тогда
+    # тарелку покажем уже вместе с ним (`spec/plate.md` § Когда показываем).
+    if not plate_math.is_meal(current.items):
+        return None
+    advice = plate_math.advise(current=current, day_sessions=sessions, rhythm=rhythm)
+    # Ровные пропорции разбора не требуют.
+    if plate_math.is_balanced(advice.score):
+        return None
     await repo.mark_feature_used(session, user, "plate")
     return format_plate_advice(advice, with_rule=advice.meals_done <= 1)
 

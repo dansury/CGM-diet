@@ -5,13 +5,18 @@ The plate is a proportion, not a diet: half the plate vegetables and fruit
 and refined grains are deliberately *not* vegetables/whole grains — they are
 counted as mass but never toward a target, exactly as the original plate does.
 
-Two things make the score honest on real data:
+Four things make the score honest on real data:
 
 * people eat a lunch as several photos, so meals are grouped into *sessions*
   (a gap no larger than the user's own typical meal length, ~1 h by default);
 * the daily advice is scaled by how many meals a day the user actually has —
   either the number they set, or the median number of sessions per day in
-  their own history.
+  their own history;
+* a coffee or a handful of nuts is not a plate: a session is only scored once
+  it holds enough actual food (`is_meal`), and a snack joins a plate only when
+  a real meal lands next to it inside the session window;
+* a plate whose proportions already hold together is not worth a message
+  (`is_balanced`).
 
 Nothing here touches the ORM or aiogram: it works on `PlateItem`/`PlateMeal`
 (see `spec/plate.md`).
@@ -62,6 +67,13 @@ MAX_MEAL_MASS_G = 1200.0
 FALLBACK_PORTION_G = 100.0
 #: меньшие пробелы не стоят отдельной строки совета
 MIN_GAP_G = 30.0
+
+#: категории, из которых состоит собственно еда; кофе и орехи в них не входят
+CORE_CATEGORIES: tuple[str, ...] = (*TARGET_SHARES, "refined")
+#: столько «еды» должно быть в приёме, чтобы это была тарелка, а не перекус, г
+MEAL_MIN_CORE_G = 200.0
+#: с этого счёта пропорции считаем собранными — говорить не о чем
+BALANCED_SCORE = 80.0
 
 _TAG_CATEGORY: dict[str, str] = {
     "vegetable": "veg",
@@ -214,6 +226,26 @@ def classify(item: PlateItem) -> str:
     return "extra"
 
 
+def core_mass_g(items: list[PlateItem]) -> float:
+    """Масса позиций, которые вообще участвуют в тарелке, г."""
+    return sum(_portion(item) for item in items if classify(item) in CORE_CATEGORIES)
+
+
+def is_meal(items: list[PlateItem]) -> bool:
+    """Это блюдо, а не перекус вроде кофе или горсти орехов.
+
+    Перекус сам по себе тарелкой не оценивается; если рядом (внутри окна
+    приёма пищи) человек съел что-то существенное, `group_sessions` склеит
+    их в одну сессию — и перекус войдёт в состав уже настоящей тарелки.
+    """
+    return core_mass_g(items) >= MEAL_MIN_CORE_G
+
+
+def is_balanced(score: PlateScore) -> bool:
+    """Пропорции собраны — показывать разбор незачем."""
+    return score.score >= BALANCED_SCORE
+
+
 def score_items(items: list[PlateItem]) -> PlateScore:
     """Mass shares of one plate, and how much of the target they cover."""
     grams: dict[str, float] = defaultdict(float)
@@ -358,6 +390,7 @@ def advise(
 
     `day_sessions` — все приёмы за сегодня, включая текущий: дневной остаток
     считается от того, что уже съедено, а не от одной последней тарелки.
+    Перекусы идут в дневную массу, но приёмом пищи не считаются.
     """
     score = score_items(current.items)
     meal_targets = {cat: rhythm.meal_mass_g * share for cat, share in TARGET_SHARES.items()}
@@ -367,7 +400,7 @@ def advise(
     for session in day_sessions:
         for cat, value in score_items(session.items).grams.items():
             day_grams[cat] += value
-    meals_done = len(day_sessions)
+    meals_done = sum(1 for session in day_sessions if is_meal(session.items))
     meals_left = max(0, rhythm.meals_per_day - meals_done)
     day_targets = {cat: value * rhythm.meals_per_day for cat, value in meal_targets.items()}
     return PlateAdvice(
@@ -385,10 +418,13 @@ def category_label(category: str) -> str:
 
 
 __all__ = [
+    "BALANCED_SCORE",
     "CATEGORY_LABELS",
+    "CORE_CATEGORIES",
     "DEFAULT_MEALS_PER_DAY",
     "DEFAULT_SESSION_MIN",
     "MAX_MEALS_PER_DAY",
+    "MEAL_MIN_CORE_G",
     "MIN_MEALS_PER_DAY",
     "TARGET_SHARES",
     "Gap",
@@ -401,8 +437,11 @@ __all__ = [
     "advise",
     "category_label",
     "classify",
+    "core_mass_g",
     "estimate_meals_per_day",
     "group_sessions",
+    "is_balanced",
+    "is_meal",
     "measure_rhythm",
     "score_items",
     "session_window_min",

@@ -111,11 +111,22 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
             username=message.from_user.username,
             first_name=message.from_user.first_name,
         )
+        is_first_run = not user.onboarded
         if user.consent_at is None:
             user.consent_at = local_now(user)
         user.onboarded = True
         hidden = await repo.hidden_features(session, user)
     await message.answer(WELCOME, reply_markup=main_menu(hidden))
+    # Анкета о теле и целях — сразу за приветствием и только при первом
+    # знакомстве (`spec/onboarding.md`). Сбой анкеты не имеет права оставить
+    # бота немым для нового пользователя.
+    if is_first_run:
+        try:
+            from src.handlers.onboarding import start as start_onboarding
+
+            await start_onboarding(message, state)
+        except Exception:
+            log.exception("onboarding start failed")
     # Одна возможность про запас — при старте и потом раз в неделю
     # (`spec/features.md`). Сбой подсказки не имеет права сорвать онбординг.
     if message.bot is not None:

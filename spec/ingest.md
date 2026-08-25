@@ -259,6 +259,17 @@ apply_meal_correction(draft, instruction) -> CorrectionResult
 модель получает текущий черновик JSON и уточнение и возвращает исправленный
 черновик (`TASK: meal_correction`), то есть правит, а не распознаёт заново.
 
+**Фото.** Правку можно прислать и фото — другой ракурс, забытое блюдо на
+отдельном снимке. `confirm.meal_apply_edit_photo` (`MealFlow.editing` + фото,
+до общего `intake.on_photo` — регистрируется в роутере `confirm`, который
+идёт раньше `intake`) скачивает фото и зовёт
+`recognize.correct_meal(draft, caption, images=[image])`: подпись к фото, если
+есть, идёт как обычное уточнение, картинка — рядом с ней в том же вызове
+модели (`_ask_json(..., images=...)`, `TASK: meal_correction` не меняется).
+Деterministic-проход (`apply_meal_correction`) фото не касается — текста для
+разбора нет, сразу к модели. Дальше — тот же путь, что и у текстовой правки:
+`corrections`, «Учтено из вашей правки», память БЖУ.
+
 **Голосом.** Транскрипт в `handlers/intake._route_voice` уходит в открытый
 поток: `MealFlow.editing|retiming`, `GlucoseFlow.editing`, `LabFlow.editing`,
 `ProductFlow.editing`, `MedicationFlow.editing|retiming`. Без этого голосовое

@@ -107,6 +107,21 @@ def test_losing_weight_below_the_healthy_bmi_is_refused():
         )
 
 
+def test_losing_weight_while_pregnant_is_refused_regardless_of_bmi():
+    with pytest.raises(body_math.PlanImpossible):
+        body_math.build_plan(
+            kind="lose",
+            weight_kg=70.0,
+            target_weight_kg=65.0,
+            height_cm=170.0,
+            age=30,
+            sex="f",
+            activity="light",
+            pregnant=True,
+            today=TODAY,
+        )
+
+
 def test_a_plan_without_height_is_marked_as_a_rough_estimate():
     plan = body_math.build_plan(
         kind="lose", weight_kg=90.0, target_weight_kg=80.0, today=TODAY

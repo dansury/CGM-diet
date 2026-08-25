@@ -10,12 +10,12 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from src.db import repo
-from src.handlers.deps import local_now, session_scope, to_utc
+from src.handlers.deps import download_photo, local_now, session_scope, to_utc
 from src.handlers.states import GlucoseFlow, LabFlow, MealFlow, ProductFlow
 from src.handlers.views import DRAFT_KEY, EATEN_AT_KEY, FILES_KEY, personal_examples
 from src.ingest.correction import apply_meal_correction
@@ -196,6 +196,63 @@ async def meal_apply_edit(
             datetime.fromisoformat(data[EATEN_AT_KEY]) if data.get(EATEN_AT_KEY) else None
         ),
         applied=[change.describe() for change in result.changes],
+    )
+
+
+@router.message(F.photo, MealFlow.editing)
+async def meal_apply_edit_photo(message: Message, state: FSMContext, bot: Bot) -> None:
+    """A correction can be a photo too — an extra dish, a missed angle.
+
+    Handled separately from `meal_apply_edit` (text/voice) because the model
+    needs the image, not an instruction string (`spec/ingest.md` § Корректировки).
+    """
+    try:
+        image = await download_photo(bot, message.photo[-1].file_id)
+    except Exception:
+        await message.answer("Не удалось скачать фото, попробуйте ещё раз.")
+        return
+    data = await state.get_data()
+    old = meal_from_dict(data.get(DRAFT_KEY) or {})
+    instruction = (message.caption or "").strip()
+
+    try:
+        new = await recognize.correct_meal(old, instruction, images=[image])
+    except recognize.RecognitionError:
+        await message.answer(
+            "Не разобрал фото-правку. Опишите текстом или голосом, что изменить."
+        )
+        return
+
+    if not new.items:
+        await message.answer(
+            "После правки не осталось ни одного блюда. Нажмите «🗑 Отменить», "
+            "если запись не нужна."
+        )
+        return
+
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, message.chat.id)
+        await repo.save_correction(
+            session,
+            user,
+            entity_type="meal_draft",
+            entity_id=None,
+            field="items",
+            old_value=_items_line(old),
+            new_value=instruction or "[фото]",
+        )
+    from src.handlers.views import remember_typed_macros, show_meal_draft
+
+    await remember_typed_macros(message, new)
+    await show_meal_draft(
+        message,
+        state,
+        new,
+        file_ids=data.get(FILES_KEY),
+        eaten_at_local=(
+            datetime.fromisoformat(data[EATEN_AT_KEY]) if data.get(EATEN_AT_KEY) else None
+        ),
+        applied=["добавлено по фото" + (f": {instruction}" if instruction else "")],
     )
 
 

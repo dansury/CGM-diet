@@ -368,26 +368,41 @@ def stats_windows(active: str = "1h") -> InlineKeyboardMarkup:
 
 # ------------------------------------------------------------------ тело и цель
 
-def body_menu(*, has_goal: bool) -> InlineKeyboardMarkup:
+def body_menu(*, has_goal: bool, show_pregnancy: bool = False) -> InlineKeyboardMarkup:
     """Карточка `/body`: замер, профиль, цель, график."""
+    rows = [
+        [
+            InlineKeyboardButton(text="⚖️ Записать вес", callback_data="bd:weight"),
+            InlineKeyboardButton(
+                text="🎯 Изменить цель" if has_goal else "🎯 Задать цель",
+                callback_data="bd:goal",
+            ),
+        ],
+        [
+            InlineKeyboardButton(text="📏 Рост", callback_data="bd:field:height"),
+            InlineKeyboardButton(text="🎂 Возраст", callback_data="bd:field:age"),
+        ],
+        [
+            InlineKeyboardButton(text="⚧ Пол", callback_data="bd:field:sex"),
+            InlineKeyboardButton(text="🏃 Активность", callback_data="bd:field:activity"),
+        ],
+    ]
+    second_row = [InlineKeyboardButton(text="🩺 Особые состояния", callback_data="bd:field:conditions")]
+    if show_pregnancy:
+        second_row.append(InlineKeyboardButton(text="🤰 Беременность", callback_data="bd:field:pregnant"))
+    rows.append(second_row)
+    rows.append([InlineKeyboardButton(text="📉 График веса", callback_data="bd:chart")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def pregnancy_picker() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="⚖️ Записать вес", callback_data="bd:weight"),
-                InlineKeyboardButton(
-                    text="🎯 Изменить цель" if has_goal else "🎯 Задать цель",
-                    callback_data="bd:goal",
-                ),
+                InlineKeyboardButton(text="Да", callback_data="bd:preg:y"),
+                InlineKeyboardButton(text="Нет", callback_data="bd:preg:n"),
             ],
-            [
-                InlineKeyboardButton(text="📏 Рост", callback_data="bd:field:height"),
-                InlineKeyboardButton(text="🎂 Возраст", callback_data="bd:field:age"),
-            ],
-            [
-                InlineKeyboardButton(text="⚧ Пол", callback_data="bd:field:sex"),
-                InlineKeyboardButton(text="🏃 Активность", callback_data="bd:field:activity"),
-            ],
-            [InlineKeyboardButton(text="📉 График веса", callback_data="bd:chart")],
+            [cancel_button()],
         ]
     )
 
@@ -442,6 +457,43 @@ def confirm_measurement() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="✅ Записать", callback_data="bd:save"),
                 InlineKeyboardButton(text="✏️ Скорректировать", callback_data="bd:field:weight"),
+            ],
+            [cancel_button()],
+        ]
+    )
+
+
+# ------------------------------------------------------------------ онбординг
+
+def onboarding_skip() -> InlineKeyboardMarkup:
+    """Любой шаг анкеты можно пропустить и заполнить позже через /body."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⏭ Пропустить", callback_data="onb:skip")],
+            [cancel_button()],
+        ]
+    )
+
+
+def onboarding_sex_picker() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Мужской", callback_data="onb:sex:m"),
+                InlineKeyboardButton(text="Женский", callback_data="onb:sex:f"),
+            ],
+            [InlineKeyboardButton(text="⏭ Пропустить", callback_data="onb:skip")],
+            [cancel_button()],
+        ]
+    )
+
+
+def onboarding_pregnancy_picker() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Да", callback_data="onb:preg:y"),
+                InlineKeyboardButton(text="Нет", callback_data="onb:preg:n"),
             ],
             [cancel_button()],
         ]
@@ -562,7 +614,11 @@ __all__ = [
     "health_setup",
     "hidden_features",
     "main_menu",
+    "onboarding_pregnancy_picker",
+    "onboarding_sex_picker",
+    "onboarding_skip",
     "photo_kind",
+    "pregnancy_picker",
     "product_actions",
     "rate_picker",
     "sex_picker",

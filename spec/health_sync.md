@@ -94,3 +94,9 @@ POST /health/samsung      -> приём активности
 `repo.load_activity_buckets` → `analytics.activity.contrast_by_activity`:
 сравнение подъёма после еды с прогулкой (≥ 1000 шагов за час) и без.
 Результат показывается в `/health` и учитывается в `/stats`.
+
+Записи `kind="sleep"` идут в `repo.load_sleep_intervals` →
+`analytics.sleep.nights_from_intervals`: ночи, режим и связь с калориями и
+сахаром следующего дня. Разбор — в `/sleep`, детали — `spec/sleep.md`.
+Стадия сна (`stage`), если мост её прислал, остаётся в `payload`; стадии
+«бодрствование» ночь не удлиняют.

@@ -13,6 +13,7 @@
 users              id tg_id* username first_name locale tz glucose_unit sensor
                    window_1h_start/end window_2h_start/end baseline_window
                    plate_enabled meals_per_day? last_hint_at?
+                   sleep_presence_enabled last_presence_reminder_at?
                    consent_at onboarded created_at
 media_files        id user_id kind(meal|glucose|label|lab|voice) tg_file_id tg_unique_id
                    mime size_bytes sha256 local_path
@@ -51,6 +52,7 @@ checkin_symptoms   id checkin_id symptom_id severity?
 activity_samples   id user_id external_id kind(steps|workout|sleep|heart_rate)
                    start_at end_at steps distance_m kcal avg_hr source payload
                    -- uq(user_id, external_id)
+presence_pings     id user_id at source(telegram)   -- отметки появлений, `spec/sleep.md`
 food_stats         id user_id key_type(item|tag|product) key window n
                    mean_delta median_delta max_delta ci_low ci_high confidence updated_at
 corrections        id user_id entity_type entity_id field old_value new_value created_at
@@ -63,6 +65,7 @@ feature_flags      id user_id feature status(new|shown|accepted|declined) shown
 `user_nutrition(user_id, key_norm)`,
 `meals(user_id, eaten_at)`, `glucose_readings(user_id, measured_at)`,
 `wellbeing_checkins(user_id, at)`, `activity_samples(user_id, start_at)`,
+`presence_pings(user_id, at)`,
 `meal_items(name_norm)`, `products(user_id, name_norm)`.
 
 ## Репозиторий (`src/db/repo.py`)
@@ -90,6 +93,10 @@ load_workouts(session, user, since?) -> [Workout]
 day_energy(session, user, day_start, day_end) -> (consumed_kcal, carbs_g, burned_kcal)
 users_due_for_weight(session, now, default_days=14) -> [(User, BodyProfile)]
 mark_weight_prompt(session, profile, at)
+save_presence / load_presence / last_presence_at        # сон по появлениям, `spec/sleep.md`
+load_sleep_intervals(session, user, since?) -> [SleepInterval]
+daily_intake(session, user, since?) -> [DayIntake]      # по локальным суткам
+users_watching_presence / users_due_for_presence_reminder / mark_presence_reminder
 save_labs / save_correction
 load_lab_values(session, user, since?) -> [LabValue]     # для analytics/labs
 load_plate_meals(session, user, since?) -> [PlateMeal]   # позиции с порциями и тегами

@@ -9,7 +9,8 @@
 `prepare_runtime(bot, settings)` до первого апдейта (и в polling, и в webhook):
 `wire_error_reporter` → `load_active_models` → каталог свободных моделей →
 `scheduler.start(bot)` (напоминание о взвешивании — `spec/body.md`; недельная
-подсказка о возможностях — `spec/features.md`).
+подсказка о возможностях — `spec/features.md`; «бот вас не видит» для
+наблюдения за сном — `spec/sleep.md`).
 Каждый шаг деградирует молча — ни один не мешает боту стартовать.
 
 ## Команды
@@ -22,7 +23,7 @@
 | `/help` | подробная справка | `handlers/common.py` |
 | `/menu` | вернуть клавиатуру | `handlers/common.py` |
 | `/cancel` | отменить текущий ввод (то же, что `❌`) | `handlers/common.py` |
-| `/settings`, `/set` | пояс, единицы, окна, базовая линия, `weighin`, `plate`, `meals` | `handlers/common.py` |
+| `/settings`, `/set` | пояс, единицы, окна, базовая линия, `weighin`, `plate`, `meals`, `sleep` | `handlers/common.py` |
 | `/plate` | Гарвардская тарелка: что настроено и как менять | `handlers/plate.py` |
 | `/labs` | анализы: маркеры вне референса и продукты-источники | `handlers/labs.py` |
 | `/hidden` | скрытые возможности и возврат их в меню | `handlers/features.py` |
@@ -37,6 +38,7 @@
 | `/export` | ZIP с CSV | `handlers/reports.py` |
 | `/delete` | удаление с подтверждением | `handlers/reports.py` |
 | `/health` | пошаговая инструкция Samsung Health, ключи, ссылка на мост | `handlers/reports.py` |
+| `/sleep` | сон: длительность, режим, связи; переключатель наблюдения | `handlers/sleep.py` |
 | `/model`, `/models`, `/errors`, `/whereami` | только владелец, только в личке | `handlers/admin.py` |
 
 ## Клавиатуры (`src/keyboards.py`)
@@ -67,6 +69,10 @@ Reply-меню (`MENU_ROWS`): `🍽 Записать еду`, `🩸 Записа
 `/health` — карточка Samsung Health с кнопками `📲 Как подключить`,
 `🔑 Мои ключи`, `📦 Приложение-мост` (`hs:how|keys|app|menu`), инструкция
 листается прямо в чате (`spec/health_sync.md` § Инструкция).
+
+`/sleep` — карточка сна с кнопками `❓ Как это работает`,
+`👀 Следить за сном` / `🚫 Выключить наблюдение`, `⌚️ Samsung Health`
+(`sl:how|on|off|health|menu`, `spec/sleep.md`).
 
 Callback-грамматика `<domain>:<action>[:<arg>]` (лимит Telegram — 64 байта):
 

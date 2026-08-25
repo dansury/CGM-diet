@@ -17,6 +17,7 @@ from src.analytics.activity import ActivityBucket
 from src.analytics.labs import LabValue
 from src.analytics.meds import MedicationLike
 from src.analytics.plate import PlateItem, PlateMeal
+from src.analytics.sleep import DayIntake, SleepInterval
 from src.analytics.symptoms import CheckinLike
 from src.analytics.tags import normalize_name
 from src.analytics.windows import GlucosePoint, MealLike
@@ -35,6 +36,7 @@ from src.db.models import (
     MediaFile,
     Medication,
     NutritionMemory,
+    PresencePing,
     Product,
     ProductPhoto,
     SettingsKV,
@@ -481,6 +483,140 @@ async def load_activity_buckets(
         end = _aware(sample.end_at) if sample.end_at else start + timedelta(minutes=15)
         out.append(ActivityBucket(start_at=start, end_at=end, steps=sample.steps or 0))
     return out
+
+
+# ------------------------------------------------------------------ sleep & presence
+
+#: Тоньше этого промежутка появления не различаем — важна форма суток,
+#: а не каждое нажатие кнопки (`spec/sleep.md`).
+PRESENCE_MIN_GAP_MIN = 5
+
+
+def _zone(user: User):
+    """User's tz; falls back to UTC so a broken profile never breaks a report."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(user.tz)
+    except Exception:
+        return UTC
+
+
+async def save_presence(
+    session: AsyncSession, user: User, *, at: datetime | None = None
+) -> bool:
+    """Record one appearance; `False` when the previous one is still fresh."""
+    moment = at or datetime.now(UTC)
+    last = await session.scalar(
+        select(func.max(PresencePing.at)).where(PresencePing.user_id == user.id)
+    )
+    if last is not None and moment - _aware(last) < timedelta(minutes=PRESENCE_MIN_GAP_MIN):
+        return False
+    session.add(PresencePing(user_id=user.id, at=moment, source="telegram"))
+    await session.flush()
+    return True
+
+
+async def load_presence(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[datetime]:
+    stmt = (
+        select(PresencePing.at)
+        .where(PresencePing.user_id == user.id)
+        .order_by(PresencePing.at)
+    )
+    if since is not None:
+        stmt = stmt.where(PresencePing.at >= since)
+    return [_aware(at) for at in await session.scalars(stmt)]
+
+
+async def last_presence_at(session: AsyncSession, user: User) -> datetime | None:
+    last = await session.scalar(
+        select(func.max(PresencePing.at)).where(PresencePing.user_id == user.id)
+    )
+    return _aware(last) if last is not None else None
+
+
+async def load_sleep_intervals(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[SleepInterval]:
+    """Health Connect sleep records reshaped for `analytics.sleep`.
+
+    Stage (`deep`, `rem`, `awake`, …) lives in the raw payload the relay sent;
+    the analytics layer drops the awake ones so they cannot extend a night.
+    """
+    out: list[SleepInterval] = []
+    for sample in await load_activity(session, user, since=since):
+        if sample.kind != "sleep" or sample.end_at is None:
+            continue
+        payload = sample.payload if isinstance(sample.payload, dict) else {}
+        stage = payload.get("stage") or payload.get("type")
+        out.append(
+            SleepInterval(
+                start_at=_aware(sample.start_at),
+                end_at=_aware(sample.end_at),
+                stage=str(stage).lower() if stage else None,
+            )
+        )
+    return out
+
+
+async def daily_intake(
+    session: AsyncSession, user: User, *, since: datetime | None = None
+) -> list[DayIntake]:
+    """Съеденное по локальным суткам пользователя — вход для контрастов сна."""
+    stmt = select(Meal.eaten_at, Meal.kcal, Meal.carbs_g).where(Meal.user_id == user.id)
+    if since is not None:
+        stmt = stmt.where(Meal.eaten_at >= since)
+    zone = _zone(user)
+    days: dict[Any, DayIntake] = {}
+    for eaten_at, kcal, carbs in await session.execute(stmt):
+        key = _aware(eaten_at).astimezone(zone).date()
+        day = days.get(key)
+        if day is None:
+            day = days[key] = DayIntake(date=key)
+        day.kcal += float(kcal or 0.0)
+        day.carbs_g += float(carbs or 0.0)
+        day.meals += 1
+    return [days[key] for key in sorted(days)]
+
+
+async def users_watching_presence(session: AsyncSession) -> list[User]:
+    return list(
+        await session.scalars(
+            select(User).where(User.sleep_presence_enabled.is_(True))
+        )
+    )
+
+
+async def users_due_for_presence_reminder(
+    session: AsyncSession,
+    *,
+    now: datetime,
+    silent_days: float = 1.0,
+    min_gap_days: int = 3,
+) -> list[User]:
+    """Кому напомнить, что бот их не видит (`spec/sleep.md` § Напоминание).
+
+    Условие — включённая опция и тишина дольше `silent_days`. Пользователей,
+    которых мы уже дёргали недавно, пропускаем: напоминание не должно
+    превращаться в ежедневную рассылку.
+    """
+    out: list[User] = []
+    for user in await users_watching_presence(session):
+        last = await last_presence_at(session, user)
+        if last is not None and now - last < timedelta(days=silent_days):
+            continue
+        reminded = user.last_presence_reminder_at
+        if reminded is not None and now - _aware(reminded) < timedelta(days=min_gap_days):
+            continue
+        out.append(user)
+    return out
+
+
+async def mark_presence_reminder(session: AsyncSession, user: User, at: datetime) -> None:
+    user.last_presence_reminder_at = at
+    await session.flush()
 
 
 # ------------------------------------------------------------------ body
@@ -1417,6 +1553,7 @@ async def delete_user_data(session: AsyncSession, user: User, *, drop_user: bool
         Medication,
         AnalysisResult,
         ActivitySample,
+        PresencePing,
         ProductPhoto,
         Product,
         MediaFile,
@@ -1463,6 +1600,7 @@ async def counts(session: AsyncSession, user: User) -> dict[str, int]:
         ("products", Product),
         ("labs", AnalysisResult),
         ("activity", ActivitySample),
+        ("presence", PresencePing),
         ("medications", Medication),
         ("weights", Weight),
         ("workouts", Workout),
@@ -1483,6 +1621,7 @@ def day_bounds(now: datetime, *, days: int = 1) -> datetime:
 
 __all__ = [
     "DICTIONARY_KINDS",
+    "PRESENCE_MIN_GAP_MIN",
     "example_labels",
     "MIN_HITS",
     "SEED_SYMPTOMS",
@@ -1499,8 +1638,12 @@ __all__ = [
     "hide_dictionary",
     "list_dictionary",
     "list_symptoms",
+    "daily_intake",
+    "last_presence_at",
     "load_activity",
     "load_activity_buckets",
+    "load_presence",
+    "load_sleep_intervals",
     "load_checkin_likes",
     "load_checkins",
     "load_glucose",
@@ -1544,7 +1687,11 @@ __all__ = [
     "set_setting",
     "suggest_dictionary",
     "touch_dictionary",
+    "mark_presence_reminder",
+    "save_presence",
     "upsert_activity",
+    "users_due_for_presence_reminder",
+    "users_watching_presence",
     "upsert_symptom",
     "delete_user_data",
 ]

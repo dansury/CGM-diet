@@ -177,12 +177,13 @@ async def cmd_settings(message: Message) -> None:
             f"Базовая линия до еды: {user.baseline_window} мин\n"
             f"Напоминать взвеситься: раз в {days} дн.\n"
             f"Гарвардская тарелка: {'вкл' if user.plate_enabled else 'выкл'}\n"
+            f"Наблюдение за сном: {'вкл' if user.sleep_presence_enabled else 'выкл'}\n"
             f"Приёмов пищи в день: {meals}\n\n"
             "Изменить: <code>/set tz Europe/Moscow</code>, "
             "<code>/set unit mg/dL</code>, <code>/set window1 45-90</code>, "
             "<code>/set window2 90-150</code>, <code>/set baseline 20</code>, "
             "<code>/set weighin 14</code>, <code>/set plate on|off</code>, "
-            "<code>/set meals 3|auto</code>"
+            "<code>/set meals 3|auto</code>, <code>/set sleep on|off</code>"
         )
     await message.answer(text)
 
@@ -251,6 +252,16 @@ def _apply_setting(user, key: str, value: str) -> str:
         if value.lower() in {"off", "выкл", "нет", "0", "false"}:
             user.plate_enabled = False
             return "оценка тарелки: выключена"
+        raise ValueError("нужно on или off")
+    if key == "sleep":
+        # Оценка сна по появлениям в чате (`spec/sleep.md`); Samsung Health
+        # работает независимо от этого переключателя.
+        if value.lower() in {"on", "вкл", "да", "1", "true"}:
+            user.sleep_presence_enabled = True
+            return "наблюдение за сном: включено — подробности в /sleep"
+        if value.lower() in {"off", "выкл", "нет", "0", "false"}:
+            user.sleep_presence_enabled = False
+            return "наблюдение за сном: выключено"
         raise ValueError("нужно on или off")
     if key == "meals":
         from src.analytics.plate import MAX_MEALS_PER_DAY, MIN_MEALS_PER_DAY

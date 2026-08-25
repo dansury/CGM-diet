@@ -17,6 +17,13 @@ from src.analytics.activity import ActivityContrast
 from src.analytics.cgm_metrics import CGMSummary
 from src.analytics.labs import FoodHint, LabReview, LabValue
 from src.analytics.plate import TARGET_SHARES, PlateAdvice, PlateScore, category_label
+from src.analytics.sleep import (
+    SHORT_SLEEP_MIN,
+    SleepContrast,
+    SleepReport,
+    clock_label,
+    duration_label,
+)
 from src.analytics.stats import KeyStats
 from src.analytics.symptoms import SymptomStats
 from src.analytics.tags import tag_label
@@ -504,6 +511,128 @@ def format_activity(contrast: ActivityContrast, *, unit: str = "mmol/L") -> str:
         f"({contrast.n_sedentary} набл.)\n"
         f"Разница: <b>{format_delta(contrast.difference or 0, unit)}</b>"
         + (f" · p={contrast.p_value:.3f}" if contrast.p_value is not None else "")
+    )
+
+
+# --------------------------------------------------------------- сон
+
+SLEEP_SOURCE_LABEL = {
+    "health": "Samsung Health",
+    "presence": "по появлениям в чате",
+}
+
+SLEEP_EMPTY = (
+    "😴 <b>Сон</b>\n\n"
+    "Пока не из чего считать ночи. Подключите Samsung Health (/health) — "
+    "часы отдают готовые сессии сна — либо включите наблюдение по появлениям "
+    "в чате кнопкой ниже."
+)
+
+SLEEP_PRESENCE_REMINDER = (
+    "😴 <b>Наблюдение за сном не работает</b>\n\n"
+    "Вы включили оценку сна по появлениям в чате, но больше суток "
+    "не заходили к боту — ночей из этого не построить.\n\n"
+    "Что можно сделать:\n"
+    "• просто отмечаться утром и вечером — хватает пары нажатий любой кнопки "
+    "или короткого сообщения;\n"
+    "• проверить, что бот не заблокирован и уведомления от него разрешены: "
+    "<i>чат с ботом → имя сверху → Уведомления</i>;\n"
+    "• подключить Samsung Health (/health) — тогда ночи считаются сами, "
+    "без вашего участия;\n"
+    "• либо выключить функцию: <code>/set sleep off</code>.\n\n"
+    "Пока данных нет, бот про сон ничего не показывает."
+)
+
+
+def _sleep_metric_text(contrast: SleepContrast, unit: str) -> str | None:
+    """Одна строка контраста; величины — в единицах своей метрики."""
+    if contrast.difference is None:
+        return None
+    if contrast.metric == "kcal":
+        head = "съедено за день"
+        value_a = f"{contrast.mean_a:.0f} ккал"
+        value_b = f"{contrast.mean_b:.0f} ккал"
+        diff = f"{abs(contrast.difference):.0f} ккал"
+    elif contrast.metric == "carbs":
+        head = "углеводов за день"
+        value_a = f"{contrast.mean_a:.0f} г"
+        value_b = f"{contrast.mean_b:.0f} г"
+        diff = f"{abs(contrast.difference):.0f} г"
+    elif contrast.metric == "glucose":
+        head = "средний сахар за день"
+        value_a = format_value(contrast.mean_a or 0, unit)
+        value_b = format_value(contrast.mean_b or 0, unit)
+        diff = format_delta(abs(contrast.difference), unit)
+    else:  # rise
+        head = "средний подъём после еды"
+        value_a = format_delta(contrast.mean_a or 0, unit)
+        value_b = format_delta(contrast.mean_b or 0, unit)
+        diff = format_delta(abs(contrast.difference), unit)
+    direction = "больше" if contrast.difference > 0 else "меньше"
+    tail = f" · p={contrast.p_value:.3f}" if contrast.p_value is not None else ""
+    return (
+        f"• {head}: {contrast.label_a} — <b>{value_a}</b> ({contrast.n_a} дн.), "
+        f"{contrast.label_b} — {value_b} ({contrast.n_b} дн.); "
+        f"разница {diff} {direction}{tail}"
+    )
+
+
+def format_sleep(report: SleepReport, *, unit: str = "mmol/L") -> str:
+    """Карточка сна: сколько, насколько ровно и что бывает в такие дни.
+
+    Формулировки те же, что и везде: наблюдаемая связь, а не причина
+    (`spec/clinical.md`). Короткий сон не «поднимает сахар» — в дни после
+    коротких ночей средние цифры такие-то.
+    """
+    stats = report.stats
+    if not stats.n_nights:
+        return SLEEP_EMPTY
+    source = SLEEP_SOURCE_LABEL.get(stats.source, stats.source)
+    lines = [
+        "😴 <b>Сон</b>",
+        f"Источник: {source} · ночей учтено: {stats.n_nights}",
+        "",
+        f"Средняя длительность: <b>{duration_label(stats.mean_duration_min)}</b>",
+        f"Обычный отбой: {clock_label(stats.median_bedtime_min)} · "
+        f"подъём: {clock_label(stats.median_wake_min)}",
+    ]
+    short_hours = SHORT_SLEEP_MIN // 60
+    lines.append(
+        f"Коротких ночей (меньше {short_hours} ч): "
+        f"{stats.short_nights} из {stats.n_nights}"
+    )
+    if stats.bedtime_sd_min is not None:
+        steady = "ровный" if stats.regular else "плавающий"
+        lines.append(
+            f"Режим {steady}: отбой гуляет на ±{stats.bedtime_sd_min:.0f} мин, "
+            f"подъём — на ±{(stats.wake_sd_min or 0):.0f} мин"
+        )
+    if stats.source == "presence":
+        lines.append(
+            "<i>Оценка по появлениям в чате — она приблизительная: "
+            "бот видит только моменты, когда вы к нему заходите.</i>"
+        )
+
+    rows = [text for c in report.contrasts if (text := _sleep_metric_text(c, unit))]
+    if rows:
+        lines += ["", "<b>Что бывает в такие дни</b>", *rows]
+    else:
+        lines += [
+            "",
+            "Связей с едой и сахаром пока не видно — нужно хотя бы по три дня "
+            "в каждой группе.",
+        ]
+    return "\n".join(lines)
+
+
+def format_sleep_short(report: SleepReport) -> str:
+    """Одна строка для /stats — без контрастов, только режим."""
+    stats = report.stats
+    if not stats.n_nights:
+        return ""
+    return (
+        f"😴 Сон: {duration_label(stats.mean_duration_min)} в среднем за "
+        f"{stats.n_nights} ноч., отбой около {clock_label(stats.median_bedtime_min)}"
     )
 
 
@@ -1072,6 +1201,7 @@ __all__ = [
     "meal_edit_prompt",
     "quoted",
     "reset_examples",
+    "SLEEP_PRESENCE_REMINDER",
     "format_activity",
     "format_body_card",
     "format_cgm_summary",
@@ -1097,6 +1227,8 @@ __all__ = [
     "format_recommendations",
     "format_remembered_label",
     "format_remembered_macros",
+    "format_sleep",
+    "format_sleep_short",
     "format_stats",
     "format_symptoms",
     "format_weight_saved",

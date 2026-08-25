@@ -37,6 +37,7 @@ COMMANDS = [
     BotCommand(command="workout", description="Записать тренировку"),
     BotCommand(command="check", description="Проверить продукт перед покупкой"),
     BotCommand(command="health", description="Подключить Samsung Health"),
+    BotCommand(command="sleep", description="Сон: длительность, режим и связи"),
     BotCommand(command="export", description="Выгрузить данные (CSV)"),
     BotCommand(command="delete", description="Удалить все данные"),
     BotCommand(command="cancel", description="Отменить текущий ввод"),
@@ -57,7 +58,12 @@ def build_bot(settings: Settings | None = None) -> Bot:
 
 
 def build_dispatcher() -> Dispatcher:
+    from src.handlers.presence import PresenceMiddleware
+
     dispatcher = Dispatcher(storage=MemoryStorage())
+    # Outer middleware: the appearance counts even when no handler matches —
+    # the person was here, and that is the whole signal (`spec/sleep.md`).
+    dispatcher.update.outer_middleware(PresenceMiddleware())
     dispatcher.include_router(build_router())
     return dispatcher
 

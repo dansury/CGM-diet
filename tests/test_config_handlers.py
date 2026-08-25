@@ -96,6 +96,7 @@ def test_router_tree_builds():
         "admin",
         "common",
         "reports",
+        "sleep",
         "features",
         "plate",
         "labs",

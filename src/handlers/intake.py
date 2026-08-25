@@ -47,6 +47,15 @@ from src.ingest.units import to_mmol
 from src.keyboards import cancel_only, photo_kind
 from src.llm import ImagePart, get_client, model_selection
 from src.logging_setup import get_logger
+from src.reporting import (
+    describe_food_hint,
+    describe_food_retry,
+    food_examples,
+    glucose_examples,
+    glucose_hint,
+    glucose_prompt,
+    quoted,
+)
 from src.vision import recognize
 from src.vision.schemas import GlucoseDraft
 
@@ -86,8 +95,7 @@ async def start_meal_mode(message: Message, state: FSMContext) -> None:
 async def start_glucose_mode(message: Message, state: FSMContext) -> None:
     await state.update_data({MODE_KEY: "glucose"})
     await message.answer(
-        "🩸 Пришлите скриншот CGM/глюкометра или напишите значение — «сахар 8.2», "
-        "«гк 130 mg/dl в 8:30».",
+        glucose_prompt(glucose_examples(message.chat.id)),
         reply_markup=cancel_only(),
     )
 
@@ -246,7 +254,9 @@ async def _process_food(
     except recognize.RecognitionError as exc:
         await message.answer(
             f"Не получилось распознать еду: {exc}\n"
-            "Можно описать словами — «гречка с курицей, салат»."
+            + describe_food_hint(
+                food_examples(message.chat.id, await views.personal_examples(message.chat.id))
+            )
         )
         return
     await views.show_meal_draft(message, state, draft, file_ids=file_ids)
@@ -263,7 +273,7 @@ async def _process_glucose(
         drafts, device = await recognize.recognize_glucose_screenshot(images, now=now)
     except recognize.RecognitionError as exc:
         await message.answer(
-            f"Не смог прочитать показания: {exc}\nНапишите значение текстом — «сахар 8.2»."
+            f"Не смог прочитать показания: {exc}\n{glucose_hint(glucose_examples(message.chat.id))}"
         )
         return
     await views.show_glucose_draft(message, state, drafts, unit=unit, file_ids=file_ids)
@@ -583,7 +593,8 @@ async def handle_text(
     if not leftover or len(leftover) < 3:
         if not saved:
             await message.answer(
-                "Не понял. Пришлите фото еды, напишите «сахар 8.2» или нажмите кнопку меню.",
+                "Не понял. Пришлите фото еды, напишите "
+                f"{quoted(glucose_examples(message.chat.id)[:1])} или нажмите кнопку меню.",
                 reply_markup=await menu_of(message.chat.id),
             )
         return
@@ -601,8 +612,9 @@ async def handle_text(
     if not food_text or len(food_text) < 3:
         if not saved:
             await message.answer(
-                "Не понял, что записать. Опишите еду («овсянка с бананом») "
-                "или пришлите фото.",
+                describe_food_retry(
+                    food_examples(message.chat.id, await views.personal_examples(message.chat.id))
+                ),
                 reply_markup=await menu_of(message.chat.id),
             )
         return
@@ -622,8 +634,9 @@ async def handle_text(
     except recognize.RecognitionError:
         if not saved:
             await message.answer(
-                "Не понял, что записать. Опишите еду («овсянка с бананом») "
-                "или пришлите фото.",
+                describe_food_retry(
+                    food_examples(message.chat.id, await views.personal_examples(message.chat.id))
+                ),
                 reply_markup=await menu_of(message.chat.id),
             )
         return

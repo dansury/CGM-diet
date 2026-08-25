@@ -10,6 +10,7 @@ Two hard rules (`spec/clinical.md`):
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 
 from src.analytics.activity import ActivityContrast
@@ -39,12 +40,194 @@ def _num(value: float | None, digits: int = 1, suffix: str = "") -> str:
     return "—" if value is None else f"{value:.{digits}f}{suffix}"
 
 
+# --------------------------------------------------------------- примеры
+
+# Одни и те же три примера в каждой подсказке перестают читаться: человек
+# видит их как узор, а не как инструкцию. Пулы ротируются, и не чаще чем
+# через раз третьим пунктом подмешивается пример из того, что человек
+# записывал сам (`spec/bot.md` § Примеры в подсказках).
+
+CORRECTION_EXAMPLES: tuple[tuple[str, ...], ...] = (
+    ("убери салат", "гречки было 250"),
+    ("вместо курицы индейка", "добавь хлеб 50"),
+    ("салата не было", "риса было 150"),
+    ("замени рис на гречку", "убери масло"),
+)
+
+FOOD_EXAMPLES: tuple[tuple[str, ...], ...] = (
+    ("овсянка с бананом",),
+    ("гречка с курицей и салат",),
+    ("творог с ягодами",),
+    ("омлет из двух яиц и хлеб",),
+)
+
+GLUCOSE_EXAMPLES: tuple[tuple[str, ...], ...] = (
+    ("сахар 8.2", "гк 130 mg/dl в 8:30"),
+    ("глюкоза 4.5 натощак", "сахар 7,1 в 21:30"),
+    ("сахар 6.4 перед едой", "гк 9.8 через час"),
+)
+
+ITEMS_EXAMPLES: tuple[tuple[str, ...], ...] = (
+    ("гречка 250, курица 100, салат 150",),
+    ("рис 200, рыба 120, овощи 100",),
+    ("овсянка 250, банан 120",),
+)
+
+# Порции для примера, собранного из личного словаря: название остаётся в
+# именительном падеже, поэтому «сырники 200 г» читается, а «убери сырники» —
+# уже нет, и склонять чужие слова бот не берётся.
+PERSONAL_PORTIONS = (150, 200, 250)
+
+# Счётчики ротации живут в процессе, а не в БД: подсказка, повторившаяся
+# после рестарта, не стоит ни запроса, ни записи на каждое приглашение.
+_rotation: dict[tuple[str, int], int] = {}
+
+
+def reset_examples() -> None:
+    """Сбросить ротацию — нужно только тестам."""
+    _rotation.clear()
+
+
+def _tick(slot: str, user_key: int) -> int:
+    value = _rotation.get((slot, user_key), 0)
+    _rotation[(slot, user_key)] = value + 1
+    return value
+
+
+def _rotate(pool: tuple[tuple[str, ...], ...], tick: int) -> list[str]:
+    return list(pool[tick % len(pool)])
+
+
+def _personal_share(tick: int) -> bool:
+    """Не чаще чем через раз — иначе подсказка превращается в напоминание
+    о том, что бот следит за тем, что человек ест."""
+    return tick % 2 == 0
+
+
+def _examples(
+    slot: str,
+    pool: tuple[tuple[str, ...], ...],
+    user_key: int,
+    personal: Sequence[str],
+    *,
+    with_portion: bool,
+) -> list[str]:
+    tick = _tick(slot, user_key)
+    examples = _rotate(pool, tick)
+    if personal and _personal_share(tick):
+        index = tick // 2
+        label = personal[index % len(personal)]
+        if with_portion:
+            label = f"{label} {PERSONAL_PORTIONS[index % len(PERSONAL_PORTIONS)]} г"
+        examples.append(label)
+    return examples
+
+
+def correction_examples(user_key: int = 0, personal: Sequence[str] = ()) -> list[str]:
+    """Примеры правки карточки; личный — с весом, его же и просят чаще всего."""
+    return _examples("correction", CORRECTION_EXAMPLES, user_key, personal, with_portion=True)
+
+
+def food_examples(user_key: int = 0, personal: Sequence[str] = ()) -> list[str]:
+    """Примеры описания еды словами; личный — название как оно записано."""
+    return _examples("food", FOOD_EXAMPLES, user_key, personal, with_portion=False)
+
+
+def glucose_examples(user_key: int = 0) -> list[str]:
+    """Сахар — числа, а не имена: подмешивать из словаря нечего."""
+    return _examples("glucose", GLUCOSE_EXAMPLES, user_key, (), with_portion=False)
+
+
+def items_example(user_key: int = 0, personal: Sequence[str] = ()) -> str:
+    """Строка «продукт и граммы через запятую» для ручного ввода состава."""
+    tick = _tick("items", user_key)
+    if len(personal) >= 2 and _personal_share(tick):
+        index = tick // 2
+        return ", ".join(
+            f"{label} {PERSONAL_PORTIONS[(index + shift) % len(PERSONAL_PORTIONS)]}"
+            for shift, label in enumerate(personal[:3])
+        )
+    return _rotate(ITEMS_EXAMPLES, tick)[0]
+
+
+DISH_EXAMPLES: tuple[tuple[str, ...], ...] = (
+    ("овсянка",),
+    ("гречка",),
+    ("творог",),
+    ("рис",),
+)
+
+
+def dish_example(user_key: int = 0, personal: Sequence[str] = ()) -> str:
+    """Название блюда для примера с БЖУ — своё, если оно есть в словаре."""
+    return _examples("dish", DISH_EXAMPLES, user_key, personal, with_portion=False)[-1]
+
+
+def macros_prompt(dish: str | None = None) -> str:
+    return (
+        "✏️ <b>БЖУ</b>\n"
+        "Напишите или наговорите числа — например:\n"
+        "<code>б 12 ж 6 у 40</code> — если блюдо одно;\n"
+        f"<code>{dish or dish_example()} 200 г б 12 ж 6 у 40 292 ккал</code> — "
+        "если блюд несколько.\n"
+        "Числа — на съеденную порцию. Ккал можно не называть: посчитаю сам.\n"
+        "Запомню их за этим блюдом и в следующий раз подставлю без оценки."
+    )
+
+
+def macros_retry(dish: str | None = None) -> str:
+    return (
+        "Не понял числа. Напишите, например: <code>б 12 ж 6 у 40</code> "
+        f"или <code>{dish or dish_example()} 200 г б 12 ж 6 у 40</code>."
+    )
+
+
+def quoted(examples: Sequence[str]) -> str:
+    return ", ".join(f"«{example}»" for example in examples)
+
+
 # ------------------------------------------------------------------ meals
 
-CORRECTION_HINT = (
-    "Скорректировать можно текстом или голосовым: «убери салат», "
-    "«гречки было 250», «вместо курицы индейка»."
-)
+
+def correction_hint(examples: Sequence[str] | None = None) -> str:
+    return (
+        "Скорректировать можно текстом или голосовым: "
+        f"{quoted(examples or correction_examples())}."
+    )
+
+
+def correction_retry(examples: Sequence[str] | None = None) -> str:
+    return f"Не понял правку. Скажите проще — {quoted(examples or correction_examples())}."
+
+
+def describe_food_hint(examples: Sequence[str] | None = None) -> str:
+    return f"Можно описать словами — {quoted(examples or food_examples())}."
+
+
+def describe_food_retry(examples: Sequence[str] | None = None) -> str:
+    return (
+        f"Не понял, что записать. Опишите еду ({quoted(examples or food_examples())}) "
+        "или пришлите фото."
+    )
+
+
+def glucose_prompt(examples: Sequence[str] | None = None) -> str:
+    return (
+        "🩸 Пришлите скриншот CGM/глюкометра или напишите значение — "
+        f"{quoted(examples or glucose_examples())}."
+    )
+
+
+def glucose_hint(examples: Sequence[str] | None = None) -> str:
+    return f"Напишите значение текстом — {quoted(examples or glucose_examples())}."
+
+
+def meal_edit_prompt(sample: str | None = None) -> str:
+    return (
+        "Напишите, что поправить — например:\n"
+        f"<code>{sample or items_example()}</code>\n"
+        "Формат: продукт и граммы через запятую."
+    )
 
 
 def _applied_block(applied: list[str] | None) -> list[str]:
@@ -60,7 +243,10 @@ def format_meal_draft(
     *,
     eaten_at: datetime | None = None,
     applied: list[str] | None = None,
+    examples: Sequence[str] | None = None,
 ) -> str:
+    """`examples` — примеры правки для подсказки под карточкой; без них берётся
+    очередной вариант из общего пула (`spec/bot.md` § Примеры в подсказках)."""
     totals = draft.totals()
     lines = [f"🍽 <b>{draft.title or 'Приём пищи'}</b>"]
     if eaten_at:
@@ -99,7 +285,7 @@ def format_meal_draft(
     lines.extend(_applied_block(applied))
     lines.append("")
     lines.append("Всё верно?")
-    lines.append(f"<i>{CORRECTION_HINT}</i>")
+    lines.append(f"<i>{correction_hint(examples)}</i>")
     return "\n".join(lines)
 
 
@@ -865,12 +1051,27 @@ def format_workouts(rows: list[tuple[datetime, str, float | None, float | None]]
 __all__ = [
     "BODY_DISCLAIMER",
     "CONFIDENCE_LABEL",
-    "CORRECTION_HINT",
     "DISCLAIMER",
     "LAB_ADVICE_DISCLAIMER",
     "PLATE_OFF_HINT",
     "PLATE_RULE",
     "WEIGHT_PROMPT",
+    "correction_examples",
+    "correction_hint",
+    "correction_retry",
+    "describe_food_hint",
+    "describe_food_retry",
+    "food_examples",
+    "glucose_examples",
+    "glucose_hint",
+    "glucose_prompt",
+    "dish_example",
+    "items_example",
+    "macros_prompt",
+    "macros_retry",
+    "meal_edit_prompt",
+    "quoted",
+    "reset_examples",
     "format_activity",
     "format_body_card",
     "format_cgm_summary",

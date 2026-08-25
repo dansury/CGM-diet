@@ -967,6 +967,33 @@ async def list_dictionary(
     return list(await session.scalars(stmt))
 
 
+async def example_labels(
+    session: AsyncSession,
+    user: User,
+    *,
+    kinds: Sequence[str] = ("item", "meal"),
+    limit: int = 5,
+) -> list[str]:
+    """Названия из личного словаря — сырьё для примеров в подсказках.
+
+    Тот же порядок ротации, что и у подсказок словаря: недавнее впереди.
+    Лекарства и симптомы сюда не идут — примером «как записать еду» они быть
+    не могут (`spec/dictionary.md` § Примеры в подсказках).
+    """
+    rows = await session.scalars(
+        select(DictionaryEntry)
+        .where(
+            DictionaryEntry.user_id == user.id,
+            DictionaryEntry.is_active.is_(True),
+            DictionaryEntry.kind.in_(tuple(kinds)),
+            _visible(),
+        )
+        .order_by(*_order())
+        .limit(limit)
+    )
+    return [row.label for row in rows]
+
+
 async def get_dictionary_entry(
     session: AsyncSession, user: User, entry_id: int
 ) -> DictionaryEntry | None:
@@ -1456,6 +1483,7 @@ def day_bounds(now: datetime, *, days: int = 1) -> datetime:
 
 __all__ = [
     "DICTIONARY_KINDS",
+    "example_labels",
     "MIN_HITS",
     "SEED_SYMPTOMS",
     "all_settings",

@@ -8,6 +8,7 @@ from aiogram import Router
 def build_router() -> Router:
     from src.handlers import (
         admin,
+        admin_users,
         body,
         common,
         confirm,
@@ -26,6 +27,7 @@ def build_router() -> Router:
 
     root = Router(name="root")
     root.include_router(admin.router)  # owner-only, filtered; falls through otherwise
+    root.include_router(admin_users.router)  # owner-only /users
     root.include_router(common.router)
     root.include_router(onboarding.router)
     root.include_router(reports.router)

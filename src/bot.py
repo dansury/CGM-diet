@@ -58,6 +58,11 @@ def build_bot(settings: Settings | None = None) -> Bot:
 
 def build_dispatcher() -> Dispatcher:
     dispatcher = Dispatcher(storage=MemoryStorage())
+    # user_tracking first: the registry middleware runs on every update, and its
+    # my_chat_member router must see private chat events before anything else.
+    from src.handlers.user_tracking import register as register_user_tracking
+
+    register_user_tracking(dispatcher)
     dispatcher.include_router(build_router())
     return dispatcher
 

@@ -143,11 +143,14 @@ def test_the_text_stays_a_proportion_never_a_verdict():
         [meal(0, [plate.PlateItem("салат", 250, ["vegetable"])])], window_min=60
     )[0]
     rhythm = plate.measure_rhythm([])
-    text = format_plate_advice(
-        plate.advise(current=current, day_sessions=[current], rhythm=rhythm)
-    )
+    advice = plate.advise(current=current, day_sessions=[current], rhythm=rhythm)
+    text = format_plate_advice(advice)
     assert "Тарелка" in text
-    assert "/set plate off" in text
+    assert "/plate" in text
+    assert "/set plate off" not in text
+    first_text = format_plate_advice(advice, with_rule=True)
+    assert "/set plate off" in first_text
+    assert "Гарвардская тарелка" in first_text
     for forbidden in ("норм", "диагноз", "нельзя", "вредно"):
         assert forbidden not in text.lower()
 
@@ -224,3 +227,37 @@ def test_even_proportions_need_no_advice():
     assert plate.is_balanced(even)
     skewed = plate.score_items([plate.PlateItem("картошка", 500, ["potato"])])
     assert not plate.is_balanced(skewed)
+
+
+def test_gap_recommendations_are_rounded_to_50g():
+    from src.reporting import _round_gap_50
+
+    # protein/veg round up
+    assert _round_gap_50("protein", 125) == 150
+    assert _round_gap_50("veg", 188) == 200
+    assert _round_gap_50("veg", 100) == 100
+    assert _round_gap_50("protein", 51) == 100
+    # grain/fruit round down
+    assert _round_gap_50("grain", 125) == 100
+    assert _round_gap_50("fruit", 62) == 50
+    assert _round_gap_50("grain", 49) == 0
+
+
+def test_advice_text_shows_rounded_gaps():
+    current = plate.group_sessions(
+        [meal(0, [plate.PlateItem("гречка", 200, ["whole_grain"])])], window_min=60
+    )[0]
+    rhythm = plate.Rhythm(
+        meals_per_day=3,
+        meals_source="default",
+        session_min=60,
+        session_source="default",
+        meal_mass_g=500,
+        mass_source="default",
+    )
+    advice = plate.advise(current=current, day_sessions=[current], rhythm=rhythm)
+    text = format_plate_advice(advice)
+    # veg gap is 188 -> ceil to 200
+    assert "+200 г" in text
+    # protein gap is 125 -> ceil to 150
+    assert "+150 г" in text

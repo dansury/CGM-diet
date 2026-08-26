@@ -347,6 +347,34 @@ def symptom_picker(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def plate_settings(*, enabled: bool) -> InlineKeyboardMarkup:
+    """Buttons under /plate: toggle and meals-per-day."""
+    toggle = (
+        InlineKeyboardButton(text="Выключить", callback_data="plt:off")
+        if enabled
+        else InlineKeyboardButton(text="Включить", callback_data="plt:on")
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [toggle],
+            [InlineKeyboardButton(text="Количество приёмов пищи", callback_data="plt:meals")],
+        ]
+    )
+
+
+def plate_meals_picker(*, current: int | None) -> InlineKeyboardMarkup:
+    """Sub-menu: edit meals count or switch to auto."""
+    mark_edit = f"✏️ {current}" if current else "✏️ 3"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=mark_edit, callback_data="plt:medit"),
+                InlineKeyboardButton(text="✨ Автоматически", callback_data="plt:mauto"),
+            ],
+        ]
+    )
+
+
 def stats_windows(active: str = "1h") -> InlineKeyboardMarkup:
     def mark(window: str, text: str) -> str:
         return f"• {text}" if window == active else text
@@ -618,6 +646,8 @@ __all__ = [
     "onboarding_sex_picker",
     "onboarding_skip",
     "photo_kind",
+    "plate_meals_picker",
+    "plate_settings",
     "pregnancy_picker",
     "product_actions",
     "rate_picker",

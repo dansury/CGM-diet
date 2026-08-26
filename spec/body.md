@@ -9,7 +9,8 @@
 
 ```
 body_profile   id user_id* height_cm birth_year sex(m|f|null) activity(sedentary|light|
-               moderate|high|athlete) weight_prompt_days last_weight_prompt_at updated_at
+               moderate|high|athlete) pregnant(bool|null) conditions(text|null)
+               weight_prompt_days last_weight_prompt_at updated_at
                -- uq(user_id)
 body_goals     id user_id kind(lose|maintain|gain) target_weight_kg start_weight_kg
                rate_kg_week target_kcal target_date started_at is_active
@@ -31,7 +32,8 @@ bmr(weight_kg, height_cm?, age?, sex?, body_fat_pct?) -> float|None
     # Кэтч-Макардл при известном проценте жира, иначе Миффлин–Сан-Жеор
 tdee(bmr_kcal, activity) -> float
 safe_rate_range(weight_kg, kind) -> (min_kg_week, max_kg_week)
-build_plan(profile, weight_kg, goal_kind, target_weight_kg, rate_kg_week?) -> EnergyPlan
+build_plan(profile, weight_kg, goal_kind, target_weight_kg, rate_kg_week?,
+    pregnant=False) -> EnergyPlan
 day_balance(target_kcal, consumed_kcal, burned_kcal) -> DayBalance
 weight_trend(series:[(at, kg)], window_days=14) -> WeightTrend|None
 merge_burn(workouts, samples) -> float    # ккал за день без двойного счёта
@@ -57,6 +59,7 @@ share (0..~2), over:bool`.
 | дефицит | не более 25 % от TDEE | клип `delta_kcal` |
 | нижний порог калорий | 1500 (м) / 1200 (ж) / 1200 при неизвестном поле | клип `target_kcal` |
 | ИМТ < 18.5 | цель на снижение не строится | `capped` + отказ |
+| беременность (`pregnant=True`) | цель на снижение не строится вовсе, независимо от ИМТ | `PlanImpossible("pregnant")` |
 
 Каждый сработавший клип попадает в `capped` и **обязан** быть показан
 пользователю: тихо урезать чужую цель нельзя.
@@ -66,11 +69,21 @@ share (0..~2), over:bool`.
 `day_balance` считает: `available = target + burned − consumed`.
 `share = consumed / (target + burned)`.
 
-Прогресс-бар (`reporting.format_day_progress`) показывается:
-- после каждого подтверждённого приёма пищи (`meal:ok`), если есть активная цель;
-- в `/body` и `/today`.
+`day_progress_text(session, user, now)` — единая точка: после каждого
+подтверждённого приёма пищи (`meal:ok`), после тренировки, после записи веса,
+в `/body` и `/today`.
+
+| Что есть | Что показываем |
+|---|---|
+| активная цель и `target_kcal` (из плана либо из цели) | `format_day_progress` — полоса, остаток, углеводы |
+| цели нет или коридор не посчитался, но за день что-то съедено/потрачено | `format_day_totals` — итог дня и подсказка завести цель (`/body`) |
+| за день ничего нет и цели нет | `None` |
 
 Полоса из 10 клеток: `▓` съедено, `░` остаток, `▒` перебор.
+
+Сбой расчёта коридора не имеет права съесть подтверждение записи: вызов в
+`handlers/confirm.py` и `handlers/workout.py` fail-soft — исключение пишется в
+лог, сообщение о записи уходит без полосы.
 
 ## Напоминание о взвешивании (`src/scheduler.py`)
 
@@ -99,14 +112,20 @@ share (0..~2), over:bool`.
 - фото весов/распечатки биоимпеданса: `recognize.recognize_body_photo`
   (`TASK: body_scale`), карточка → `bd:save`;
 - `/body` — карточка профиля и цели, поля правятся кнопками
-  (`BodyFlow.awaiting` + ключ `body_field`).
+  (`BodyFlow.awaiting` + ключ `body_field`);
+- беременность и особые состояния/заболевания задаются один раз при первом
+  запуске (`spec/onboarding.md`) и правятся позже кнопками `/body`:
+  `bd:field:pregnant` (кнопка видна только при `sex == "f"`) и
+  `bd:field:conditions` (свободный текст, `body.normalize_conditions`
+  сворачивает «нет»/пусто в `None` — не хранить отсутствие состояния как текст).
 
 ## Клавиатуры и callback
 
 ```
 bd:menu|weight|goal|chart|close
-bd:field:<height|age|sex|activity|weight|goal>
+bd:field:<height|age|sex|activity|weight|goal|pregnant|conditions>
 bd:sex:<m|f>          bd:act:<sedentary|light|moderate|high|athlete>
+bd:preg:<y|n>
 bd:rate:<кг/нед ×100, целое>       # 25 → 0.25 кг/нед; целевой вес лежит в FSM
 bd:save                            # карточка замера с фото; отмена — общий x:cancel
 ```
@@ -116,6 +135,7 @@ bd:save                            # карточка замера с фото; 
 ```
 format_body_card(profile?, last?, goal?, plan?, trend?, bmi_value?, bmi_note?, age?) -> str
 format_day_progress(balance, *, goal?, trend?) -> str
+format_day_totals(balance) -> str
 format_measurement_draft(draft) -> str
 format_goal_plan(plan, *, kind, target_weight_kg) -> str
 format_weight_saved(weight, previous?, goal?) -> str

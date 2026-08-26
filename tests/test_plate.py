@@ -155,6 +155,80 @@ def test_the_text_stays_a_proportion_never_a_verdict():
         assert forbidden not in text.lower()
 
 
+def test_a_coffee_or_a_handful_of_nuts_is_not_a_plate():
+    assert not plate.is_meal([plate.PlateItem("кофе с молоком", 200, ["milk"])])
+    assert not plate.is_meal([plate.PlateItem("орехи", 40, ["nuts"])])
+    assert plate.is_meal(
+        [
+            plate.PlateItem("гречка", 150, ["whole_grain"]),
+            plate.PlateItem("курица", 120, ["protein"]),
+        ]
+    )
+    # масса перекуса в счёт не идёт: еды здесь всё ещё мало
+    assert not plate.is_meal(
+        [
+            plate.PlateItem("кофе", 300, ["milk"]),
+            plate.PlateItem("яблоко", 100, ["fruit"]),
+        ]
+    )
+
+
+def test_a_snack_joins_the_plate_when_a_meal_lands_next_to_it():
+    sessions = plate.group_sessions(
+        [
+            meal(0, [plate.PlateItem("кофе", 200, ["milk"])]),
+            meal(
+                20,
+                [
+                    plate.PlateItem("салат", 200, ["vegetable"]),
+                    plate.PlateItem("курица", 150, ["protein"]),
+                ],
+            ),
+        ],
+        window_min=60,
+    )
+    assert len(sessions) == 1
+    assert plate.is_meal(sessions[0].items)
+    assert plate.score_items(sessions[0].items).grams["extra"] == 200
+
+
+def test_a_lonely_snack_is_not_counted_as_a_meal_of_the_day():
+    snack = plate.group_sessions([meal(0, [plate.PlateItem("кофе", 200, ["milk"])])], window_min=60)
+    lunch = plate.group_sessions(
+        [
+            meal(
+                180,
+                [
+                    plate.PlateItem("гречка", 200, ["whole_grain"]),
+                    plate.PlateItem("курица", 200, ["protein"]),
+                ],
+            )
+        ],
+        window_min=60,
+    )
+    advice = plate.advise(
+        current=lunch[0],
+        day_sessions=[*snack, *lunch],
+        rhythm=plate.measure_rhythm([]),
+    )
+    assert advice.meals_done == 1
+    assert advice.meals_left == 2
+
+
+def test_even_proportions_need_no_advice():
+    even = plate.score_items(
+        [
+            plate.PlateItem("салат", 300, ["vegetable"]),
+            plate.PlateItem("яблоко", 100, ["fruit"]),
+            plate.PlateItem("гречка", 200, ["whole_grain"]),
+            plate.PlateItem("курица", 200, ["protein"]),
+        ]
+    )
+    assert plate.is_balanced(even)
+    skewed = plate.score_items([plate.PlateItem("картошка", 500, ["potato"])])
+    assert not plate.is_balanced(skewed)
+
+
 def test_gap_recommendations_are_rounded_to_50g():
     from src.reporting import _round_gap_50
 

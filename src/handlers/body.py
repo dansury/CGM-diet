@@ -27,6 +27,7 @@ from src.keyboards import (
     body_menu,
     cancel_only,
     confirm_measurement,
+    pregnancy_picker,
     rate_picker,
     sex_picker,
 )
@@ -34,6 +35,7 @@ from src.logging_setup import get_logger
 from src.reporting import (
     format_body_card,
     format_day_progress,
+    format_day_totals,
     format_goal_plan,
     format_measurement_draft,
     format_weight_saved,
@@ -60,7 +62,17 @@ PROMPTS = {
     "height": "📏 Ваш рост в сантиметрах — например «178».",
     "age": "🎂 Сколько вам полных лет?",
     "goal": "🎯 Какой вес хотите видеть на весах? Напишите число — «75».",
+    "conditions": (
+        "🩺 Есть ли у вас особые состояния или заболевания, которые стоит учитывать "
+        "(диабет, заболевания почек, беременность и т.п.)? Опишите словами или "
+        "напишите «нет». Это не заменяет визит к врачу, но я не буду предлагать "
+        "снижение веса, если оно опасно."
+    ),
 }
+
+# Поля, где ждём текст как есть, а не число (`on_value` не гонит их через
+# `_first_number`).
+TEXT_FIELDS = {"conditions"}
 
 
 # ------------------------------------------------------------------ /body
@@ -69,8 +81,8 @@ PROMPTS = {
 @router.message(F.text == "⚖️ Вес и цель")
 async def cmd_body(message: Message, state: FSMContext) -> None:
     await state.clear()
-    text, has_goal = await _body_card(message.chat.id)
-    await message.answer(text, reply_markup=body_menu(has_goal=has_goal))
+    text, has_goal, show_pregnancy = await _body_card(message.chat.id)
+    await message.answer(text, reply_markup=body_menu(has_goal=has_goal, show_pregnancy=show_pregnancy))
 
 
 @router.message(Command("weight"))
@@ -78,7 +90,7 @@ async def cmd_weight(message: Message, state: FSMContext) -> None:
     await _ask_field(message, state, "weight")
 
 
-async def _body_card(tg_id: int) -> tuple[str, bool]:
+async def _body_card(tg_id: int) -> tuple[str, bool, bool]:
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, tg_id)
         profile = await repo.get_body_profile(session, user)
@@ -103,7 +115,7 @@ async def _body_card(tg_id: int) -> tuple[str, bool]:
         bmi_note=body_math.bmi_category(value),
         age=age,
     )
-    return text, goal is not None
+    return text, goal is not None, bool(profile and profile.sex == "f")
 
 
 async def _plan_for(session, user: User, *, weight_kg: float | None = None) -> body_math.EnergyPlan | None:
@@ -125,6 +137,7 @@ async def _plan_for(session, user: User, *, weight_kg: float | None = None) -> b
             sex=profile.sex if profile else None,
             activity=profile.activity if profile else None,
             body_fat_pct=last.body_fat_pct if last else None,
+            pregnant=bool(profile.pregnant) if profile else False,
             today=local_now(user).date(),
         )
     except body_math.PlanImpossible:
@@ -134,17 +147,15 @@ async def _plan_for(session, user: User, *, weight_kg: float | None = None) -> b
 # ------------------------------------------------------------------ прогресс
 
 async def day_progress_text(session, user: User, *, now: datetime) -> str | None:
-    """Полоса дневного коридора — то, что показывается после каждого приёма пищи.
+    """Итог дня — то, что показывается после каждого приёма пищи.
 
-    `None`, если цели нет: без неё «73 % нормы» ничего не значит.
+    С целью — полоса коридора и остаток; без цели «73 % нормы» ничего не
+    значит, поэтому остаются только съеденные калории и подсказка завести цель.
+    `None` — когда за день нечего показать (`spec/body.md` § Дневной коридор).
     """
     goal = await repo.get_active_goal(session, user)
-    if goal is None:
-        return None
-    plan = await _plan_for(session, user)
-    target = plan.target_kcal if plan else goal.target_kcal
-    if not target:
-        return None
+    plan = await _plan_for(session, user) if goal is not None else None
+    target = (plan.target_kcal if plan else None) or (goal.target_kcal if goal else None)
     start_local = now.replace(hour=0, minute=0, second=0, microsecond=0)
     totals = await repo.day_energy(
         session,
@@ -152,6 +163,12 @@ async def day_progress_text(session, user: User, *, now: datetime) -> str | None
         start=to_utc(start_local, user),
         end=to_utc(start_local + timedelta(days=1), user),
     )
+    if not target:
+        # Цели нет (или коридор не посчитался) — но съеденное за день человек
+        # вправе видеть всегда; процентов и остатка без цели не показываем.
+        if not totals["consumed_kcal"] and not totals["burned_kcal"]:
+            return None
+        return format_day_totals(body_math.day_balance(target_kcal=0.0, **totals))
     balance = body_math.day_balance(target_kcal=target, **totals)
     series = [
         (to_local(row.measured_at, user), row.weight_kg)
@@ -173,8 +190,10 @@ async def on_close(callback: CallbackQuery) -> None:
 async def on_menu(callback: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await callback.answer()
-    text, has_goal = await _body_card(callback.from_user.id)
-    await callback.message.answer(text, reply_markup=body_menu(has_goal=has_goal))
+    text, has_goal, show_pregnancy = await _body_card(callback.from_user.id)
+    await callback.message.answer(
+        text, reply_markup=body_menu(has_goal=has_goal, show_pregnancy=show_pregnancy)
+    )
 
 
 @router.callback_query(F.data.in_({"bd:weight", "bd:goal"}))
@@ -191,6 +210,9 @@ async def on_field(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.message.answer(
             "🏃 Насколько подвижен ваш обычный день?", reply_markup=activity_picker()
         )
+        return
+    if field == "pregnant":
+        await callback.message.answer("🤰 Сейчас беременны?", reply_markup=pregnancy_picker())
         return
     await _ask_field(callback.message, state, field)
 
@@ -210,6 +232,19 @@ async def on_sex(callback: CallbackQuery) -> None:
     await callback.answer("Записал")
     await callback.message.edit_text(
         "⚧ Пол: " + ("мужской" if sex == "m" else "женский") + ". Открыть /body."
+    )
+
+
+@router.callback_query(F.data.startswith("bd:preg:"))
+async def on_pregnant(callback: CallbackQuery) -> None:
+    pregnant = callback.data.split(":")[2] == "y"
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, callback.from_user.id)
+        await repo.upsert_body_profile(session, user, pregnant=pregnant)
+    await callback.answer("Записал")
+    await callback.message.edit_text(
+        ("🤰 Беременность отмечена." if pregnant else "Беременность не отмечена.")
+        + " Открыть /body."
     )
 
 
@@ -253,6 +288,13 @@ async def on_value(message: Message, state: FSMContext, *, text_override: str | 
     text = (text_override or message.text or "").strip()
     data = await state.get_data()
     field = data.get(FIELD_KEY) or "weight"
+    if field in TEXT_FIELDS:
+        await state.clear()
+        async with session_scope() as session:
+            user = await repo.get_or_create_user(session, message.chat.id)
+            await repo.upsert_body_profile(session, user, conditions=normalize_conditions(text))
+        await message.answer("🩺 Записал.", reply_markup=await menu_of(message.chat.id))
+        return
     value = _first_number(text)
     if value is None:
         await message.answer("Нужно число. Например: «82,4».", reply_markup=cancel_only())
@@ -285,6 +327,17 @@ async def on_value(message: Message, state: FSMContext, *, text_override: str | 
         else:
             answer = "Не понял, какое поле заполняем. Откройте /body."
     await message.answer(answer, reply_markup=await menu_of(message.chat.id))
+
+
+_NO_CONDITIONS = {"нет", "нету", "не", "no", "none", "-", "здоров", "здорова"}
+
+
+def normalize_conditions(text: str) -> str | None:
+    """«Нет» и подобное — не состояние, а его отсутствие: не хранить как текст."""
+    cleaned = (text or "").strip()
+    if not cleaned or cleaned.lower().strip(".! ") in _NO_CONDITIONS:
+        return None
+    return cleaned
 
 
 def _first_number(text: str) -> float | None:
@@ -349,9 +402,16 @@ async def _save_goal(tg_id: int, *, target_weight_kg: float, rate: float) -> str
                 sex=profile.sex if profile else None,
                 activity=profile.activity if profile else None,
                 body_fat_pct=last.body_fat_pct if last else None,
+                pregnant=bool(profile.pregnant) if profile else False,
                 today=now.date(),
             )
-        except body_math.PlanImpossible:
+        except body_math.PlanImpossible as exc:
+            reason = exc.args[0] if exc.args else ""
+            if reason == "pregnant":
+                return (
+                    "При беременности цель на снижение веса я не строю — это вопрос "
+                    "к врачу, который ведёт беременность, а не к калькулятору."
+                )
             return (
                 "При вашем росте и весе ИМТ уже ниже нормального диапазона, поэтому "
                 "цель на снижение я не строю. Такой вопрос стоит обсуждать с врачом."

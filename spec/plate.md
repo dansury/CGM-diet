@@ -26,6 +26,9 @@ PlateAdvice(score, now[Gap], day_gaps[Gap], meals_done, meals_left, rhythm)
 
 ```
 classify(item)->category                     # теги → категория, иначе infer_tags(name)
+core_mass_g(items)->float                    # масса категорий CORE_CATEGORIES
+is_meal(items)->bool                         # core_mass_g >= MEAL_MIN_CORE_G
+is_balanced(score)->bool                     # score.score >= BALANCED_SCORE
 score_items(items)->PlateScore               # score = 100·Σmin(share,target)/Σtarget
 session_window_min(meals, default=60)->int   # медиана разрывов ≤150 мин, [30..120]
 group_sessions(meals, window_min)->[MealSession]
@@ -37,13 +40,29 @@ advise(current, day_sessions, rhythm)->PlateAdvice
 
 Константы: `DEFAULT_SESSION_MIN=60`, `DEFAULT_MEALS_PER_DAY=3`,
 `MIN/MAX_MEALS_PER_DAY=2/8`, `MIN_DAYS_FOR_RHYTHM=5`,
-`DEFAULT_MEAL_MASS_G=500`, `FALLBACK_PORTION_G=100`, `MIN_GAP_G=30`.
+`DEFAULT_MEAL_MASS_G=500`, `FALLBACK_PORTION_G=100`, `MIN_GAP_G=30`,
+`CORE_CATEGORIES=(veg, fruit, grain, protein, refined)`, `MEAL_MIN_CORE_G=200`,
+`BALANCED_SCORE=80`.
 
 ## Приём пищи как серия
 
 Обед из нескольких блюд — это одна тарелка. Записи, идущие подряд с разрывом не
 больше `session_min`, склеиваются в `MealSession`. `session_min` — час по
 умолчанию и собственное среднее время еды, когда истории хватает.
+
+## Когда показываем
+
+Разбор тарелки выходит после записи, только если выполнено всё:
+
+1. текущая сессия — блюдо, а не перекус: `is_meal(items)`, т.е. в ней не
+   меньше `MEAL_MIN_CORE_G` г еды из `CORE_CATEGORIES` (кофе, орехи, молоко,
+   сладкие напитки — категория `extra`, в счёт не идут);
+2. пропорции разошлись: `not is_balanced(score)`.
+
+Перекус сам по себе не оценивается и молча ждёт: если существенная еда
+попадает в то же окно `session_min`, `group_sessions` склеивает их — и перекус
+входит в состав уже настоящей тарелки. Перекус, оставшийся сам по себе, не
+считается приёмом пищи в `meals_done`, но его граммы идут в дневной итог.
 
 ## Сколько приёмов пищи в день
 
@@ -71,7 +90,8 @@ advise(current, day_sessions, rhythm)->PlateAdvice
 ## Поток (`src/handlers/plate.py`)
 
 ```
-plate_advice_text(session, user, now)->str|None   # None: выключено или сегодня пусто
+plate_advice_text(session, user, now)->str|None   # None: выключено, сегодня
+                                                  # пусто, перекус или баланс
 /plate -> format_plate_settings(...) + plate_settings(enabled) keyboard
 plt:on|off  -> toggle plate_enabled, refresh card
 plt:meals   -> plate_meals_picker sub-menu

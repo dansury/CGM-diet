@@ -16,7 +16,7 @@
 
 | Команда | Что делает | Файл |
 |---|---|---|
-| `/start` | регистрация, согласие, онбординг | `handlers/common.py` |
+| `/start` | регистрация, согласие, анкета о теле при первом запуске | `handlers/common.py`, `handlers/onboarding.py` |
 | `/my` | личный словарь всех сущностей: запись одной кнопкой | `handlers/dictionary.py` |
 | `/meds` | журнал лекарств + справка по побочкам | `handlers/meds.py` |
 | `/help` | подробная справка | `handlers/common.py` |
@@ -84,7 +84,8 @@ stats:w:<1h|2h> | stats:k:<tag|item> | stats:chart
 del:yes|no                     hs:how|keys|app|menu
 feat:ok:<key>|no:<key>|show:<key>|close
 bd:menu|profile|weight|goal|chart|close | bd:field:<name> | bd:sex:<m|f>
-bd:act:<level> | bd:rate:<кг/нед ×100> | bd:save|bd:drop
+bd:act:<level> | bd:rate:<кг/нед ×100> | bd:save|bd:drop | bd:preg:<y|n>
+onb:skip | onb:sex:<m|f> | onb:preg:<y|n>   # анкета при первом запуске
 wo:ok|edit|time|hr|drop | wo:dur:<мин|other> | wo:int:<low|moderate|high>
 wo:sweat:<yes|light|no>
 ```
@@ -103,6 +104,7 @@ MedicationFlow.confirming|editing|retiming
 WellbeingFlow.scoring|picking|free_text
 BodyFlow.awaiting              # какое поле ждём — в ключе `body_field`
 BodyFlow.confirming            # карточка замера с фото весов
+OnboardingFlow.asking          # анкета при первом запуске — `spec/onboarding.md`
 WorkoutFlow.confirming|asking|editing|retiming|awaiting_hr
 SettingsFlow.editing
 ```
@@ -110,16 +112,18 @@ SettingsFlow.editing
 Ключи данных: `draft`, `draft_files`, `eaten_at`, `taken_at`, `draft_mode`,
 `pending_mode`, `pending_photos`, `wb_selected`, `wb_score`, `wb_extra`,
 `wb_note`, `dict_pending`, `mdl_candidates`, `mdl_target`, `body_field`,
-`wo_pending`, `started_at`.
+`wo_pending`, `started_at`, `onb_step`, `onb_queue`.
 
 ## Порядок роутеров (`src/handlers/__init__.py`)
 
-`admin → common → reports → features → plate → labs → wellbeing → body →
-workout → dictionary → meds → confirm → intake → errors`.
+`admin → common → onboarding → reports → features → plate → labs →
+wellbeing → body → workout → dictionary → meds → confirm → intake → errors`.
 `admin` первый и полностью отфильтрован (владелец + личка): чужому апдейту он
-просто не соответствует и тот идёт дальше. `intake` предпоследний: он ловит
-любой текст и любое фото. `errors` — наблюдатель `router.errors`, обработчиков
-сообщений не содержит.
+просто не соответствует и тот идёт дальше. `onboarding` сразу после `common`,
+чтобы анкета первого запуска перехватывала ответы раньше catch-all'ов
+(`spec/onboarding.md`). `intake` предпоследний: он ловит любой текст и любое
+фото. `errors` — наблюдатель `router.errors`, обработчиков сообщений не
+содержит.
 
 ## Плумбинг (`src/handlers/deps.py`)
 
@@ -170,8 +174,14 @@ sha256(data)
 (`dictionary.offer_suggestions` — подсказки по первым буквам, запись одной
 кнопкой, модель не зовётся) и только потом в `parse_meal_text`.
 
-**Правка:** любая карточка → `✏️ Скорректировать` → текст или голосовое →
-слияние с распознаванием (`spec/ingest.md` § Корректировки). Введённые в правке
+**Анкета первого запуска:** `/start` (первый раз) → возраст → рост → вес →
+пол → (женский → беременность) → особые состояния → цель, каждый шаг можно
+пропустить; фото вместо ответа завершает анкету и уходит в обычную
+классификацию фото (`spec/onboarding.md`).
+
+**Правка:** любая карточка → `✏️ Скорректировать` → текст, голосовое или (для
+еды) фото → слияние с распознаванием (`spec/ingest.md` § Корректировки).
+Введённые в правке
 БЖУ («овсянка 200 г б 12 ж 6 у 40») запоминаются за блюдом, о чём бот сообщает
 отдельным сообщением «📌 Запомнил ваши БЖУ …» — так же, как и БЖУ, названные
 сразу во вводе (`spec/dictionary.md` § Память БЖУ).

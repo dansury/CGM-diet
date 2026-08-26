@@ -326,30 +326,37 @@ async def recognize_labs(
 # ---------------------------------------------------------------- wellbeing
 
 async def correct_meal(
-    draft: MealDraft, instruction: str, *, client: LLMClient | None = None
+    draft: MealDraft,
+    instruction: str = "",
+    *,
+    images: list[ImagePart] | None = None,
+    client: LLMClient | None = None,
 ) -> MealDraft:
     """Model-side correction: the draft goes in, a corrected draft comes out.
 
-    Only reached for wording the deterministic pass in `ingest/correction.py`
-    could not place. The model is given the current items so it edits them
-    instead of re-recognising the photo from scratch.
+    Reached for wording the deterministic pass in `ingest/correction.py` could
+    not place, or when the correction itself is a photo (an angle the first
+    shot missed, an extra dish) rather than words — `images` carries that photo
+    straight to the model alongside the current draft (`spec/ingest.md` §
+    Корректировки). Either way the model edits the existing items instead of
+    re-recognising the meal from scratch.
     """
     import json
 
     from src.vision.schemas import meal_to_dict
 
     client = client or get_client()
-    prompt = (
-        prompts.MEAL_CORRECTION
-        + "\nТекущий приём пищи:\n"
-        + json.dumps(meal_to_dict(draft), ensure_ascii=False)
-        + "\nУточнение пользователя:\n"
-        + instruction
+    prompt = prompts.MEAL_CORRECTION + "\nТекущий приём пищи:\n" + json.dumps(
+        meal_to_dict(draft), ensure_ascii=False
     )
-    payload = await _ask_json(client, prompt=prompt)
+    if instruction:
+        prompt += "\nУточнение пользователя:\n" + instruction
+    if images:
+        prompt += "\nПользователь прислал фото — используйте его, чтобы дополнить или исправить приём пищи."
+    payload = await _ask_json(client, prompt=prompt, images=images)
     if not isinstance(payload, dict) or not payload.get("items"):
         raise RecognitionError("не понял правку")
-    corrected = _meal_from_payload(payload, source=draft.source, raw_text=instruction)
+    corrected = _meal_from_payload(payload, source=draft.source, raw_text=instruction or None)
     corrected.confidence = 1.0
     corrected.notes = "учтена ваша правка"
     return corrected

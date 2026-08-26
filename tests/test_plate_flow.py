@@ -70,20 +70,36 @@ def state() -> FSMContext:
     )
 
 
-async def _confirm_meal(state: FSMContext) -> FakeMessage:
+async def _confirm_draft(state: FSMContext, draft: MealDraft) -> FakeMessage:
     from src.handlers import views
 
-    draft = MealDraft(
-        title="Гречка с курицей",
-        items=[
-            ItemDraft(name="гречка", portion_g=200, carbs_g=45, tags=["whole_grain"]),
-            ItemDraft(name="курица", portion_g=150, tags=["protein"]),
-        ],
-    )
     await views.show_meal_draft(FakeMessage(), state, draft)
     card = FakeMessage()
     await confirm.meal_ok(FakeCallback(data="meal:ok", message=card), state)
     return card
+
+
+async def _confirm_meal(state: FSMContext) -> FakeMessage:
+    return await _confirm_draft(
+        state,
+        MealDraft(
+            title="Гречка с курицей",
+            items=[
+                ItemDraft(name="гречка", portion_g=200, carbs_g=45, tags=["whole_grain"]),
+                ItemDraft(name="курица", portion_g=150, tags=["protein"]),
+            ],
+        ),
+    )
+
+
+async def _confirm_snack(state: FSMContext) -> FakeMessage:
+    return await _confirm_draft(
+        state,
+        MealDraft(
+            title="Кофе с молоком",
+            items=[ItemDraft(name="кофе с молоком", portion_g=200, tags=["milk"])],
+        ),
+    )
 
 
 async def test_the_plate_is_scored_right_after_the_meal_is_written(engine, session, state):
@@ -92,6 +108,36 @@ async def test_the_plate_is_scored_right_after_the_meal_is_written(engine, sessi
     assert "Тарелка" in written
     assert "овощи" in written
     assert "приём" in written.lower()
+
+
+async def test_a_snack_alone_says_nothing_about_the_plate(engine, session, state):
+    card = await _confirm_snack(state)
+    assert "Тарелка" not in card.texts[-1]
+
+
+async def test_a_snack_lands_in_the_plate_of_the_meal_that_follows(engine, session, state):
+    await _confirm_snack(state)
+    card = await _confirm_meal(state)
+    written = card.texts[-1]
+    assert "Тарелка" in written
+    # 200 г кофе с молоком вошли в состав той же тарелки
+    assert "прочее" in written
+
+
+async def test_an_even_plate_is_left_without_advice(engine, session, state):
+    card = await _confirm_draft(
+        state,
+        MealDraft(
+            title="Салат с курицей и гречкой",
+            items=[
+                ItemDraft(name="салат", portion_g=300, tags=["vegetable"]),
+                ItemDraft(name="яблоко", portion_g=100, tags=["fruit"]),
+                ItemDraft(name="гречка", portion_g=200, tags=["whole_grain"]),
+                ItemDraft(name="курица", portion_g=200, tags=["protein"]),
+            ],
+        ),
+    )
+    assert "Тарелка" not in card.texts[-1]
 
 
 async def test_the_plate_can_be_switched_off_in_settings(engine, session, state):

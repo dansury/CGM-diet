@@ -17,6 +17,7 @@ def build_router() -> Router:
         intake,
         labs,
         meds,
+        onboarding,
         plate,
         reports,
         wellbeing,
@@ -26,6 +27,7 @@ def build_router() -> Router:
     root = Router(name="root")
     root.include_router(admin.router)  # owner-only, filtered; falls through otherwise
     root.include_router(common.router)
+    root.include_router(onboarding.router)
     root.include_router(reports.router)
     root.include_router(features.router)
     root.include_router(plate.router)

@@ -677,12 +677,15 @@ PLATE_OFF_HINT = "Отключить оценку тарелки: <code>/set pla
 _PLATE_ORDER = ("veg", "fruit", "grain", "protein", "refined", "extra")
 
 
-def format_plate_score(score: PlateScore) -> str:
+def format_plate_score(score: PlateScore, *, with_score: bool = True) -> str:
     """Состав тарелки по массе — только доли, без оценок «правильно/нет»."""
     if score.mass_g <= 0:
         return ""
-    lines = [f"🥗 <b>Тарелка</b> — {score.score:.0f} из 100"]
-    lines.append(progress_bar(score.score / 100.0))
+    if with_score:
+        lines = [f"🥗 <b>Тарелка</b> — {score.score:.0f} из 100"]
+        lines.append(progress_bar(score.score / 100.0))
+    else:
+        lines = ["🥗 <b>Тарелка</b> /plate"]
     for category in _PLATE_ORDER:
         grams = score.grams.get(category)
         if not grams:
@@ -696,17 +699,34 @@ def format_plate_score(score: PlateScore) -> str:
     return "\n".join(lines)
 
 
+_ROUND_UP_CATEGORIES = {"veg", "protein"}
+
+
+def _round_gap_50(category: str, grams: float) -> int:
+    """Round gap to 50 g: protein/veg up, everything else down."""
+    import math
+
+    if category in _ROUND_UP_CATEGORIES:
+        return int(math.ceil(grams / 50.0)) * 50
+    return int(grams / 50.0) * 50
+
+
+def _format_gap(gap, *, round_50: bool) -> str:
+    g = _round_gap_50(gap.category, gap.grams) if round_50 else int(round(gap.grams))
+    return f"{category_label(gap.category)} +{g} г"
+
+
 def format_plate_advice(advice: PlateAdvice, *, with_rule: bool = False) -> str:
     """Что добрать в этот приём пищи и что остаётся на день.
 
     Рекомендация по питанию — она разрешена (`spec/clinical.md`), но говорит
     только о пропорциях тарелки и никогда о болезнях и «нормах» человека.
     """
-    parts = [format_plate_score(advice.score)]
+    parts = [format_plate_score(advice.score, with_score=with_rule)]
     rhythm = advice.rhythm
     if advice.now:
-        gaps = ", ".join(f"{category_label(gap.category)} +{gap.grams:.0f} г" for gap in advice.now)
-        parts.append(f"➕ <b>До полной тарелки:</b> {gaps}")
+        gaps = ", ".join(_format_gap(gap, round_50=True) for gap in advice.now)
+        parts.append(f"➕ До полной тарелки: {gaps}")
     else:
         parts.append("✅ Пропорции тарелки в этот приём пищи собраны.")
     source = {
@@ -721,16 +741,14 @@ def format_plate_advice(advice: PlateAdvice, *, with_rule: bool = False) -> str:
     )
     parts.append(tail)
     if advice.meals_left and advice.day_gaps:
-        rest = ", ".join(
-            f"{category_label(gap.category)} +{gap.grams:.0f} г" for gap in advice.day_gaps
-        )
+        rest = ", ".join(_format_gap(gap, round_50=True) for gap in advice.day_gaps)
         word = "приём" if advice.meals_left == 1 else "приёма"
-        parts.append(f"🗓 На оставшиеся {advice.meals_left} {word}: {rest}")
+        parts.append(f"🗓 На оставшиеся {advice.meals_left} {word}: {rest}.")
     elif not advice.day_gaps:
         parts.append("🗓 За день пропорции тарелки уже набраны.")
     if with_rule:
         parts.append(f"<i>{PLATE_RULE}</i>")
-    parts.append(f"<i>{PLATE_OFF_HINT}</i>")
+        parts.append(f"<i>{PLATE_OFF_HINT}</i>")
     return "\n".join(part for part in parts if part)
 
 
@@ -749,11 +767,6 @@ def format_plate_settings(
     lines.append(
         f"Один приём пищи — это все блюда подряд в течение {session_min} мин"
         + (" (по вашей статистике)" if session_min != 60 else "")
-    )
-    lines.append("")
-    lines.append(
-        "Изменить: <code>/set plate on|off</code>, "
-        "<code>/set meals 4</code>, <code>/set meals auto</code>"
     )
     return "\n".join(lines)
 

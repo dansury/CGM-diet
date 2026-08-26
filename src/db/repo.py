@@ -1373,13 +1373,14 @@ async def set_feature_status(
 
 async def mark_feature_used(
     session: AsyncSession, user: User, key: str, *, at: datetime | None = None
-) -> None:
-    """Возможностям без собственной строки в БД (график, статистика, выгрузка)
-    отметка обращения — единственный способ понять, что ими пользовались."""
+) -> bool:
+    """Mark a feature as used; return True on the very first use."""
     row = await _feature_row(session, user, key)
     if row.used_at is None:
         row.used_at = at or utcnow()
         await session.flush()
+        return True
+    return False
 
 
 async def users_due_for_hint(

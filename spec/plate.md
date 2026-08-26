@@ -56,11 +56,27 @@ advise(current, day_sessions, rhythm)->PlateAdvice
 `× meals_per_day`. `now` — чего не хватает в текущей тарелке, `day_gaps` — что
 остаётся на `meals_left` приёмов. Пробелы меньше 30 г не показываем.
 
+## Первый vs. последующие показы
+
+Первый показ (feature «plate» ещё не отмечена `used_at`): полный блок
+с полосой прогресса, `PLATE_RULE` и `PLATE_OFF_HINT`. Последующие: заголовок
+`🥗 Тарелка /plate` без полосы и без правила/подсказки.
+
+## Округление рекомендаций
+
+Пробелы в `➕` и `🗓` округляются до 50 г: белок и овощи — `ceil(g/50)*50`,
+остальные категории — `floor(g/50)*50`. Пробелы <30 г по-прежнему не
+показываются; после округления пробел 0 г тоже опускается.
+
 ## Поток (`src/handlers/plate.py`)
 
 ```
 plate_advice_text(session, user, now)->str|None   # None: выключено или сегодня пусто
-/plate -> format_plate_settings(...)              # что настроено и как менять
+/plate -> format_plate_settings(...) + plate_settings(enabled) keyboard
+plt:on|off  -> toggle plate_enabled, refresh card
+plt:meals   -> plate_meals_picker sub-menu
+plt:mauto   -> meals_per_day=NULL, refresh card
+plt:medit   -> hint /set meals N
 ```
 Вызов — из `confirm.meal_ok` после записи, в одном сообщении с полосой
 дневного коридора; любая ошибка оценки логируется и не отменяет запись
@@ -70,7 +86,7 @@ plate_advice_text(session, user, now)->str|None   # None: выключено и�
 
 ```
 PLATE_RULE ; PLATE_OFF_HINT
-format_plate_score(score)->str        # доли по массе + полоса
+format_plate_score(score, with_score=True)->str   # with_score=False: «Тарелка /plate»
 format_plate_advice(advice, with_rule=False)->str
 format_plate_settings(enabled, meals_per_day, measured, session_min)->str
 ```
@@ -82,4 +98,5 @@ format_plate_settings(enabled, meals_per_day, measured, session_min)->str
 ```
 /set plate on|off      # users.plate_enabled
 /set meals 2..8|auto   # users.meals_per_day, auto => NULL => по статистике
+/plate                 # inline-кнопки: Выключить/Включить, Количество приёмов
 ```

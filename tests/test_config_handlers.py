@@ -101,6 +101,7 @@ def test_router_tree_builds():
         "sleep",
         "features",
         "goals",
+        "sugar",
         "plate",
         "labs",
         "wellbeing",

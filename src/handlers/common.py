@@ -195,12 +195,14 @@ async def cmd_settings(message: Message) -> None:
             f"Напоминать взвеситься: раз в {days} дн.\n"
             f"Гарвардская тарелка: {'вкл' if user.plate_enabled else 'выкл'}\n"
             f"Наблюдение за сном: {'вкл' if user.sleep_presence_enabled else 'выкл'}\n"
+            f"Замер после еды: {'предлагать' if user.glucose_prompt_enabled else 'не предлагать'}\n"
             f"Приёмов пищи в день: {meals}\n\n"
             "Изменить: <code>/set tz Europe/Moscow</code>, "
             "<code>/set unit mg/dL</code>, <code>/set window1 45-90</code>, "
             "<code>/set window2 90-150</code>, <code>/set baseline 20</code>, "
             "<code>/set weighin 14</code>, <code>/set plate on|off</code>, "
-            "<code>/set meals 3|auto</code>, <code>/set sleep on|off</code>"
+            "<code>/set meals 3|auto</code>, <code>/set sleep on|off</code>, "
+            "<code>/set sugar on|off</code>"
         )
     await message.answer(text)
 
@@ -279,6 +281,16 @@ def _apply_setting(user, key: str, value: str) -> str:
         if value.lower() in {"off", "выкл", "нет", "0", "false"}:
             user.sleep_presence_enabled = False
             return "наблюдение за сном: выключено"
+        raise ValueError("нужно on или off")
+    if key == "sugar":
+        # Предложение прислать замер после каждой записи еды
+        # (`spec/onboarding.md` § Сахарный трек).
+        if value.lower() in {"on", "вкл", "да", "1", "true"}:
+            user.glucose_prompt_enabled = True
+            return "замер после еды: буду предлагать"
+        if value.lower() in {"off", "выкл", "нет", "0", "false"}:
+            user.glucose_prompt_enabled = False
+            return "замер после еды: больше не предлагаю"
         raise ValueError("нужно on или off")
     if key == "meals":
         from src.analytics.plate import MAX_MEALS_PER_DAY, MIN_MEALS_PER_DAY

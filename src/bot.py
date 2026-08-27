@@ -66,6 +66,11 @@ def build_dispatcher() -> Dispatcher:
     from src.handlers.user_tracking import register as register_user_tracking
 
     register_user_tracking(dispatcher)
+    # Журнал переписки для `/last_msg_…` (`spec/bot.md`): входящие пишутся
+    # здесь, исходящие — сессией бота в `prepare_runtime`.
+    from src.handlers.message_log import register as register_message_log
+
+    register_message_log(dispatcher)
     # Outer middleware: the appearance counts even when no handler matches —
     # the person was here, and that is the whole signal (`spec/sleep.md`).
     dispatcher.update.outer_middleware(PresenceMiddleware())
@@ -84,6 +89,10 @@ async def prepare_runtime(bot: Bot, settings: Settings) -> None:
     from src.errors_report import wire_error_reporter
 
     wire_error_reporter(bot, settings)
+
+    from src.handlers.message_log import LogOutgoingMiddleware
+
+    bot.session.middleware(LogOutgoingMiddleware())
 
     from src.handlers.admin import load_active_models
 

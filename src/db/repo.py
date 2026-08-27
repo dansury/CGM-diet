@@ -35,6 +35,7 @@ from src.db.models import (
     MealItem,
     MediaFile,
     Medication,
+    MessageLog,
     NutritionMemory,
     PresencePing,
     Product,
@@ -1432,6 +1433,76 @@ def product_item_name(draft: ProductDraft) -> str:
     return f"{brand} {name}".strip() if brand else name
 
 
+# ------------------------------------------------------------------ message log
+
+#: сколько последних строк переписки храним на пользователя
+LOG_KEEP = 100
+#: обрезка текста одного сообщения
+TEXT_LIMIT = 3000
+
+
+async def log_message(
+    session: AsyncSession,
+    user: User,
+    *,
+    direction: str,
+    kind: str = "text",
+    text: str | None = None,
+    buttons: list | None = None,
+) -> MessageLog:
+    """Одна строка переписки — для `/last_msg_…` (`spec/bot.md`).
+
+    Хвост подрезается тут же: журнал нужен, чтобы разобрать вчерашний разговор,
+    а не чтобы хранить переписку вечно.
+    """
+    row = MessageLog(
+        user_id=user.id,
+        direction=direction,
+        kind=kind,
+        text=(text or "")[:TEXT_LIMIT] or None,
+        buttons=buttons or None,
+        at=utcnow(),
+    )
+    session.add(row)
+    await session.flush()
+    keep = select(MessageLog.id).where(MessageLog.user_id == user.id)
+    keep = keep.order_by(MessageLog.id.desc()).limit(LOG_KEEP)
+    await session.execute(
+        delete(MessageLog).where(
+            MessageLog.user_id == user.id, MessageLog.id.not_in(keep.scalar_subquery())
+        )
+    )
+    return row
+
+
+async def last_messages(session: AsyncSession, user: User, limit: int = 10) -> list[MessageLog]:
+    """Последние строки переписки, свежие первыми."""
+    stmt = (
+        select(MessageLog)
+        .where(MessageLog.user_id == user.id)
+        .order_by(MessageLog.id.desc())
+        .limit(limit)
+    )
+    return list(await session.scalars(stmt))
+
+
+async def find_user(session: AsyncSession, lookup: str) -> User | None:
+    """Пользователь по `tg_id` числом или по username (с `@` или без).
+
+    Регистр username в Telegram не значим, поэтому сравниваем в нижнем.
+    """
+    query = (lookup or "").strip().lstrip("@")
+    if not query:
+        return None
+    if query.isdigit():
+        found = await session.scalar(select(User).where(User.tg_id == int(query)))
+        if found is not None:
+            return found
+    return await session.scalar(
+        select(User).where(func.lower(User.username) == query.lower()).order_by(User.id.desc())
+    )
+
+
 # ------------------------------------------------------------------ settings kv
 
 async def get_setting(session: AsyncSession, key: str) -> Any:
@@ -1698,6 +1769,7 @@ async def delete_user_data(session: AsyncSession, user: User, *, drop_user: bool
         AnalysisResult,
         ActivitySample,
         PresencePing,
+        MessageLog,
         ProductPhoto,
         Product,
         MediaFile,

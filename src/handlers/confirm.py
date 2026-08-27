@@ -27,6 +27,7 @@ from src.reporting import (
     correction_examples,
     correction_retry,
     dish_example,
+    format_glucose_after_meal,
     format_meal_saved,
     format_remembered_label,
     items_example,
@@ -114,16 +115,21 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
         except Exception:
             log.exception("plate advice failed")
             plate_text = None
+        # Замер после еды предлагаем только тем, кто сахар действительно меряет
+        # (`spec/onboarding.md` § Сахарный трек).
+        ask_glucose = bool(user.glucose_prompt_enabled)
     await state.clear()
     await callback.answer("Записано")
     head = format_meal_saved(
         draft, title=title, eaten_at=eaten_local, shortcut=bool(shortcut)
     )
+    glucose_text = format_glucose_after_meal() if ask_glucose else None
     await callback.message.edit_text(
         head
         + (f"\n\n{progress}" if progress else "")
-        + (f"\n\n{plate_text}" if plate_text else ""),
-        reply_markup=dictionary_pins(pins),
+        + (f"\n\n{plate_text}" if plate_text else "")
+        + (f"\n\n{glucose_text}" if glucose_text else ""),
+        reply_markup=dictionary_pins(pins, glucose=ask_glucose),
     )
 
 

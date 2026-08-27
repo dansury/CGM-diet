@@ -23,6 +23,7 @@ def build_router() -> Router:
         plate,
         reports,
         sleep,
+        sugar,
         wellbeing,
         workout,
     )
@@ -36,6 +37,7 @@ def build_router() -> Router:
     root.include_router(sleep.router)
     root.include_router(features.router)
     root.include_router(goals.router)
+    root.include_router(sugar.router)  # сахарный трек анкеты + кнопка «записать сахар»
     root.include_router(plate.router)
     root.include_router(labs.router)
     root.include_router(wellbeing.router)

@@ -27,6 +27,7 @@ from src.db.models import (
     Meal,
     MealItem,
     Medication,
+    MessageLog,
     NutritionMemory,
     PresencePing,
     Product,
@@ -64,8 +65,9 @@ _TABLES: tuple[tuple[str, Any, tuple[str, ...]], ...] = (
     (
         "body_profile",
         BodyProfile,
-        ("id", "height_cm", "birth_year", "sex", "activity", "weight_prompt_days",
-         "last_weight_prompt_at", "updated_at"),
+        ("id", "height_cm", "birth_year", "sex", "activity", "pregnant", "conditions",
+         "focus", "focus_note", "diabetes", "diabetes_meds", "glucose_methods",
+         "weight_prompt_days", "last_weight_prompt_at", "updated_at"),
     ),
     (
         "body_goals",
@@ -119,6 +121,7 @@ _TABLES: tuple[tuple[str, Any, tuple[str, ...]], ...] = (
         ("id", "kind", "start_at", "end_at", "steps", "distance_m", "kcal", "avg_hr", "source"),
     ),
     ("presence_pings", PresencePing, ("id", "at", "source")),
+    ("message_log", MessageLog, ("id", "at", "direction", "kind", "text", "buttons")),
     ("symptoms", Symptom, ("id", "slug", "label", "hits", "last_used_at")),
 )
 

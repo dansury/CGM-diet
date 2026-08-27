@@ -260,7 +260,9 @@ PIN_BUTTONS_LIMIT = 6
 PIN_LABEL_LIMIT = 32
 
 
-def dictionary_pins(entries: list[tuple[int, str, str]]) -> InlineKeyboardMarkup | None:
+def dictionary_pins(
+    entries: list[tuple[int, str, str]], *, glucose: bool = False
+) -> InlineKeyboardMarkup | None:
     """«⭐️ в словарь» на каждую позицию только что записанного приёма пищи.
 
     `entries` — (id, kind, label). Ждать второго раза необязательно: человек
@@ -276,6 +278,10 @@ def dictionary_pins(entries: list[tuple[int, str, str]]) -> InlineKeyboardMarkup
         ]
         for entry_id, _kind, label in entries[:PIN_BUTTONS_LIMIT]
     ]
+    # Предложение прислать замер живёт на той же карточке, а не отдельным
+    # сообщением (`spec/onboarding.md` § Сахарный трек).
+    if glucose:
+        rows.append([glucose_log_button()])
     return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
@@ -607,6 +613,59 @@ def onboarding_pregnancy_picker() -> InlineKeyboardMarkup:
     )
 
 
+def diabetes_picker() -> InlineKeyboardMarkup:
+    """Один выбор из каталога `src/sugar.py`; вопрос можно пропустить."""
+    from src.sugar import DIABETES
+
+    rows = [
+        [InlineKeyboardButton(text=title, callback_data=f"sg:dia:{key}")]
+        for key, title in DIABETES
+    ]
+    rows.append([InlineKeyboardButton(text="⏭ Пропустить", callback_data="onb:skip")])
+    rows.append([cancel_button()])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def glucose_method_picker(selected, *, skippable: bool = False) -> InlineKeyboardMarkup:
+    """Чем человек меряет сахар: множественный выбор, «никакими» — исключающий.
+
+    Как и в списке целей, выбор живёт в FSM, а не в callback-data
+    (`spec/onboarding.md` § Сахарный трек).
+    """
+    from src.sugar import METHODS, NONE
+
+    picked = set(selected or ())
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=("☑️ " if key in picked else "▫️ ") + title,
+                callback_data=f"sg:m:{key}",
+            )
+        ]
+        for key, title in METHODS
+    ]
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=("☑️ " if NONE in picked else "▫️ ") + "Никакими",
+                callback_data=f"sg:m:{NONE}",
+            )
+        ]
+    )
+    rows.append([InlineKeyboardButton(text="✅ Готово", callback_data="sg:done")])
+    rows.append(
+        [InlineKeyboardButton(text="⏭ Пропустить", callback_data="onb:skip")]
+        if skippable
+        else [cancel_button()]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def glucose_log_button() -> InlineKeyboardButton:
+    """«🩸 Записать сахар» — та же кнопка под записью еды и в напоминании."""
+    return InlineKeyboardButton(text="🩸 Записать сахар", callback_data="sg:log")
+
+
 def weight_prompt() -> InlineKeyboardMarkup:
     """Кнопка из напоминания: попасть в ввод веса одним нажатием."""
     return InlineKeyboardMarkup(
@@ -727,6 +786,9 @@ __all__ = [
     "focus_picker",
     "onboarding_pregnancy_picker",
     "onboarding_sex_picker",
+    "diabetes_picker",
+    "glucose_log_button",
+    "glucose_method_picker",
     "onboarding_skip",
     "photo_kind",
     "plate_meals_picker",

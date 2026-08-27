@@ -13,6 +13,7 @@
 users              id tg_id* username first_name locale tz glucose_unit sensor
                    window_1h_start/end window_2h_start/end baseline_window
                    plate_enabled meals_per_day? last_hint_at?
+                   last_seen_at? blocked_at?          -- реестр владельца (`spec/bot.md`)
                    sleep_presence_enabled last_presence_reminder_at?
                    consent_at onboarded created_at
 media_files        id user_id kind(meal|glucose|label|lab|voice) tg_file_id tg_unique_id
@@ -73,6 +74,12 @@ feature_flags      id user_id feature status(new|shown|accepted|declined) shown
 
 ```
 get_or_create_user(session, tg_id, username?, first_name?) -> User   # засевает глоссарий
+get_user(session, tg_id) -> User?
+touch_user(session, tg_id, username?, first_name?) -> (User, is_new)  # last_seen_at, blocked_at=NULL
+set_user_blocked(session, tg_id, blocked) -> User?
+list_users(session, limit=50) -> [User]      # по created_at убыв.
+count_users(session) -> (всего, заблокировавших)
+user_activity(session) -> {user_id: (приёмов пищи, замеров сахара, последняя запись?)}
 save_media(session, user, kind, tg_file_id?, ...) -> MediaFile
 save_meal(session, user, draft, eaten_at, media_id?, confirmed=True, product_id?) -> Meal
 load_meals(session, user, since?) -> list[Meal]

@@ -61,6 +61,11 @@ def build_dispatcher() -> Dispatcher:
     from src.handlers.presence import PresenceMiddleware
 
     dispatcher = Dispatcher(storage=MemoryStorage())
+    # user_tracking first: the registry middleware runs on every update, and its
+    # my_chat_member router must see private chat events before anything else.
+    from src.handlers.user_tracking import register as register_user_tracking
+
+    register_user_tracking(dispatcher)
     # Outer middleware: the appearance counts even when no handler matches —
     # the person was here, and that is the whole signal (`spec/sleep.md`).
     dispatcher.update.outer_middleware(PresenceMiddleware())

@@ -59,6 +59,12 @@ async def render_users() -> str:
             )
         )
         total = int(await session.scalar(select(func.count()).select_from(User)) or 0)
+        blocked = int(
+            await session.scalar(
+                select(func.count()).select_from(User).where(User.blocked_at.is_not(None))
+            )
+            or 0
+        )
         onboarded = int(
             await session.scalar(
                 select(func.count()).select_from(User).where(User.onboarded.is_(True))
@@ -73,10 +79,10 @@ async def render_users() -> str:
             )
             rows.append(_user_block(index, user, counters, last_meal))
 
-    head = [
-        f"👥 <b>Пользователи ({total})</b> · анкету прошли: {onboarded}",
-        "",
-    ]
+    headline = f"👥 <b>Пользователи ({total})</b> · анкету прошли: {onboarded}"
+    if blocked:
+        headline += f" · 🚫 заблокировали: {blocked}"
+    head = [headline, ""]
     if not rows:
         head.append("Пока никого — ждём первых /start.")
     return "\n".join([*head, *rows])
@@ -90,13 +96,20 @@ def _user_block(index: int, user: User, counters: dict[str, int], last_meal) -> 
         who.append(f"@{escape(user.username)}")
     created = user.created_at.strftime("%Y-%m-%d") if user.created_at else "?"
     mark = "" if user.onboarded else " · анкета не пройдена"
-    lines = [f"{index}. {' · '.join(who)} · с {created} · {escape(user.tz)}{mark}"]
+    # 🚫 у заблокировавших бота — писать им бесполезно (`spec/bot.md` § Реестр)
+    blocked = " 🚫" if user.blocked_at else ""
+    lines = [f"{index}. {' · '.join(who)}{blocked} · с {created} · {escape(user.tz)}{mark}"]
     lines.append(
         "   🍽 {meals} · 🩸 {glucose} · ⚖️ {weights} · 🏃 {workouts} · "
         "💊 {medications} · 🙂 {checkins}".format(**counters)
     )
+    tail = []
     if isinstance(last_meal, datetime):
-        lines.append(f"   последняя еда: {last_meal.strftime('%m-%d %H:%M')} UTC")
+        tail.append(f"последняя еда: {last_meal.strftime('%m-%d %H:%M')}")
+    if isinstance(user.last_seen_at, datetime):
+        tail.append(f"был(а): {user.last_seen_at.strftime('%m-%d %H:%M')}")
+    if tail:
+        lines.append("   " + " · ".join(tail) + " UTC")
     return "\n".join(lines)
 
 

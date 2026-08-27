@@ -74,6 +74,10 @@ class User(Base, TimestampMixin):
     consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_hint_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # owner tooling (`spec/bot.md` § Реестр пользователей): last inbound update
+    # and the moment the user blocked the bot (NULL = not blocked)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class MediaFile(Base, TimestampMixin):

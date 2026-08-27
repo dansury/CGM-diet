@@ -101,6 +101,90 @@ async def get_user(session: AsyncSession, tg_id: int) -> User | None:
     return await session.scalar(select(User).where(User.tg_id == tg_id))
 
 
+async def touch_user(
+    session: AsyncSession,
+    tg_id: int,
+    *,
+    username: str | None = None,
+    first_name: str | None = None,
+) -> tuple[User, bool]:
+    """Upsert the registry row for an inbound update; True = the user is NEW.
+
+    Refreshes the visible profile and `last_seen_at`, and clears `blocked_at` —
+    an inbound update means the user talks to the bot again.
+    """
+    existing = await get_user(session, tg_id)
+    user = existing or await get_or_create_user(
+        session, tg_id, username=username, first_name=first_name
+    )
+    if username:
+        user.username = username
+    if first_name:
+        user.first_name = first_name
+    user.last_seen_at = utcnow()
+    user.blocked_at = None
+    await session.flush()
+    return user, existing is None
+
+
+async def set_user_blocked(session: AsyncSession, tg_id: int, blocked: bool) -> User | None:
+    """Mark that the user blocked the bot (or came back). None = no such row."""
+    user = await get_user(session, tg_id)
+    if user is None:
+        return None
+    user.blocked_at = utcnow() if blocked else None
+    await session.flush()
+    return user
+
+
+async def list_users(session: AsyncSession, *, limit: int = 50) -> list[User]:
+    rows = await session.scalars(select(User).order_by(User.created_at.desc()).limit(limit))
+    return list(rows)
+
+
+async def count_users(session: AsyncSession) -> tuple[int, int]:
+    """(total, blocked) — the headline numbers of the owner registry."""
+    total = await session.scalar(select(func.count()).select_from(User)) or 0
+    blocked = (
+        await session.scalar(
+            select(func.count()).select_from(User).where(User.blocked_at.is_not(None))
+        )
+        or 0
+    )
+    return int(total), int(blocked)
+
+
+async def user_activity(session: AsyncSession) -> dict[int, tuple[int, int, datetime | None]]:
+    """user_id -> (meals, glucose readings, last record at) for the whole base."""
+    meals = {
+        user_id: (int(count), _aware(last) if last is not None else None)
+        for user_id, count, last in (
+            await session.execute(
+                select(Meal.user_id, func.count(), func.max(Meal.eaten_at)).group_by(Meal.user_id)
+            )
+        ).all()
+    }
+    readings = {
+        user_id: (int(count), _aware(last) if last is not None else None)
+        for user_id, count, last in (
+            await session.execute(
+                select(
+                    GlucoseReading.user_id,
+                    func.count(),
+                    func.max(GlucoseReading.measured_at),
+                ).group_by(GlucoseReading.user_id)
+            )
+        ).all()
+    }
+    out: dict[int, tuple[int, int, datetime | None]] = {}
+    for user_id in set(meals) | set(readings):
+        meal_count, meal_last = meals.get(user_id, (0, None))
+        read_count, read_last = readings.get(user_id, (0, None))
+        stamps = [s for s in (meal_last, read_last) if s is not None]
+        out[user_id] = (meal_count, read_count, max(stamps) if stamps else None)
+    return out
+
+
 # ------------------------------------------------------------------ media
 
 async def save_media(

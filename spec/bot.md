@@ -5,6 +5,8 @@
 `BOT_MODE=polling` (по умолчанию) → `dispatcher.start_polling`.
 `BOT_MODE=webhook` → uvicorn с `src.web.app:create_app`.
 `build_bot(settings)` — `ParseMode.HTML` по умолчанию.
+`build_dispatcher()` — сначала `user_tracking.register(dp)` (outer-middleware на
+`message`/`callback_query` + роутер `my_chat_member`), затем `build_router()`.
 `COMMANDS` — 20 команд (`/workouts` в меню не выносится), регистрируются в меню Telegram при старте.
 `prepare_runtime(bot, settings)` до первого апдейта (и в polling, и в webhook):
 `wire_error_reporter` → `load_active_models` → каталог свободных моделей →
@@ -124,14 +126,40 @@ SettingsFlow.editing
 
 ## Порядок роутеров (`src/handlers/__init__.py`)
 
-`admin → admin_panel → common → onboarding → reports → features → plate → labs →
-wellbeing → body → workout → dictionary → meds → confirm → intake → errors`.
-`admin` и `admin_panel` первыми и полностью отфильтрованы (владелец + личка):
+`user_tracking → admin → admin_panel → common → onboarding → reports → sleep →
+features → plate → labs → wellbeing → body → workout → dictionary → meds →
+confirm → intake → errors`. `user_tracking` первым — его `my_chat_member`
+должен видеть блокировку раньше всех. `admin` и `admin_panel` полностью
+отфильтрованы (владелец + личка):
 чужому апдейту они просто не соответствуют и тот идёт дальше. `onboarding` сразу после `common`,
 чтобы анкета первого запуска перехватывала ответы раньше catch-all'ов
 (`spec/onboarding.md`). `intake` предпоследний: он ловит любой текст и любое
 фото. `errors` — наблюдатель `router.errors`, обработчиков сообщений не
 содержит.
+
+## Реестр пользователей (`src/handlers/user_tracking.py`)
+
+Владелец узнаёт о каждом новом пользователе и о каждой блокировке бота.
+
+```
+UserTrackingMiddleware  # outer на message+callback_query, только личка
+  -> repo.touch_user(session, tg_id, username?, first_name?) -> (User, is_new)
+     # обновляет username/first_name/last_seen_at, снимает blocked_at
+  -> is_new: DM владельцам «🆕 Новый пользователь» + ссылка на /users
+  throttle: SEEN_TTL_SEC=3600 на пользователя, сбрасывается при смене профиля
+  fail-soft: любая ошибка логируется, апдейт идёт дальше
+
+router.my_chat_member (chat.type == private)
+  status=kicked -> repo.set_user_blocked(tg_id, True)  -> DM «🚫 ...заблокировал бота»
+  status=member -> repo.set_user_blocked(tg_id, False) -> DM «✅ ...разблокировал бота»
+
+notify_owners(bot, text, skip?)   # settings.owner_tg_ids, skip = сам инициатор
+user_label(tg_id, username?, first_name?) -> str   # «<b>Имя</b> · @user · <code>id</code>»
+```
+
+Сам реестр показывает `/users` из панели владельца
+(`admin_panel.render_users`, § Панель владельца): счётчики, метка 🚫 у
+заблокировавших и `last_seen_at` в строке пользователя.
 
 ## Плумбинг (`src/handlers/deps.py`)
 

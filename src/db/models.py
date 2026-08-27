@@ -62,9 +62,22 @@ class User(Base, TimestampMixin):
     plate_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # NULL = «сколько приёмов пищи в день» берём из собственной статистики
     meals_per_day: Mapped[int | None] = mapped_column(Integer)
+    # Оценка сна по появлениям в чате, когда Samsung Health не подключён
+    # (`spec/sleep.md`). Выключено по умолчанию: пассивная отметка активности
+    # включается только руками.
+    sleep_presence_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    last_presence_reminder_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_hint_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # owner tooling (`spec/bot.md` § Реестр пользователей): last inbound update
+    # and the moment the user blocked the bot (NULL = not blocked)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class MediaFile(Base, TimestampMixin):
@@ -531,6 +544,28 @@ class ActivitySample(Base, TimestampMixin):
     avg_hr: Mapped[float | None] = mapped_column(Float)
     source: Mapped[str] = mapped_column(String(32), default="samsung_health", nullable=False)
     payload: Mapped[dict | None] = mapped_column(JSON)
+
+
+class PresencePing(Base):
+    """One moment the user showed up in the chat with the bot.
+
+    The Bot API never reports a user's online status, so «появление» is an
+    update actually sent to us. Rows are thinned to one per
+    `PRESENCE_MIN_GAP_MIN` minutes — the estimator needs the shape of the day,
+    not every keystroke.
+    """
+
+    __tablename__ = "presence_pings"
+    __table_args__ = (
+        Index("ix_presence_user_at", "user_id", "at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source: Mapped[str] = mapped_column(String(16), default="telegram", nullable=False)
 
 
 class FoodStat(Base):

@@ -153,6 +153,16 @@ FEATURES: tuple[Feature, ...] = (
         counter="activity",
     ),
     Feature(
+        key="sleep",
+        title="Сон",
+        blurb=(
+            "Сколько спите и насколько ровный режим — и что бывает в дни после "
+            "коротких ночей: калории и сахар рядом."
+        ),
+        command="/sleep",
+        counter="presence",
+    ),
+    Feature(
         key="export",
         title="Выгрузка данных",
         blurb="ZIP с CSV по всем таблицам — данные ваши и уезжают целиком.",

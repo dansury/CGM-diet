@@ -81,6 +81,44 @@ def test_the_window_follows_the_users_own_meal_length():
     assert plate.session_window_min(meals) == 40
 
 
+def test_a_dish_photographed_in_bursts_does_not_shrink_the_window():
+    """Пять фото одного обеда подряд — не «пять приёмов по две минуты».
+
+    Такие разрывы утягивали медиану к нижней границе (30 мин), и настоящий
+    обед разваливался на несколько «приёмов пищи».
+    """
+    offsets = [0, 2, 5, 6, 46, 48, 49, 94, 96, 144]  # три обеда по 3–4 фото
+    meals = [meal(offset, [plate.PlateItem("еда", 100, ["protein"])], id=i)
+             for i, offset in enumerate(offsets)]
+    assert plate.session_window_min(meals) > plate.MIN_SESSION_MIN
+
+
+def test_the_days_meals_are_counted_even_when_each_is_several_photos():
+    """Регрессия: «Приём 1 из 3» весь день, сколько бы человек ни ел."""
+    day = [
+        # завтрак: два блюда с разрывом 40 мин
+        meal(0, [plate.PlateItem("блины", 150, ["refined_flour"])], id=1),
+        meal(40, [plate.PlateItem("блины с яблоком", 150, ["refined_flour"]),
+                  plate.PlateItem("кофе", 200, ["milk"])], id=2),
+        # ужин: четыре записи подряд
+        meal(552, [plate.PlateItem("салат с курицей", 200, ["protein"])], id=3),
+        meal(552, [plate.PlateItem("лосось", 200, ["protein"])], id=4),
+        meal(555, [plate.PlateItem("малина", 50, ["fruit"])], id=5),
+        meal(559, [plate.PlateItem("арбуз", 150, ["fruit"])], id=6),
+    ]
+    window = plate.session_window_min(day)
+    sessions = plate.group_sessions(day, window_min=window)
+    assert len(plate.meal_sessions(sessions)) == 2
+    assert plate.count_meals_today(day, day_start=NOW, window_min=window) == 2
+
+
+def test_a_lone_snack_is_not_counted_as_a_meal_anywhere():
+    coffee = [meal(i * 300, [plate.PlateItem("кофе", 200, ["milk"])], id=i) for i in range(10)]
+    assert plate.count_meals_today(coffee, day_start=NOW, window_min=60) == 0
+    assert plate.estimate_meals_per_day(coffee, window_min=60) is None
+    assert plate.typical_meal_mass(coffee, window_min=60) is None
+
+
 def test_meals_per_day_needs_enough_days_of_history():
     one_day = [meal(i * 300, [plate.PlateItem("еда", 100)], id=i) for i in range(3)]
     assert plate.estimate_meals_per_day(one_day, window_min=60) is None

@@ -21,12 +21,13 @@ from src.handlers.views import DRAFT_KEY, EATEN_AT_KEY, FILES_KEY, personal_exam
 from src.ingest.correction import apply_meal_correction
 from src.ingest.nutrition import Remembered
 from src.ingest.units import MGDL, MMOL, format_value
-from src.keyboards import cancel_only
+from src.keyboards import cancel_only, dictionary_pins
 from src.logging_setup import get_logger
 from src.reporting import (
     correction_examples,
     correction_retry,
     dish_example,
+    format_meal_saved,
     format_remembered_label,
     items_example,
     macros_prompt,
@@ -89,6 +90,12 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
         await repo.remember_meal_macros(session, user, draft, source="label")
         title = meal.title or "приём пищи"
         shortcut = await repo.suggest_dictionary(session, user, title, kinds=("meal",), limit=1)
+        # Ждать второго раза необязательно: под записью — кнопка «в словарь» на
+        # каждую позицию, которой там ещё нет (`spec/dictionary.md`).
+        pins = [
+            (entry.id, entry.kind, entry.label)
+            for entry in await repo.pinnable_entries(session, user, draft)
+        ]
         # Итог дня: с целью — полоса коридора, без цели — съеденные калории
         # (`spec/body.md`). Сбой расчёта не имеет права съесть подтверждение.
         from src.handlers.body import day_progress_text
@@ -109,16 +116,14 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
             plate_text = None
     await state.clear()
     await callback.answer("Записано")
-    tail = (
-        "\n⭐️ Это блюдо теперь в личном словаре — в следующий раз хватит одной кнопки (/my)."
-        if shortcut
-        else ""
+    head = format_meal_saved(
+        draft, title=title, eaten_at=eaten_local, shortcut=bool(shortcut)
     )
     await callback.message.edit_text(
-        f"✅ Записано: <b>{title}</b> в {eaten_local:%H:%M}.\n"
-        f"Через час-полтора пришлите сахар — и приём попадёт в статистику.{tail}"
+        head
         + (f"\n\n{progress}" if progress else "")
-        + (f"\n\n{plate_text}" if plate_text else "")
+        + (f"\n\n{plate_text}" if plate_text else ""),
+        reply_markup=dictionary_pins(pins),
     )
 
 
@@ -508,16 +513,6 @@ async def product_eat(callback: CallbackQuery, state: FSMContext) -> None:
 
     await callback.message.answer("Сколько граммов вы съели? Проверьте порцию:")
     await show_meal_draft(callback.message, state, meal)
-
-
-@router.callback_query(F.data == "prod:more", ProductFlow.confirming)
-async def product_more(callback: CallbackQuery, state: FSMContext) -> None:
-    await state.set_state(ProductFlow.awaiting_second_side)
-    await callback.answer()
-    await callback.message.answer(
-        "Пришлите фото второй стороны упаковки (состав и пищевая ценность) — объединю.",
-        reply_markup=cancel_only(),
-    )
 
 
 @router.callback_query(F.data == "prod:macros", ProductFlow.confirming)

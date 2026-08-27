@@ -30,6 +30,7 @@ from src.reporting import (
     format_cgm_summary,
     format_product_verdict,
     format_recommendations,
+    format_sleep_short,
     format_stats,
     format_symptoms,
 )
@@ -174,8 +175,15 @@ async def _send_stats(message: Message, *, window: str, key_type: str, edit: boo
             session, user, since=local_now(user) - timedelta(days=DEFAULT_PERIOD_DAYS)
         )
         unit = user.glucose_unit
+        # Сон — отдельная карточка (/sleep); в статистике от него одна строка,
+        # чтобы режим было видно рядом с цифрами по еде (`spec/sleep.md`).
+        from src.handlers.sleep import build_report as build_sleep_report
+
+        sleep_line = format_sleep_short(await build_sleep_report(session, user))
 
     blocks = [format_stats(stats, unit=unit, window=window)]
+    if sleep_line:
+        blocks.append(sleep_line)
     if points:
         blocks.append(format_cgm_summary(cgm_metrics.summarize(points), unit=unit))
     if checkins:
@@ -319,6 +327,11 @@ async def cmd_health(message: Message) -> None:
                 unit=user.glucose_unit,
             )
         total_steps = sum(s.steps or 0 for s in samples)
+        sleep_nights = sum(1 for s in samples if s.kind == "sleep")
+        if sleep_nights:
+            contrast_text += (
+                "\n\nСон с телефона тоже приходит — разбор в /sleep."
+            )
     await message.answer(
         _health_status_text(total_steps) + contrast_text,
         reply_markup=health_setup(step="menu"),

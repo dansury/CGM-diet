@@ -19,7 +19,6 @@ class GlucoseFlow(StatesGroup):
 
 class ProductFlow(StatesGroup):
     confirming = State()
-    awaiting_second_side = State()
     editing = State()
     editing_macros = State()   # «✏️ БЖУ» — числа на 100 г с этикетки
 

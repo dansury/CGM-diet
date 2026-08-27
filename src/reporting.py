@@ -12,11 +12,19 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from html import escape
 
 from src.analytics.activity import ActivityContrast
 from src.analytics.cgm_metrics import CGMSummary
 from src.analytics.labs import FoodHint, LabReview, LabValue
 from src.analytics.plate import TARGET_SHARES, PlateAdvice, PlateScore, category_label
+from src.analytics.sleep import (
+    SHORT_SLEEP_MIN,
+    SleepContrast,
+    SleepReport,
+    clock_label,
+    duration_label,
+)
 from src.analytics.stats import KeyStats
 from src.analytics.symptoms import SymptomStats
 from src.analytics.tags import tag_label
@@ -289,6 +297,44 @@ def format_meal_draft(
     return "\n".join(lines)
 
 
+SUGAR_AFTER_MEAL_HINT = "Через час-полтора пришлите сахар — и приём попадёт в статистику."
+DICTIONARY_SHORTCUT_HINT = (
+    "⭐️ Это блюдо теперь в личном словаре — в следующий раз хватит одной кнопки (/my)."
+)
+
+
+def format_meal_macros_line(draft: MealDraft) -> str:
+    """Одна строка БЖУ приёма пищи. Пусто, когда считать нечего."""
+    totals = draft.totals()
+    if not any(totals[key] for key in ("kcal", "protein_g", "fat_g", "carbs_g")):
+        return ""
+    about = "≈ " if any(item.estimated for item in draft.items) else ""
+    return (
+        f"{about}{totals['kcal']:.0f} ккал · Б {totals['protein_g']:.0f} · "
+        f"Ж {totals['fat_g']:.0f} · У {totals['carbs_g']:.0f} · "
+        f"клетчатка {totals['fiber_g']:.0f} г"
+    )
+
+
+def format_meal_saved(
+    draft: MealDraft, *, title: str, eaten_at: datetime, shortcut: bool = False
+) -> str:
+    """Подтверждение записи еды: время, название и БЖУ.
+
+    Название и числа идут одним моноширинным блоком — в Telegram такой блок
+    копируется одним касанием, и человек может перенести строку куда угодно,
+    не переписывая её руками.
+    """
+    body = escape(title)
+    macros = format_meal_macros_line(draft)
+    if macros:
+        body = f"{body}\n{macros}"
+    lines = [f"✅ Записано: {eaten_at:%H:%M} <code>{body}</code>", SUGAR_AFTER_MEAL_HINT]
+    if shortcut:
+        lines.append(DICTIONARY_SHORTCUT_HINT)
+    return "\n".join(lines)
+
+
 def format_remembered_macros(draft: MealDraft, names: list[str]) -> str:
     """«Запомнил» называет сами числа — иначе опечатку не заметить."""
     lines: list[str] = []
@@ -507,6 +553,128 @@ def format_activity(contrast: ActivityContrast, *, unit: str = "mmol/L") -> str:
     )
 
 
+# --------------------------------------------------------------- сон
+
+SLEEP_SOURCE_LABEL = {
+    "health": "Samsung Health",
+    "presence": "по появлениям в чате",
+}
+
+SLEEP_EMPTY = (
+    "😴 <b>Сон</b>\n\n"
+    "Пока не из чего считать ночи. Подключите Samsung Health (/health) — "
+    "часы отдают готовые сессии сна — либо включите наблюдение по появлениям "
+    "в чате кнопкой ниже."
+)
+
+SLEEP_PRESENCE_REMINDER = (
+    "😴 <b>Наблюдение за сном не работает</b>\n\n"
+    "Вы включили оценку сна по появлениям в чате, но больше суток "
+    "не заходили к боту — ночей из этого не построить.\n\n"
+    "Что можно сделать:\n"
+    "• просто отмечаться утром и вечером — хватает пары нажатий любой кнопки "
+    "или короткого сообщения;\n"
+    "• проверить, что бот не заблокирован и уведомления от него разрешены: "
+    "<i>чат с ботом → имя сверху → Уведомления</i>;\n"
+    "• подключить Samsung Health (/health) — тогда ночи считаются сами, "
+    "без вашего участия;\n"
+    "• либо выключить функцию: <code>/set sleep off</code>.\n\n"
+    "Пока данных нет, бот про сон ничего не показывает."
+)
+
+
+def _sleep_metric_text(contrast: SleepContrast, unit: str) -> str | None:
+    """Одна строка контраста; величины — в единицах своей метрики."""
+    if contrast.difference is None:
+        return None
+    if contrast.metric == "kcal":
+        head = "съедено за день"
+        value_a = f"{contrast.mean_a:.0f} ккал"
+        value_b = f"{contrast.mean_b:.0f} ккал"
+        diff = f"{abs(contrast.difference):.0f} ккал"
+    elif contrast.metric == "carbs":
+        head = "углеводов за день"
+        value_a = f"{contrast.mean_a:.0f} г"
+        value_b = f"{contrast.mean_b:.0f} г"
+        diff = f"{abs(contrast.difference):.0f} г"
+    elif contrast.metric == "glucose":
+        head = "средний сахар за день"
+        value_a = format_value(contrast.mean_a or 0, unit)
+        value_b = format_value(contrast.mean_b or 0, unit)
+        diff = format_delta(abs(contrast.difference), unit)
+    else:  # rise
+        head = "средний подъём после еды"
+        value_a = format_delta(contrast.mean_a or 0, unit)
+        value_b = format_delta(contrast.mean_b or 0, unit)
+        diff = format_delta(abs(contrast.difference), unit)
+    direction = "больше" if contrast.difference > 0 else "меньше"
+    tail = f" · p={contrast.p_value:.3f}" if contrast.p_value is not None else ""
+    return (
+        f"• {head}: {contrast.label_a} — <b>{value_a}</b> ({contrast.n_a} дн.), "
+        f"{contrast.label_b} — {value_b} ({contrast.n_b} дн.); "
+        f"разница {diff} {direction}{tail}"
+    )
+
+
+def format_sleep(report: SleepReport, *, unit: str = "mmol/L") -> str:
+    """Карточка сна: сколько, насколько ровно и что бывает в такие дни.
+
+    Формулировки те же, что и везде: наблюдаемая связь, а не причина
+    (`spec/clinical.md`). Короткий сон не «поднимает сахар» — в дни после
+    коротких ночей средние цифры такие-то.
+    """
+    stats = report.stats
+    if not stats.n_nights:
+        return SLEEP_EMPTY
+    source = SLEEP_SOURCE_LABEL.get(stats.source, stats.source)
+    lines = [
+        "😴 <b>Сон</b>",
+        f"Источник: {source} · ночей учтено: {stats.n_nights}",
+        "",
+        f"Средняя длительность: <b>{duration_label(stats.mean_duration_min)}</b>",
+        f"Обычный отбой: {clock_label(stats.median_bedtime_min)} · "
+        f"подъём: {clock_label(stats.median_wake_min)}",
+    ]
+    short_hours = SHORT_SLEEP_MIN // 60
+    lines.append(
+        f"Коротких ночей (меньше {short_hours} ч): "
+        f"{stats.short_nights} из {stats.n_nights}"
+    )
+    if stats.bedtime_sd_min is not None:
+        steady = "ровный" if stats.regular else "плавающий"
+        lines.append(
+            f"Режим {steady}: отбой гуляет на ±{stats.bedtime_sd_min:.0f} мин, "
+            f"подъём — на ±{(stats.wake_sd_min or 0):.0f} мин"
+        )
+    if stats.source == "presence":
+        lines.append(
+            "<i>Оценка по появлениям в чате — она приблизительная: "
+            "бот видит только моменты, когда вы к нему заходите.</i>"
+        )
+
+    rows = [text for c in report.contrasts if (text := _sleep_metric_text(c, unit))]
+    if rows:
+        lines += ["", "<b>Что бывает в такие дни</b>", *rows]
+    else:
+        lines += [
+            "",
+            "Связей с едой и сахаром пока не видно — нужно хотя бы по три дня "
+            "в каждой группе.",
+        ]
+    return "\n".join(lines)
+
+
+def format_sleep_short(report: SleepReport) -> str:
+    """Одна строка для /stats — без контрастов, только режим."""
+    stats = report.stats
+    if not stats.n_nights:
+        return ""
+    return (
+        f"😴 Сон: {duration_label(stats.mean_duration_min)} в среднем за "
+        f"{stats.n_nights} ноч., отбой около {clock_label(stats.median_bedtime_min)}"
+    )
+
+
 def format_labs(draft: LabDraft) -> str:
     lines = [f"🧪 <b>{draft.panel or 'Анализы'}</b>"]
     if draft.taken_at:
@@ -637,7 +805,14 @@ def progress_bar(share: float, *, width: int = BAR_WIDTH) -> str:
     return "▓" * filled + "░" * (width - filled)
 
 
-def format_day_progress(balance, *, goal=None, trend=None) -> str:
+def format_meals_today(meals_done: int, meals_per_day: int) -> str:
+    """«Приёмов пищи: 2 из 3». Пусто, когда сегодня ещё ни одного приёма."""
+    if meals_done <= 0:
+        return ""
+    return f"🍽 Приёмов пищи: {meals_done} из {meals_per_day}"
+
+
+def format_day_progress(balance, *, goal=None, trend=None, meals: str = "") -> str:
     """Дневной коридор после приёма пищи (`spec/body.md` § Дневной коридор)."""
     share = balance.share
     lines = ["📊 <b>Сегодня</b>"]
@@ -658,6 +833,8 @@ def format_day_progress(balance, *, goal=None, trend=None) -> str:
         lines.append(f"Осталось на сегодня: <b>{balance.available_kcal:.0f} ккал</b>")
     if balance.carbs_g:
         lines.append(f"Углеводы за день: {balance.carbs_g:.0f} г")
+    if meals:
+        lines.append(meals)
     if trend is not None and trend.rate_kg_week is not None:
         lines.append(
             f"Вес за {trend.days:.0f} дн.: {trend.first_kg:g} → {trend.last_kg:g} кг "
@@ -669,7 +846,7 @@ def format_day_progress(balance, *, goal=None, trend=None) -> str:
 GOAL_HINT = "🎯 Задайте цель — /body — и буду показывать коридор и остаток на день."
 
 
-def format_day_totals(balance) -> str:
+def format_day_totals(balance, *, meals: str = "") -> str:
     """Итог дня без коридора: цели нет — процентов и остатка тоже нет.
 
     Съеденное за день человек вправе видеть всегда; «73 % нормы» без цели —
@@ -680,7 +857,8 @@ def format_day_totals(balance) -> str:
         parts.append(f"углеводы {balance.carbs_g:.0f} г")
     if balance.burned_kcal:
         parts.append(f"тренировки ≈ {balance.burned_kcal:.0f} ккал")
-    return "📊 <b>Сегодня</b>: " + " · ".join(parts) + f"\n{GOAL_HINT}"
+    head = "📊 <b>Сегодня</b>: " + " · ".join(parts)
+    return "\n".join(part for part in (head, meals, GOAL_HINT) if part)
 
 
 # ------------------------------------------------------------------ Harvard plate
@@ -1120,6 +1298,7 @@ __all__ = [
     "meal_edit_prompt",
     "quoted",
     "reset_examples",
+    "SLEEP_PRESENCE_REMINDER",
     "format_activity",
     "format_body_card",
     "format_cgm_summary",
@@ -1129,10 +1308,13 @@ __all__ = [
     "format_measurement_draft",
     "format_labs",
     "format_meal_draft",
+    "format_meal_macros_line",
+    "format_meal_saved",
     "format_med_coverage",
     "format_med_side_effects",
     "format_medication_draft",
     "format_medications",
+    "format_meals_today",
     "format_feature_hint",
     "format_food_hint",
     "format_hidden_list",
@@ -1146,6 +1328,8 @@ __all__ = [
     "format_recommendations",
     "format_remembered_label",
     "format_remembered_macros",
+    "format_sleep",
+    "format_sleep_short",
     "format_stats",
     "format_symptoms",
     "format_weight_saved",

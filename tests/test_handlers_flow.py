@@ -246,19 +246,33 @@ async def test_check_mode_routes_a_photo_to_the_product_verdict(engine, session,
     assert (await repo.counts(session, user))["meals"] == 0  # nothing eaten yet
 
 
-async def test_the_second_package_side_is_merged_into_one_card(engine, session, state):
+async def test_both_package_sides_come_as_one_album(engine, session, state):
+    """Обе стороны упаковки уходят в модель одним вызовом — без отдельного шага."""
     await intake.start_check_mode(FakeMessage(), state)
-    await intake.on_photo(FakeMessage(photo=[FakePhoto("front")]), state, FakeBot())
-    await confirm.product_more(FakeCallback(data="prod:more", message=FakeMessage()), state)
-    assert await state.get_state() == ProductFlow.awaiting_second_side.state
-
     bot = FakeBot()
-    await intake.on_photo(FakeMessage(photo=[FakePhoto("back")]), state, bot)
-    assert bot.downloads == ["back", "front"]  # both sides re-sent together
+    await intake._handle_photos(
+        [FakeMessage(photo=[FakePhoto("front")]), FakeMessage(photo=[FakePhoto("back")])],
+        state,
+        bot,
+    )
+    assert bot.downloads == ["front", "back"]  # один вызов, обе стороны
     data = await state.get_data()
     from src.handlers.views import FILES_KEY
 
     assert data[FILES_KEY] == ["front", "back"]
+
+
+def test_the_product_card_has_no_second_side_button():
+    from src.keyboards import product_actions
+
+    for mode in ("check", "eaten"):
+        actions = {
+            button.callback_data
+            for row in product_actions(mode=mode).inline_keyboard
+            for button in row
+        }
+        assert "prod:more" not in actions
+        assert {"prod:eat", "prod:save", "prod:macros", "prod:edit"} <= actions
 
 
 async def test_saving_a_product_remembers_it(engine, session, state):

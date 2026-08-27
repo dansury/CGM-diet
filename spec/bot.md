@@ -5,11 +5,14 @@
 `BOT_MODE=polling` (по умолчанию) → `dispatcher.start_polling`.
 `BOT_MODE=webhook` → uvicorn с `src.web.app:create_app`.
 `build_bot(settings)` — `ParseMode.HTML` по умолчанию.
+`build_dispatcher()` — сначала `user_tracking.register(dp)` (outer-middleware на
+`message`/`callback_query` + роутер `my_chat_member`), затем `build_router()`.
 `COMMANDS` — 20 команд (`/workouts` в меню не выносится), регистрируются в меню Telegram при старте.
 `prepare_runtime(bot, settings)` до первого апдейта (и в polling, и в webhook):
 `wire_error_reporter` → `load_active_models` → каталог свободных моделей →
 `scheduler.start(bot)` (напоминание о взвешивании — `spec/body.md`; недельная
-подсказка о возможностях — `spec/features.md`).
+подсказка о возможностях — `spec/features.md`; «бот вас не видит» для
+наблюдения за сном — `spec/sleep.md`).
 Каждый шаг деградирует молча — ни один не мешает боту стартовать.
 
 ## Команды
@@ -22,7 +25,7 @@
 | `/help` | подробная справка | `handlers/common.py` |
 | `/menu` | вернуть клавиатуру | `handlers/common.py` |
 | `/cancel` | отменить текущий ввод (то же, что `❌`) | `handlers/common.py` |
-| `/settings`, `/set` | пояс, единицы, окна, базовая линия, `weighin`, `plate`, `meals` | `handlers/common.py` |
+| `/settings`, `/set` | пояс, единицы, окна, базовая линия, `weighin`, `plate`, `meals`, `sleep` | `handlers/common.py` |
 | `/plate` | Гарвардская тарелка: что настроено и как менять | `handlers/plate.py` |
 | `/labs` | анализы: маркеры вне референса и продукты-источники | `handlers/labs.py` |
 | `/hidden` | скрытые возможности и возврат их в меню | `handlers/features.py` |
@@ -37,7 +40,9 @@
 | `/export` | ZIP с CSV | `handlers/reports.py` |
 | `/delete` | удаление с подтверждением | `handlers/reports.py` |
 | `/health` | пошаговая инструкция Samsung Health, ключи, ссылка на мост | `handlers/reports.py` |
+| `/sleep` | сон: длительность, режим, связи; переключатель наблюдения | `handlers/sleep.py` |
 | `/model`, `/models`, `/errors`, `/whereami` | только владелец, только в личке | `handlers/admin.py` |
+| `/users`, `/bot_settings` | панель владельца, только в личке | `handlers/admin_panel.py` |
 
 ## Клавиатуры (`src/keyboards.py`)
 
@@ -68,15 +73,19 @@ Reply-меню (`MENU_ROWS`): `🍽 Записать еду`, `🩸 Записа
 `🔑 Мои ключи`, `📦 Приложение-мост` (`hs:how|keys|app|menu`), инструкция
 листается прямо в чате (`spec/health_sync.md` § Инструкция).
 
+`/sleep` — карточка сна с кнопками `❓ Как это работает`,
+`👀 Следить за сном` / `🚫 Выключить наблюдение`, `⌚️ Samsung Health`
+(`sl:how|on|off|health|menu`, `spec/sleep.md`).
+
 Callback-грамматика `<domain>:<action>[:<arg>]` (лимит Telegram — 64 байта):
 
 ```
 meal:ok|edit|macros|time|drop   glu:ok|edit|unit|drop
-prod:eat|save|more|macros|drop  lab:ok|drop
+prod:eat|save|macros|drop       lab:ok|drop
 kind:food|glucose_screen|food_label|lab_report|medication|body_scale|workout|drop
 photo:reroute
 med:ok|edit|time|drop         prod:edit   lab:edit
-dict:use:<id>|rm:<id>|new|page:<kind>:<n>|mode:<kind>:<use|del>|close
+dict:use:<id>|rm:<id>|pin:<id>|new|page:<kind>:<n>|mode:<kind>:<use|del>|close
 x:cancel                       # общий крестик на всех клавиатурах
 mdl:lvl:<global|slot|free> | mdl:slot:<slot> | mdl:set:<target>:<idx> | mdl:close
 wb:score:<1..5> | wb:sym:<id> | wb:other | wb:voice | wb:done
@@ -89,6 +98,7 @@ onb:skip | onb:sex:<m|f> | onb:preg:<y|n>   # анкета при первом �
 gl:pick:<key> | gl:other | gl:done          # цели — `spec/onboarding.md`
 wo:ok|edit|time|hr|drop | wo:dur:<мин|other> | wo:int:<low|moderate|high>
 wo:sweat:<yes|light|no>
+botadm:<users|data|models|errors|health>   # панель владельца
 ```
 
 Черновики **не** передаются в callback-data — они лежат в FSM. Устаревшая
@@ -99,7 +109,7 @@ wo:sweat:<yes|light|no>
 ```
 MealFlow.confirming|editing|editing_macros|retiming
 GlucoseFlow.confirming|editing
-ProductFlow.confirming|awaiting_second_side|editing|editing_macros
+ProductFlow.confirming|editing|editing_macros
 LabFlow.confirming|editing
 MedicationFlow.confirming|editing|retiming
 WellbeingFlow.scoring|picking|free_text
@@ -118,14 +128,40 @@ SettingsFlow.editing
 
 ## Порядок роутеров (`src/handlers/__init__.py`)
 
-`admin → common → onboarding → reports → features → plate → labs →
-wellbeing → body → workout → dictionary → meds → confirm → intake → errors`.
-`admin` первый и полностью отфильтрован (владелец + личка): чужому апдейту он
-просто не соответствует и тот идёт дальше. `onboarding` сразу после `common`,
+`user_tracking → admin → admin_panel → common → onboarding → reports → sleep →
+features → plate → labs → wellbeing → body → workout → dictionary → meds →
+confirm → intake → errors`. `user_tracking` первым — его `my_chat_member`
+должен видеть блокировку раньше всех. `admin` и `admin_panel` полностью
+отфильтрованы (владелец + личка):
+чужому апдейту они просто не соответствуют и тот идёт дальше. `onboarding` сразу после `common`,
 чтобы анкета первого запуска перехватывала ответы раньше catch-all'ов
 (`spec/onboarding.md`). `intake` предпоследний: он ловит любой текст и любое
 фото. `errors` — наблюдатель `router.errors`, обработчиков сообщений не
 содержит.
+
+## Реестр пользователей (`src/handlers/user_tracking.py`)
+
+Владелец узнаёт о каждом новом пользователе и о каждой блокировке бота.
+
+```
+UserTrackingMiddleware  # outer на message+callback_query, только личка
+  -> repo.touch_user(session, tg_id, username?, first_name?) -> (User, is_new)
+     # обновляет username/first_name/last_seen_at, снимает blocked_at
+  -> is_new: DM владельцам «🆕 Новый пользователь» + ссылка на /users
+  throttle: SEEN_TTL_SEC=3600 на пользователя, сбрасывается при смене профиля
+  fail-soft: любая ошибка логируется, апдейт идёт дальше
+
+router.my_chat_member (chat.type == private)
+  status=kicked -> repo.set_user_blocked(tg_id, True)  -> DM «🚫 ...заблокировал бота»
+  status=member -> repo.set_user_blocked(tg_id, False) -> DM «✅ ...разблокировал бота»
+
+notify_owners(bot, text, skip?)   # settings.owner_tg_ids, skip = сам инициатор
+user_label(tg_id, username?, first_name?) -> str   # «<b>Имя</b> · @user · <code>id</code>»
+```
+
+Сам реестр показывает `/users` из панели владельца
+(`admin_panel.render_users`, § Панель владельца): счётчики, метка 🚫 у
+заблокировавших и `last_seen_at` в строке пользователя.
 
 ## Плумбинг (`src/handlers/deps.py`)
 
@@ -140,9 +176,13 @@ sha256(data)
 ## Потоки
 
 **Еда:** фото → `classify_photo` → `recognize_meal_photo` → `views.show_meal_draft`
-(FSM `MealFlow.confirming`) → `meal:ok` → `repo.save_meal`. В том же сообщении —
+(FSM `MealFlow.confirming`) → `meal:ok` → `repo.save_meal`. Подтверждение —
+`reporting.format_meal_saved`: время, название и строка БЖУ в `<code>`
+(моноширинный блок в Telegram копируется одним касанием). В том же сообщении —
 полоса дневного коридора (`spec/body.md`) и оценка тарелки (`spec/plate.md`);
-обе части не обязательны и не могут отменить запись.
+обе части не обязательны и не могут отменить запись. Под сообщением —
+кнопки «⭐️ в словарь» на каждую позицию, которой ещё нет в словаре
+(`spec/dictionary.md` § Запись в словарь одной кнопкой).
 `meal:edit` → строка `гречка 250, курица 100` → `_parse_edit` пересчитывает
 нутриенты пропорционально порции, сохраняет теги, пишет `corrections`.
 
@@ -152,6 +192,8 @@ sha256(data)
 **Продукт:** фото(а) → `recognize_label` → в режиме `check` текст строится
 `reports.product_verdict_text` по статистике пользователя; `prod:eat`
 превращает продукт в `MealDraft` с порцией 100 г (редактируемой).
+Отдельного шага «вторая сторона упаковки» нет: обе стороны присылаются одним
+альбомом и уходят в модель одним вызовом (`AlbumBuffer`).
 
 **Анализы:** фото/PDF/текст → `recognize_labs` → карточка с пометками
 `🔺/🔻/✅` → `lab:ok` → сохранение + отдельным сообщением продукты-источники по
@@ -222,6 +264,28 @@ reset_examples()                                       # только для т�
 (`confirm`), «опишите еду» (`intake`, `dictionary`), приглашение и ошибка
 распознавания сахара (`intake`). `/start` и `/help` — справочные карточки,
 они не ротируются: словаря у нового пользователя ещё нет.
+
+## Панель владельца (`src/handlers/admin_panel.py`)
+
+Только `OWNER_TG_IDS`, только личка (те же фильтры, что у `handlers/admin.py`):
+не-владельцу роутер просто не соответствует, и бот не выдаёт, что команды есть.
+
+```
+/users            -> render_users()                # реестр пользователей
+/bot_settings     -> _MAIN_TEXT + owner_panel()    # inline-панель
+botadm:users|data|models|errors|health             # разделы панели
+```
+
+| Раздел | Что показывает |
+|---|---|
+| 👥 Пользователи | до 50 последних: `tg_id`, имя, `@username`, пояс, дата регистрации, пройдена ли анкета; под каждым — счётчики `repo.counts` (еда, сахар, вес, тренировки, лекарства, самочувствие) и последняя запись еды |
+| 📊 Данные | итоги по базе: пользователи, приёмы пищи, измерения сахара, тренировки, лекарства, опросы; те же числа за 7 дней |
+| 🧠 Нейросети | модели по слотам (`admin._explain`), уровень выбора, ключи провайдеров; смена — `/model` |
+| 🩺 Ошибки | последние отчёты `errors_report.recent_reports` |
+| ❤️ Health | БД, LLM (или `LLM_MOCK`), SpeechKit, health-sync |
+
+Раздел «Монетизация» и всё, что связано с каналами и подписками, из
+GrowthProducer не переносилось: в этом боте таких сущностей нет.
 
 ## Отчёты (`src/handlers/reports.py`)
 

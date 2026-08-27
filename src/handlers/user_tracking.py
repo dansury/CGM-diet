@@ -16,6 +16,7 @@ See `spec/bot.md` § Реестр пользователей.
 
 from __future__ import annotations
 
+import html
 import time
 from typing import Any
 
@@ -24,7 +25,6 @@ from aiogram.types import CallbackQuery, ChatMemberUpdated, Message, TelegramObj
 
 from src.config import load_settings
 from src.db import repo
-from src.handlers.admin_users import user_label
 from src.handlers.deps import session_scope
 from src.logging_setup import get_logger
 
@@ -42,6 +42,17 @@ _seen: dict[int, tuple[float, str | None, str | None]] = {}
 def reset_seen_cache() -> None:
     """Test hook: forget the write throttle."""
     _seen.clear()
+
+
+def user_label(tg_id: int, username: str | None, first_name: str | None) -> str:
+    """`<b>Имя</b> · @username · <code>id</code>` — used in every owner alert."""
+    parts = []
+    if first_name:
+        parts.append(f"<b>{html.escape(first_name)}</b>")
+    if username:
+        parts.append(f"@{html.escape(username)}")
+    parts.append(f"<code>{tg_id}</code>")
+    return " · ".join(parts)
 
 
 def _owner_ids() -> tuple[int, ...]:
@@ -160,4 +171,5 @@ __all__ = [
     "reset_seen_cache",
     "router",
     "track",
+    "user_label",
 ]

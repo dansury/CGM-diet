@@ -163,7 +163,14 @@ Nothing to install, the account is created for you, and time zone and units
 (mmol/L or mg/dL) are set in `/settings`. The interface is currently Russian.
 
 Steps from Samsung Health / Health Connect connect via `/health` — then the bot
-can also show you "with a walk after dinner" against "without".
+can also show you "with a walk after dinner" against "without", and turns sleep
+sessions into a schedule: how long you sleep, how steady it is, and what the
+days after short nights look like (`/sleep`).
+
+Without Samsung Health, sleep can be estimated from appearances in the chat
+(`/set sleep on`). Telegram never reports online status to bots, so an
+"appearance" is a message or button press you send yourself — the estimate is
+approximate and the bot says so.
 
 ---
 

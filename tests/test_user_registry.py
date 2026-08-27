@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from src.db import repo
-from src.handlers import admin_users
+from src.handlers import admin_panel
 from src.vision.schemas import GlucoseDraft, ItemDraft, MealDraft
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
@@ -63,7 +63,7 @@ async def test_render_users_lists_the_registry(engine):
         await repo.set_user_blocked(s, 42, True)
         await s.commit()
 
-    text = await admin_users.render_users()
+    text = await admin_panel.render_users()
     assert "Пользователи (1)" in text
     assert "заблокировали: 1" in text
     assert "@ivan" in text
@@ -71,7 +71,7 @@ async def test_render_users_lists_the_registry(engine):
 
 
 async def test_render_users_without_anyone(engine):
-    text = await admin_users.render_users()
+    text = await admin_panel.render_users()
     assert "Пока никого" in text
 
 

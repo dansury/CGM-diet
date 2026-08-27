@@ -69,11 +69,26 @@ share (0..~2), over:bool`.
 `day_balance` считает: `available = target + burned − consumed`.
 `share = consumed / (target + burned)`.
 
-Прогресс-бар (`reporting.format_day_progress`) показывается:
-- после каждого подтверждённого приёма пищи (`meal:ok`), если есть активная цель;
-- в `/body` и `/today`.
+`day_progress_text(session, user, now)` — единая точка: после каждого
+подтверждённого приёма пищи (`meal:ok`), после тренировки, после записи веса,
+в `/body` и `/today`.
+
+| Что есть | Что показываем |
+|---|---|
+| активная цель и `target_kcal` (из плана либо из цели) | `format_day_progress` — полоса, остаток, углеводы |
+| цели нет или коридор не посчитался, но за день что-то съедено/потрачено | `format_day_totals` — итог дня и подсказка завести цель (`/body`) |
+| за день ничего нет и цели нет | `None` |
 
 Полоса из 10 клеток: `▓` съедено, `░` остаток, `▒` перебор.
+
+Строка «🍽 Приёмов пищи: N из M» — в обоих форматах, когда за сегодня есть хотя
+бы один приём пищи. `N` — `plate.count_meals_today`, `M` —
+`rhythm.meals_per_day` (`spec/plate.md`). Перекус сам по себе в `N` не идёт, но
+его калории в полосе — да. Сбой расчёта — строки просто нет.
+
+Сбой расчёта коридора не имеет права съесть подтверждение записи: вызов в
+`handlers/confirm.py` и `handlers/workout.py` fail-soft — исключение пишется в
+лог, сообщение о записи уходит без полосы.
 
 ## Напоминание о взвешивании (`src/scheduler.py`)
 
@@ -125,6 +140,7 @@ bd:save                            # карточка замера с фото; 
 ```
 format_body_card(profile?, last?, goal?, plan?, trend?, bmi_value?, bmi_note?, age?) -> str
 format_day_progress(balance, *, goal?, trend?) -> str
+format_day_totals(balance) -> str
 format_measurement_draft(draft) -> str
 format_goal_plan(plan, *, kind, target_weight_kg) -> str
 format_weight_saved(weight, previous?, goal?) -> str

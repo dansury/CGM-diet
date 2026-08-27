@@ -18,7 +18,7 @@ from src.analytics import body as body_math
 from src.charts.render import render_body_composition, render_weight
 from src.db import repo
 from src.db.models import User
-from src.handlers.deps import local_now, session_scope, to_local, to_utc
+from src.handlers.deps import local_now, session_scope, to_local, to_utc, user_tz
 from src.handlers.features import menu_of
 from src.handlers.states import BodyFlow
 from src.ingest.text_parse import parse_text
@@ -35,7 +35,9 @@ from src.logging_setup import get_logger
 from src.reporting import (
     format_body_card,
     format_day_progress,
+    format_day_totals,
     format_goal_plan,
+    format_meals_today,
     format_measurement_draft,
     format_weight_saved,
 )
@@ -146,17 +148,15 @@ async def _plan_for(session, user: User, *, weight_kg: float | None = None) -> b
 # ------------------------------------------------------------------ прогресс
 
 async def day_progress_text(session, user: User, *, now: datetime) -> str | None:
-    """Полоса дневного коридора — то, что показывается после каждого приёма пищи.
+    """Итог дня — то, что показывается после каждого приёма пищи.
 
-    `None`, если цели нет: без неё «73 % нормы» ничего не значит.
+    С целью — полоса коридора и остаток; без цели «73 % нормы» ничего не
+    значит, поэтому остаются только съеденные калории и подсказка завести цель.
+    `None` — когда за день нечего показать (`spec/body.md` § Дневной коридор).
     """
     goal = await repo.get_active_goal(session, user)
-    if goal is None:
-        return None
-    plan = await _plan_for(session, user)
-    target = plan.target_kcal if plan else goal.target_kcal
-    if not target:
-        return None
+    plan = await _plan_for(session, user) if goal is not None else None
+    target = (plan.target_kcal if plan else None) or (goal.target_kcal if goal else None)
     start_local = now.replace(hour=0, minute=0, second=0, microsecond=0)
     totals = await repo.day_energy(
         session,
@@ -164,12 +164,52 @@ async def day_progress_text(session, user: User, *, now: datetime) -> str | None
         start=to_utc(start_local, user),
         end=to_utc(start_local + timedelta(days=1), user),
     )
+    meals = await _meals_today_text(session, user, start_local=start_local)
+    if not target:
+        # Цели нет (или коридор не посчитался) — но съеденное за день человек
+        # вправе видеть всегда; процентов и остатка без цели не показываем.
+        if not totals["consumed_kcal"] and not totals["burned_kcal"]:
+            return None
+        return format_day_totals(
+            body_math.day_balance(target_kcal=0.0, **totals), meals=meals
+        )
     balance = body_math.day_balance(target_kcal=target, **totals)
     series = [
         (to_local(row.measured_at, user), row.weight_kg)
         for row in await repo.load_weights(session, user)
     ]
-    return format_day_progress(balance, goal=goal, trend=body_math.weight_trend(series))
+    return format_day_progress(
+        balance, goal=goal, trend=body_math.weight_trend(series), meals=meals
+    )
+
+
+#: сколько истории берём на оценку режима питания для строки «приёмов пищи»
+MEALS_HISTORY_DAYS = 60
+
+
+async def _meals_today_text(session, user: User, *, start_local: datetime) -> str:
+    """«🍽 Приёмов пищи: 2 из 3» — сколько приёмов уже было и сколько их обычно.
+
+    Считает `src/analytics/plate.py`: приёмом пищи считается сессия с настоящей
+    едой, одинокий кофе — нет (`spec/plate.md`). Сбой расчёта убирает строку и
+    не трогает остальной итог дня.
+    """
+    from src.analytics import plate as plate_math
+
+    try:
+        history = await repo.load_plate_meals(
+            session, user, since=to_utc(start_local - timedelta(days=MEALS_HISTORY_DAYS), user)
+        )
+        rhythm = plate_math.measure_rhythm(
+            history, meals_per_day=user.meals_per_day, tzinfo=user_tz(user)
+        )
+        done = plate_math.count_meals_today(
+            history, day_start=to_utc(start_local, user), window_min=rhythm.session_min
+        )
+    except Exception:
+        log.exception("meals-per-day count failed")
+        return ""
+    return format_meals_today(done, rhythm.meals_per_day)
 
 
 # ------------------------------------------------------------------ callbacks

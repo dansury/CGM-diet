@@ -81,6 +81,44 @@ def test_the_window_follows_the_users_own_meal_length():
     assert plate.session_window_min(meals) == 40
 
 
+def test_a_dish_photographed_in_bursts_does_not_shrink_the_window():
+    """Пять фото одного обеда подряд — не «пять приёмов по две минуты».
+
+    Такие разрывы утягивали медиану к нижней границе (30 мин), и настоящий
+    обед разваливался на несколько «приёмов пищи».
+    """
+    offsets = [0, 2, 5, 6, 46, 48, 49, 94, 96, 144]  # три обеда по 3–4 фото
+    meals = [meal(offset, [plate.PlateItem("еда", 100, ["protein"])], id=i)
+             for i, offset in enumerate(offsets)]
+    assert plate.session_window_min(meals) > plate.MIN_SESSION_MIN
+
+
+def test_the_days_meals_are_counted_even_when_each_is_several_photos():
+    """Регрессия: «Приём 1 из 3» весь день, сколько бы человек ни ел."""
+    day = [
+        # завтрак: два блюда с разрывом 40 мин
+        meal(0, [plate.PlateItem("блины", 150, ["refined_flour"])], id=1),
+        meal(40, [plate.PlateItem("блины с яблоком", 150, ["refined_flour"]),
+                  plate.PlateItem("кофе", 200, ["milk"])], id=2),
+        # ужин: четыре записи подряд
+        meal(552, [plate.PlateItem("салат с курицей", 200, ["protein"])], id=3),
+        meal(552, [plate.PlateItem("лосось", 200, ["protein"])], id=4),
+        meal(555, [plate.PlateItem("малина", 50, ["fruit"])], id=5),
+        meal(559, [plate.PlateItem("арбуз", 150, ["fruit"])], id=6),
+    ]
+    window = plate.session_window_min(day)
+    sessions = plate.group_sessions(day, window_min=window)
+    assert len(plate.meal_sessions(sessions)) == 2
+    assert plate.count_meals_today(day, day_start=NOW, window_min=window) == 2
+
+
+def test_a_lone_snack_is_not_counted_as_a_meal_anywhere():
+    coffee = [meal(i * 300, [plate.PlateItem("кофе", 200, ["milk"])], id=i) for i in range(10)]
+    assert plate.count_meals_today(coffee, day_start=NOW, window_min=60) == 0
+    assert plate.estimate_meals_per_day(coffee, window_min=60) is None
+    assert plate.typical_meal_mass(coffee, window_min=60) is None
+
+
 def test_meals_per_day_needs_enough_days_of_history():
     one_day = [meal(i * 300, [plate.PlateItem("еда", 100)], id=i) for i in range(3)]
     assert plate.estimate_meals_per_day(one_day, window_min=60) is None
@@ -143,11 +181,14 @@ def test_the_text_stays_a_proportion_never_a_verdict():
         [meal(0, [plate.PlateItem("салат", 250, ["vegetable"])])], window_min=60
     )[0]
     rhythm = plate.measure_rhythm([])
-    text = format_plate_advice(
-        plate.advise(current=current, day_sessions=[current], rhythm=rhythm)
-    )
+    advice = plate.advise(current=current, day_sessions=[current], rhythm=rhythm)
+    text = format_plate_advice(advice)
     assert "Тарелка" in text
-    assert "/set plate off" in text
+    assert "/plate" in text
+    assert "/set plate off" not in text
+    first_text = format_plate_advice(advice, with_rule=True)
+    assert "/set plate off" in first_text
+    assert "Гарвардская тарелка" in first_text
     for forbidden in ("норм", "диагноз", "нельзя", "вредно"):
         assert forbidden not in text.lower()
 
@@ -224,3 +265,37 @@ def test_even_proportions_need_no_advice():
     assert plate.is_balanced(even)
     skewed = plate.score_items([plate.PlateItem("картошка", 500, ["potato"])])
     assert not plate.is_balanced(skewed)
+
+
+def test_gap_recommendations_are_rounded_to_50g():
+    from src.reporting import _round_gap_50
+
+    # protein/veg round up
+    assert _round_gap_50("protein", 125) == 150
+    assert _round_gap_50("veg", 188) == 200
+    assert _round_gap_50("veg", 100) == 100
+    assert _round_gap_50("protein", 51) == 100
+    # grain/fruit round down
+    assert _round_gap_50("grain", 125) == 100
+    assert _round_gap_50("fruit", 62) == 50
+    assert _round_gap_50("grain", 49) == 0
+
+
+def test_advice_text_shows_rounded_gaps():
+    current = plate.group_sessions(
+        [meal(0, [plate.PlateItem("гречка", 200, ["whole_grain"])])], window_min=60
+    )[0]
+    rhythm = plate.Rhythm(
+        meals_per_day=3,
+        meals_source="default",
+        session_min=60,
+        session_source="default",
+        meal_mass_g=500,
+        mass_source="default",
+    )
+    advice = plate.advise(current=current, day_sessions=[current], rhythm=rhythm)
+    text = format_plate_advice(advice)
+    # veg gap is 188 -> ceil to 200
+    assert "+200 г" in text
+    # protein gap is 125 -> ceil to 150
+    assert "+150 г" in text

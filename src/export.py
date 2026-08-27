@@ -28,6 +28,7 @@ from src.db.models import (
     MealItem,
     Medication,
     NutritionMemory,
+    PresencePing,
     Product,
     Symptom,
     User,
@@ -117,6 +118,7 @@ _TABLES: tuple[tuple[str, Any, tuple[str, ...]], ...] = (
         ActivitySample,
         ("id", "kind", "start_at", "end_at", "steps", "distance_m", "kcal", "avg_hr", "source"),
     ),
+    ("presence_pings", PresencePing, ("id", "at", "source")),
     ("symptoms", Symptom, ("id", "slug", "label", "hits", "last_used_at")),
 )
 

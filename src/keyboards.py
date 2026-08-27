@@ -166,12 +166,9 @@ def product_actions(*, mode: str) -> InlineKeyboardMarkup:
         rows.append(
             [InlineKeyboardButton(text="✅ Записать как еду", callback_data="prod:eat")]
         )
-    rows.append(
-        [
-            InlineKeyboardButton(text="➕ Вторая сторона", callback_data="prod:more"),
-            InlineKeyboardButton(text="💾 Только запомнить", callback_data="prod:save"),
-        ]
-    )
+    # Отдельного шага «вторая сторона» нет: обе стороны присылаются одним
+    # альбомом и уходят в модель одним вызовом (`spec/bot.md` § Потоки).
+    rows.append([InlineKeyboardButton(text="💾 Только запомнить", callback_data="prod:save")])
     rows.append(
         [
             InlineKeyboardButton(text="✏️ БЖУ", callback_data="prod:macros"),
@@ -193,6 +190,25 @@ def health_setup(*, step: str = "menu") -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="📦 Приложение-мост", callback_data="hs:app")])
     if step != "menu":
         rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="hs:menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def sleep_setup(*, step: str = "menu", presence_on: bool = False) -> InlineKeyboardMarkup:
+    """Карточка сна: инструкция и переключатель наблюдения (`spec/sleep.md`)."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if step != "how":
+        rows.append([InlineKeyboardButton(text="❓ Как это работает", callback_data="sl:how")])
+    if presence_on:
+        rows.append(
+            [InlineKeyboardButton(text="🚫 Выключить наблюдение", callback_data="sl:off")]
+        )
+    else:
+        rows.append(
+            [InlineKeyboardButton(text="👀 Следить за сном", callback_data="sl:on")]
+        )
+    rows.append([InlineKeyboardButton(text="⌚️ Samsung Health", callback_data="sl:health")])
+    if step != "menu":
+        rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="sl:menu")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -236,6 +252,31 @@ def dictionary_suggestions(entries: list[tuple[int, str, str]]) -> InlineKeyboar
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+#: сколько кнопок «в словарь» вешаем под записанным приёмом пищи
+PIN_BUTTONS_LIMIT = 6
+#: длина названия на такой кнопке — дальше обрезаем
+PIN_LABEL_LIMIT = 32
+
+
+def dictionary_pins(entries: list[tuple[int, str, str]]) -> InlineKeyboardMarkup | None:
+    """«⭐️ в словарь» на каждую позицию только что записанного приёма пищи.
+
+    `entries` — (id, kind, label). Ждать второго раза необязательно: человек
+    сам говорит, что хочет повторять это одной кнопкой
+    (`spec/dictionary.md` § Запись в словарь одной кнопкой).
+    """
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"⭐️ {label[:PIN_LABEL_LIMIT]} → в словарь"[:64],
+                callback_data=f"dict:pin:{entry_id}",
+            )
+        ]
+        for entry_id, _kind, label in entries[:PIN_BUTTONS_LIMIT]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
 def dictionary_page(
@@ -345,6 +386,34 @@ def symptom_picker(
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def plate_settings(*, enabled: bool) -> InlineKeyboardMarkup:
+    """Buttons under /plate: toggle and meals-per-day."""
+    toggle = (
+        InlineKeyboardButton(text="Выключить", callback_data="plt:off")
+        if enabled
+        else InlineKeyboardButton(text="Включить", callback_data="plt:on")
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [toggle],
+            [InlineKeyboardButton(text="Количество приёмов пищи", callback_data="plt:meals")],
+        ]
+    )
+
+
+def plate_meals_picker(*, current: int | None) -> InlineKeyboardMarkup:
+    """Sub-menu: edit meals count or switch to auto."""
+    mark_edit = f"✏️ {current}" if current else "✏️ 3"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=mark_edit, callback_data="plt:medit"),
+                InlineKeyboardButton(text="✨ Автоматически", callback_data="plt:mauto"),
+            ],
+        ]
+    )
 
 
 def stats_windows(active: str = "1h") -> InlineKeyboardMarkup:
@@ -597,6 +666,8 @@ __all__ = [
     "KIND_ICONS",
     "MENU_ROWS",
     "KIND_TABS",
+    "PIN_BUTTONS_LIMIT",
+    "PIN_LABEL_LIMIT",
     "activity_picker",
     "body_menu",
     "cancel_button",
@@ -609,6 +680,7 @@ __all__ = [
     "confirm_medication",
     "confirm_workout",
     "dictionary_page",
+    "dictionary_pins",
     "dictionary_suggestions",
     "feature_hint",
     "health_setup",
@@ -618,10 +690,13 @@ __all__ = [
     "onboarding_sex_picker",
     "onboarding_skip",
     "photo_kind",
+    "plate_meals_picker",
+    "plate_settings",
     "pregnancy_picker",
     "product_actions",
     "rate_picker",
     "sex_picker",
+    "sleep_setup",
     "stats_windows",
     "symptom_picker",
     "tag_button_label",

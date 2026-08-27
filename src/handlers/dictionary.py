@@ -11,7 +11,7 @@ from __future__ import annotations
 from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from src.db import repo
 from src.handlers.deps import local_now, session_scope, to_utc
@@ -112,6 +112,37 @@ async def on_remove(callback: CallbackQuery) -> None:
         await repo.hide_dictionary(session, entry)
     await callback.answer(f"Убрано: {label}")
     await _render(callback.message, kind=kind, mode="del", offset=0, edit=True)
+
+
+@router.callback_query(F.data.startswith("dict:pin:"))
+async def on_pin(callback: CallbackQuery) -> None:
+    """«⭐️ → в словарь» под записанным приёмом пищи: сразу, без второго раза.
+
+    Нажатая кнопка исчезает, остальные позиции того же приёма остаются: их
+    можно добавить так же, по одной (`spec/dictionary.md`).
+    """
+    entry_id = int(callback.data.rsplit(":", 1)[1])
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, callback.from_user.id)
+        entry = await repo.get_dictionary_entry(session, user, entry_id)
+        if entry is None:
+            await callback.answer("Записи уже нет")
+            return
+        label = entry.label
+        await repo.pin_dictionary(session, entry)
+    await callback.answer(f"В словаре: {label}")
+    try:
+        markup = getattr(callback.message, "reply_markup", None)
+        rest = [
+            row
+            for row in (markup.inline_keyboard if markup else [])
+            if not any(button.callback_data == callback.data for button in row)
+        ]
+        await callback.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rest) if rest else None
+        )
+    except Exception:  # сообщение могли уже поправить — запись это не отменяет
+        log.debug("could not refresh the pin keyboard", exc_info=True)
 
 
 @router.callback_query(F.data == "dict:new")

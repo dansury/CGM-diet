@@ -7,7 +7,7 @@
 | Спека | Покрывает | Исходники |
 |---|---|---|
 | [spec/infra.md](spec/infra.md) | конфиг, логирование, пути, движок БД, миграции, Docker | `src/config.py`, `src/logging_setup.py`, `src/paths.py`, `src/db/{base,engine}.py`, `alembic/`, `Dockerfile`, `docker-compose.yml`, `scripts/` |
-| [spec/data_model.md](spec/data_model.md) | 17 таблиц, соглашения хранения, репозиторий, экспорт, удаление | `src/db/models.py`, `src/db/repo.py`, `src/export.py` |
+| [spec/data_model.md](spec/data_model.md) | 24 таблицы, соглашения хранения, репозиторий, экспорт, удаление | `src/db/models.py`, `src/db/repo.py`, `src/export.py` |
 | [spec/llm.md](spec/llm.md) | протокол клиента, OpenRouter, mock, разбор JSON | `src/llm/*` |
 | [spec/ingest.md](spec/ingest.md) | маршрутизация ввода, промпты, распознавание, голос (SpeechKit), текст, единицы, PDF | `src/vision/*`, `src/ingest/*` |
 | [spec/analytics.md](spec/analytics.md) | компоненты, окна, статистика, CGM-метрики, симптомы, активность | `src/analytics/*` |
@@ -20,6 +20,7 @@
 | [spec/workout.md](spec/workout.md) | тренировки и ходьба: ввод, доп. вопросы, энергозатраты по MET | `src/analytics/workout.py`, `src/handlers/workout.py` |
 | [spec/wellbeing.md](spec/wellbeing.md) | опрос 1–5, динамический глоссарий симптомов | `src/handlers/wellbeing.py`, `src/analytics/symptoms.py` |
 | [spec/charts.md](spec/charts.md) | таймлайн, рейтинг, самочувствие | `src/charts/render.py` |
+| [spec/sleep.md](spec/sleep.md) | сон: ночи из Health Connect и по появлениям в чате, режим, связь с калориями и сахаром | `src/analytics/sleep.py`, `src/handlers/{sleep,presence}.py` |
 | [spec/health_sync.md](spec/health_sync.md) | Samsung Health / Health Connect, HTTP-релей, вебхук, инструкция и приложение-мост | `src/health/*`, `src/web/app.py`, `apps/health-bridge/` |
 | [spec/meds.md](spec/meds.md) | лекарства: фото, журнал, справочник побочек | `src/meds/*`, `src/analytics/meds.py`, `src/handlers/meds.py` |
 | [spec/dictionary.md](spec/dictionary.md) | личный словарь, подсказки по первым буквам, память БЖУ | `src/handlers/dictionary.py`, `src/db/repo.py` |

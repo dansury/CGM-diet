@@ -54,7 +54,7 @@ async def load_active_models() -> dict[str, str]:
     return mapping
 
 
-async def _explain() -> dict[str, model_selection.Resolved]:
+async def explain_models() -> dict[str, model_selection.Resolved]:
     async with session_scope() as session:
         stored = {
             model_selection.KEY_GLOBAL: await repo.get_setting(
@@ -70,7 +70,7 @@ LEVEL_NAMES = {"slot": "слот", "global": "общий", "env": "из .env"}
 
 @router.message(Command("models"))
 async def show_models(message: Message) -> None:
-    resolved = await _explain()
+    resolved = await explain_models()
     lines = ["🤖 <b>Модели по слотам</b>", ""]
     for slot, item in resolved.items():
         lines.append(
@@ -256,4 +256,4 @@ async def show_context(message: Message) -> None:
     )
 
 
-__all__ = ["load_active_models", "router"]
+__all__ = ["explain_models", "load_active_models", "router"]

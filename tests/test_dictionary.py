@@ -31,6 +31,45 @@ async def test_a_dish_appears_only_on_the_second_sighting(session):
     assert entries[0].payload["items"]  # enough to rebuild the card without the model
 
 
+async def test_every_item_can_be_pinned_with_one_button(session):
+    """Ждать второго раза необязательно: кнопка кладёт позицию в словарь сразу."""
+    user = await _user(session)
+    draft = MealDraft(
+        title="Гречка с курицей",
+        items=[ItemDraft(name="гречка"), ItemDraft(name="курица")],
+    )
+    await repo.remember_meal(session, user, draft)
+
+    offered = await repo.pinnable_entries(session, user, draft)
+    # по кнопке на каждую позицию и одна на само блюдо
+    assert [e.label for e in offered] == ["гречка", "курица", "Гречка с курицей"]
+    assert await repo.list_dictionary(session, user, kind="item") == []
+
+    await repo.pin_dictionary(session, offered[0])
+    assert [e.label for e in await repo.list_dictionary(session, user, kind="item")] == ["гречка"]
+    # остальные позиции всё ещё ждут своей кнопки
+    assert [e.label for e in await repo.pinnable_entries(session, user, draft)] == [
+        "курица",
+        "Гречка с курицей",
+    ]
+
+
+async def test_a_single_item_meal_offers_one_button_not_two(session):
+    user = await _user(session)
+    draft = MealDraft(title="Овсянка", items=[ItemDraft(name="овсянка")])
+    await repo.remember_meal(session, user, draft)
+    assert [e.label for e in await repo.pinnable_entries(session, user, draft)] == ["овсянка"]
+
+
+async def test_a_deleted_shortcut_is_not_offered_again(session):
+    user = await _user(session)
+    draft = MealDraft(title="Кефир", items=[ItemDraft(name="кефир")])
+    await repo.remember_meal(session, user, draft)
+    entry = (await repo.pinnable_entries(session, user, draft))[0]
+    await repo.hide_dictionary(session, entry)
+    assert await repo.pinnable_entries(session, user, draft) == []
+
+
 async def test_a_medication_is_offered_after_the_first_dose(session):
     user = await _user(session)
     await repo.bump_dictionary(

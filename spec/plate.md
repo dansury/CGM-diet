@@ -30,25 +30,41 @@ core_mass_g(items)->float                    # масса категорий COR
 is_meal(items)->bool                         # core_mass_g >= MEAL_MIN_CORE_G
 is_balanced(score)->bool                     # score.score >= BALANCED_SCORE
 score_items(items)->PlateScore               # score = 100·Σmin(share,target)/Σtarget
-session_window_min(meals, default=60)->int   # медиана разрывов ≤150 мин, [30..120]
+session_window_min(meals, default=60)->int   # медиана разрывов (10..150] мин, [30..120]
 group_sessions(meals, window_min)->[MealSession]
+meal_sessions(sessions)->[MealSession]       # только is_meal, без одиночных перекусов
 estimate_meals_per_day(meals, window_min, tzinfo?)->int|None   # None при <5 днях
 typical_meal_mass(meals, window_min)->float|None               # медиана, [250..1200] г
 measure_rhythm(history, meals_per_day?, tzinfo?)->Rhythm
 advise(current, day_sessions, rhythm)->PlateAdvice
+count_meals_today(history, day_start, window_min)->int   # приёмов пищи с day_start
 ```
 
 Константы: `DEFAULT_SESSION_MIN=60`, `DEFAULT_MEALS_PER_DAY=3`,
-`MIN/MAX_MEALS_PER_DAY=2/8`, `MIN_DAYS_FOR_RHYTHM=5`,
+`MIN/MAX_MEALS_PER_DAY=2/8`, `MIN_DAYS_FOR_RHYTHM=5`, `BURST_GAP_MIN=10`,
 `DEFAULT_MEAL_MASS_G=500`, `FALLBACK_PORTION_G=100`, `MIN_GAP_G=30`,
 `CORE_CATEGORIES=(veg, fruit, grain, protein, refined)`, `MEAL_MIN_CORE_G=200`,
 `BALANCED_SCORE=80`.
+
+## Что считается приёмом пищи в статистике
+
+Одна тарелка = одна `MealSession`, в которой есть настоящая еда (`is_meal`).
+Перекус, оставшийся один, приёмом пищи не считается нигде: ни в `meals_done`,
+ни в `estimate_meals_per_day`, ни в `typical_meal_mass` — иначе числитель
+(«приём N») и знаменатель («из M») считались бы по разным правилам.
 
 ## Приём пищи как серия
 
 Обед из нескольких блюд — это одна тарелка. Записи, идущие подряд с разрывом не
 больше `session_min`, склеиваются в `MealSession`. `session_min` — час по
 умолчанию и собственное среднее время еды, когда истории хватает.
+
+`session_window_min` считает медиану **только** по разрывам из
+`(BURST_GAP_MIN .. SESSION_SAMPLE_LIMIT_MIN]`. Разрывы короче `BURST_GAP_MIN`
+(10 мин) — это одно и то же сидение, снятое несколькими фото: они ничего не
+говорят о длительности приёма пищи, а в медиане утягивали окно к нижней границе
+30 мин и разрывали настоящий обед на несколько «приёмов». Меньше трёх годных
+разрывов — окно остаётся часом.
 
 ## Когда показываем
 
@@ -66,8 +82,12 @@ advise(current, day_sessions, rhythm)->PlateAdvice
 
 ## Сколько приёмов пищи в день
 
-Приоритет: `users.meals_per_day` (задал пользователь) → медиана сессий по дням
-с едой (нужно ≥5 таких дней) → 3.
+Приоритет: `users.meals_per_day` (задал пользователь) → медиана **приёмов пищи**
+(`meal_sessions`) по дням с едой (нужно ≥5 таких дней) → 3.
+
+Сколько приёмов уже было сегодня — `count_meals_today(history, day_start,
+window_min)`; это же число показывает дневной итог после каждой записи
+(`spec/body.md` § Дневной коридор).
 
 ## Совет
 

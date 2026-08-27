@@ -12,7 +12,13 @@ import pytest
 
 from src.analytics import body as body_math
 from src.db import repo
-from src.reporting import format_body_card, format_day_progress, format_goal_plan, progress_bar
+from src.reporting import (
+    format_body_card,
+    format_day_progress,
+    format_day_totals,
+    format_goal_plan,
+    progress_bar,
+)
 
 NOW = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
 TODAY = date(2026, 8, 24)
@@ -103,6 +109,21 @@ def test_losing_weight_below_the_healthy_bmi_is_refused():
             age=25,
             sex="f",
             activity="light",
+            today=TODAY,
+        )
+
+
+def test_losing_weight_while_pregnant_is_refused_regardless_of_bmi():
+    with pytest.raises(body_math.PlanImpossible):
+        body_math.build_plan(
+            kind="lose",
+            weight_kg=70.0,
+            target_weight_kg=65.0,
+            height_cm=170.0,
+            age=30,
+            sex="f",
+            activity="light",
+            pregnant=True,
             today=TODAY,
         )
 
@@ -281,6 +302,14 @@ def test_the_day_progress_names_the_numbers_behind_the_bar():
     text = format_day_progress(balance)
     assert "1420" in text and "2160" in text
     assert "Осталось" in text
+
+
+def test_the_day_total_without_a_goal_names_no_norm():
+    balance = body_math.day_balance(target_kcal=0.0, consumed_kcal=646, carbs_g=72)
+    text = format_day_totals(balance)
+    assert "646" in text and "72" in text
+    assert "/body" in text                       # как завести цель
+    assert "%" not in text and "Осталось" not in text  # нормы без цели нет
 
 
 def test_the_body_card_asks_for_a_goal_when_there_is_none():

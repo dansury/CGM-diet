@@ -5,13 +5,18 @@ The plate is a proportion, not a diet: half the plate vegetables and fruit
 and refined grains are deliberately *not* vegetables/whole grains — they are
 counted as mass but never toward a target, exactly as the original plate does.
 
-Two things make the score honest on real data:
+Four things make the score honest on real data:
 
 * people eat a lunch as several photos, so meals are grouped into *sessions*
   (a gap no larger than the user's own typical meal length, ~1 h by default);
 * the daily advice is scaled by how many meals a day the user actually has —
   either the number they set, or the median number of sessions per day in
-  their own history.
+  their own history;
+* a coffee or a handful of nuts is not a plate: a session is only scored once
+  it holds enough actual food (`is_meal`), and a snack joins a plate only when
+  a real meal lands next to it inside the session window;
+* a plate whose proportions already hold together is not worth a message
+  (`is_balanced`).
 
 Nothing here touches the ORM or aiogram: it works on `PlateItem`/`PlateMeal`
 (see `spec/plate.md`).
@@ -47,6 +52,9 @@ MIN_SESSION_MIN = 30
 MAX_SESSION_MIN = 120
 #: за пределами этого разрыва два приёма пищи — точно разные
 SESSION_SAMPLE_LIMIT_MIN = 150
+#: разрыв короче — это одно сидение, снятое несколькими фото; о длительности
+#: приёма пищи такие разрывы не говорят ничего и в медиану не идут
+BURST_GAP_MIN = 10
 
 DEFAULT_MEALS_PER_DAY = 3
 MIN_MEALS_PER_DAY = 2
@@ -62,6 +70,13 @@ MAX_MEAL_MASS_G = 1200.0
 FALLBACK_PORTION_G = 100.0
 #: меньшие пробелы не стоят отдельной строки совета
 MIN_GAP_G = 30.0
+
+#: категории, из которых состоит собственно еда; кофе и орехи в них не входят
+CORE_CATEGORIES: tuple[str, ...] = (*TARGET_SHARES, "refined")
+#: столько «еды» должно быть в приёме, чтобы это была тарелка, а не перекус, г
+MEAL_MIN_CORE_G = 200.0
+#: с этого счёта пропорции считаем собранными — говорить не о чем
+BALANCED_SCORE = 80.0
 
 _TAG_CATEGORY: dict[str, str] = {
     "vegetable": "veg",
@@ -214,6 +229,26 @@ def classify(item: PlateItem) -> str:
     return "extra"
 
 
+def core_mass_g(items: list[PlateItem]) -> float:
+    """Масса позиций, которые вообще участвуют в тарелке, г."""
+    return sum(_portion(item) for item in items if classify(item) in CORE_CATEGORIES)
+
+
+def is_meal(items: list[PlateItem]) -> bool:
+    """Это блюдо, а не перекус вроде кофе или горсти орехов.
+
+    Перекус сам по себе тарелкой не оценивается; если рядом (внутри окна
+    приёма пищи) человек съел что-то существенное, `group_sessions` склеит
+    их в одну сессию — и перекус войдёт в состав уже настоящей тарелки.
+    """
+    return core_mass_g(items) >= MEAL_MIN_CORE_G
+
+
+def is_balanced(score: PlateScore) -> bool:
+    """Пропорции собраны — показывать разбор незачем."""
+    return score.score >= BALANCED_SCORE
+
+
 def score_items(items: list[PlateItem]) -> PlateScore:
     """Mass shares of one plate, and how much of the target they cover."""
     grams: dict[str, float] = defaultdict(float)
@@ -240,14 +275,18 @@ def session_window_min(meals: list[PlateMeal], *, default: int = DEFAULT_SESSION
     """Типичная длительность приёма пищи по собственной истории, минуты.
 
     Берём медиану разрывов между подряд идущими записями, которые ещё могут
-    быть одним приёмом (до `SESSION_SAMPLE_LIMIT_MIN`). Мало данных — час.
+    быть одним приёмом (до `SESSION_SAMPLE_LIMIT_MIN`) и уже что-то говорят о
+    его длительности (больше `BURST_GAP_MIN`). Обед, снятый пятью фото подряд,
+    даёт пачку разрывов в одну-две минуты; попадая в медиану, они утягивали
+    окно к нижней границе — и настоящий обед разваливался на «приёмы».
+    Мало данных — час.
     """
     ordered = sorted(meals, key=lambda m: m.eaten_at)
     gaps = [
         (b.eaten_at - a.eaten_at).total_seconds() / 60.0
         for a, b in zip(ordered, ordered[1:], strict=False)
     ]
-    inside = [gap for gap in gaps if 0 < gap <= SESSION_SAMPLE_LIMIT_MIN]
+    inside = [gap for gap in gaps if BURST_GAP_MIN < gap <= SESSION_SAMPLE_LIMIT_MIN]
     if len(inside) < 3:
         return default
     value = statistics.median(inside)
@@ -279,6 +318,24 @@ def _session(bucket: list[PlateMeal]) -> MealSession:
     )
 
 
+def meal_sessions(sessions: list[MealSession]) -> list[MealSession]:
+    """Только настоящие приёмы пищи: одинокий кофе приёмом не считается.
+
+    Один и тот же фильтр стоит и в числителе («приём N»), и в знаменателе
+    («из M»): считать их по разным правилам — значит показывать несравнимые
+    числа (`spec/plate.md` § Что считается приёмом пищи в статистике).
+    """
+    return [session for session in sessions if is_meal(session.items)]
+
+
+def count_meals_today(
+    history: list[PlateMeal], *, day_start: datetime, window_min: int
+) -> int:
+    """Сколько приёмов пищи уже было с начала дня."""
+    today = [meal for meal in history if meal.eaten_at >= day_start]
+    return len(meal_sessions(group_sessions(today, window_min=window_min)))
+
+
 def estimate_meals_per_day(
     meals: list[PlateMeal], *, window_min: int, tzinfo=None
 ) -> int | None:
@@ -287,7 +344,7 @@ def estimate_meals_per_day(
     `None`, если дней с записями меньше `MIN_DAYS_FOR_RHYTHM`: режим по двум
     дням — это не статистика.
     """
-    sessions = group_sessions(meals, window_min=window_min)
+    sessions = meal_sessions(group_sessions(meals, window_min=window_min))
     if not sessions:
         return None
     per_day: Counter[object] = Counter()
@@ -303,8 +360,12 @@ def estimate_meals_per_day(
 
 
 def typical_meal_mass(meals: list[PlateMeal], *, window_min: int) -> float | None:
-    """Медианная масса одного приёма пищи, г. `None` — данных мало."""
-    sessions = group_sessions(meals, window_min=window_min)
+    """Медианная масса одного приёма пищи, г. `None` — данных мало.
+
+    Перекусы в медиану не идут: иначе «типичный приём пищи» весил бы столько,
+    сколько чашка кофе.
+    """
+    sessions = meal_sessions(group_sessions(meals, window_min=window_min))
     masses = [session.mass_g for session in sessions if session.mass_g > 0]
     if len(masses) < MIN_DAYS_FOR_RHYTHM:
         return None
@@ -358,6 +419,7 @@ def advise(
 
     `day_sessions` — все приёмы за сегодня, включая текущий: дневной остаток
     считается от того, что уже съедено, а не от одной последней тарелки.
+    Перекусы идут в дневную массу, но приёмом пищи не считаются.
     """
     score = score_items(current.items)
     meal_targets = {cat: rhythm.meal_mass_g * share for cat, share in TARGET_SHARES.items()}
@@ -367,7 +429,7 @@ def advise(
     for session in day_sessions:
         for cat, value in score_items(session.items).grams.items():
             day_grams[cat] += value
-    meals_done = len(day_sessions)
+    meals_done = len(meal_sessions(day_sessions))
     meals_left = max(0, rhythm.meals_per_day - meals_done)
     day_targets = {cat: value * rhythm.meals_per_day for cat, value in meal_targets.items()}
     return PlateAdvice(
@@ -385,10 +447,14 @@ def category_label(category: str) -> str:
 
 
 __all__ = [
+    "BALANCED_SCORE",
+    "BURST_GAP_MIN",
     "CATEGORY_LABELS",
+    "CORE_CATEGORIES",
     "DEFAULT_MEALS_PER_DAY",
     "DEFAULT_SESSION_MIN",
     "MAX_MEALS_PER_DAY",
+    "MEAL_MIN_CORE_G",
     "MIN_MEALS_PER_DAY",
     "TARGET_SHARES",
     "Gap",
@@ -401,8 +467,13 @@ __all__ = [
     "advise",
     "category_label",
     "classify",
+    "core_mass_g",
+    "count_meals_today",
     "estimate_meals_per_day",
     "group_sessions",
+    "is_balanced",
+    "is_meal",
+    "meal_sessions",
     "measure_rhythm",
     "score_items",
     "session_window_min",

@@ -19,7 +19,6 @@ class GlucoseFlow(StatesGroup):
 
 class ProductFlow(StatesGroup):
     confirming = State()
-    awaiting_second_side = State()
     editing = State()
     editing_macros = State()   # «✏️ БЖУ» — числа на 100 г с этикетки
 
@@ -46,6 +45,10 @@ class BodyFlow(StatesGroup):
     confirming = State()   # карточка замера, распознанного с фото весов
 
 
+class OnboardingFlow(StatesGroup):
+    asking = State()       # текущий шаг анкеты — в ключе `onb_step`, очередь — `onb_queue`
+
+
 class WorkoutFlow(StatesGroup):
     confirming = State()
     asking = State()       # очередь доп. вопросов — в ключе `wo_pending`
@@ -64,6 +67,7 @@ __all__ = [
     "LabFlow",
     "MealFlow",
     "MedicationFlow",
+    "OnboardingFlow",
     "ProductFlow",
     "SettingsFlow",
     "WellbeingFlow",

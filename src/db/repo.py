@@ -1151,6 +1151,59 @@ async def hide_dictionary(session: AsyncSession, entry: DictionaryEntry) -> None
     await session.flush()
 
 
+async def pin_dictionary(session: AsyncSession, entry: DictionaryEntry) -> DictionaryEntry:
+    """Put an entry into the dictionary right now, without a second sighting.
+
+    The user said «keep this one» — that outranks the `MIN_HITS` threshold,
+    which only exists to guess what is worth keeping (`spec/dictionary.md`
+    § Запись в словарь одной кнопкой).
+    """
+    entry.hits = max(entry.hits, MIN_HITS.get(entry.kind, 1))
+    entry.pinned = True
+    entry.is_active = True
+    entry.last_used_at = utcnow()
+    await session.flush()
+    return entry
+
+
+async def pinnable_entries(
+    session: AsyncSession, user: User, draft: MealDraft, *, limit: int = 6
+) -> list[DictionaryEntry]:
+    """Позиции только что записанного приёма пищи, которых в словаре ещё не видно.
+
+    Считаем после `remember_meal`: строки уже есть, но `hits` может не дотягивать
+    до порога вида. Скрытые руками записи не предлагаем — удаление ярлыка не
+    отменяется следующим приёмом пищи.
+    """
+    keys: list[tuple[str, str]] = [("item", item.name) for item in draft.items]
+    title = (draft.title or "").strip()
+    if title and len(draft.items) > 1:
+        keys.append(("meal", title))
+    found: list[DictionaryEntry] = []
+    seen: set[int] = set()
+    for kind, label in keys:
+        key = normalize_name(label)
+        if not key:
+            continue
+        entry = await session.scalar(
+            select(DictionaryEntry).where(
+                DictionaryEntry.user_id == user.id,
+                DictionaryEntry.kind == kind,
+                DictionaryEntry.key_norm == key,
+                DictionaryEntry.is_active.is_(True),
+            )
+        )
+        if entry is None or entry.id in seen:
+            continue
+        if entry.hits >= MIN_HITS.get(kind, 1):
+            continue  # уже видна в /my — кнопка ни к чему
+        seen.add(entry.id)
+        found.append(entry)
+        if len(found) >= limit:
+            break
+    return found
+
+
 async def remember_meal(session: AsyncSession, user: User, draft: MealDraft) -> None:
     """One confirmed meal → dictionary sightings for the dish and its items."""
     title = (draft.title or "").strip()
@@ -1509,13 +1562,14 @@ async def set_feature_status(
 
 async def mark_feature_used(
     session: AsyncSession, user: User, key: str, *, at: datetime | None = None
-) -> None:
-    """Возможностям без собственной строки в БД (график, статистика, выгрузка)
-    отметка обращения — единственный способ понять, что ими пользовались."""
+) -> bool:
+    """Mark a feature as used; return True on the very first use."""
     row = await _feature_row(session, user, key)
     if row.used_at is None:
         row.used_at = at or utcnow()
         await session.flush()
+        return True
+    return False
 
 
 async def users_due_for_hint(
@@ -1652,6 +1706,8 @@ __all__ = [
     "load_medication_likes",
     "load_medications",
     "load_points",
+    "pin_dictionary",
+    "pinnable_entries",
     "remember_meal",
     "save_checkin",
     "save_correction",

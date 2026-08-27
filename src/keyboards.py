@@ -166,12 +166,9 @@ def product_actions(*, mode: str) -> InlineKeyboardMarkup:
         rows.append(
             [InlineKeyboardButton(text="✅ Записать как еду", callback_data="prod:eat")]
         )
-    rows.append(
-        [
-            InlineKeyboardButton(text="➕ Вторая сторона", callback_data="prod:more"),
-            InlineKeyboardButton(text="💾 Только запомнить", callback_data="prod:save"),
-        ]
-    )
+    # Отдельного шага «вторая сторона» нет: обе стороны присылаются одним
+    # альбомом и уходят в модель одним вызовом (`spec/bot.md` § Потоки).
+    rows.append([InlineKeyboardButton(text="💾 Только запомнить", callback_data="prod:save")])
     rows.append(
         [
             InlineKeyboardButton(text="✏️ БЖУ", callback_data="prod:macros"),
@@ -255,6 +252,31 @@ def dictionary_suggestions(entries: list[tuple[int, str, str]]) -> InlineKeyboar
         ]
     )
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+#: сколько кнопок «в словарь» вешаем под записанным приёмом пищи
+PIN_BUTTONS_LIMIT = 6
+#: длина названия на такой кнопке — дальше обрезаем
+PIN_LABEL_LIMIT = 32
+
+
+def dictionary_pins(entries: list[tuple[int, str, str]]) -> InlineKeyboardMarkup | None:
+    """«⭐️ в словарь» на каждую позицию только что записанного приёма пищи.
+
+    `entries` — (id, kind, label). Ждать второго раза необязательно: человек
+    сам говорит, что хочет повторять это одной кнопкой
+    (`spec/dictionary.md` § Запись в словарь одной кнопкой).
+    """
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"⭐️ {label[:PIN_LABEL_LIMIT]} → в словарь"[:64],
+                callback_data=f"dict:pin:{entry_id}",
+            )
+        ]
+        for entry_id, _kind, label in entries[:PIN_BUTTONS_LIMIT]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows) if rows else None
 
 
 def dictionary_page(
@@ -366,6 +388,34 @@ def symptom_picker(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def plate_settings(*, enabled: bool) -> InlineKeyboardMarkup:
+    """Buttons under /plate: toggle and meals-per-day."""
+    toggle = (
+        InlineKeyboardButton(text="Выключить", callback_data="plt:off")
+        if enabled
+        else InlineKeyboardButton(text="Включить", callback_data="plt:on")
+    )
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [toggle],
+            [InlineKeyboardButton(text="Количество приёмов пищи", callback_data="plt:meals")],
+        ]
+    )
+
+
+def plate_meals_picker(*, current: int | None) -> InlineKeyboardMarkup:
+    """Sub-menu: edit meals count or switch to auto."""
+    mark_edit = f"✏️ {current}" if current else "✏️ 3"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=mark_edit, callback_data="plt:medit"),
+                InlineKeyboardButton(text="✨ Автоматически", callback_data="plt:mauto"),
+            ],
+        ]
+    )
+
+
 def stats_windows(active: str = "1h") -> InlineKeyboardMarkup:
     def mark(window: str, text: str) -> str:
         return f"• {text}" if window == active else text
@@ -387,26 +437,41 @@ def stats_windows(active: str = "1h") -> InlineKeyboardMarkup:
 
 # ------------------------------------------------------------------ тело и цель
 
-def body_menu(*, has_goal: bool) -> InlineKeyboardMarkup:
+def body_menu(*, has_goal: bool, show_pregnancy: bool = False) -> InlineKeyboardMarkup:
     """Карточка `/body`: замер, профиль, цель, график."""
+    rows = [
+        [
+            InlineKeyboardButton(text="⚖️ Записать вес", callback_data="bd:weight"),
+            InlineKeyboardButton(
+                text="🎯 Изменить цель" if has_goal else "🎯 Задать цель",
+                callback_data="bd:goal",
+            ),
+        ],
+        [
+            InlineKeyboardButton(text="📏 Рост", callback_data="bd:field:height"),
+            InlineKeyboardButton(text="🎂 Возраст", callback_data="bd:field:age"),
+        ],
+        [
+            InlineKeyboardButton(text="⚧ Пол", callback_data="bd:field:sex"),
+            InlineKeyboardButton(text="🏃 Активность", callback_data="bd:field:activity"),
+        ],
+    ]
+    second_row = [InlineKeyboardButton(text="🩺 Особые состояния", callback_data="bd:field:conditions")]
+    if show_pregnancy:
+        second_row.append(InlineKeyboardButton(text="🤰 Беременность", callback_data="bd:field:pregnant"))
+    rows.append(second_row)
+    rows.append([InlineKeyboardButton(text="📉 График веса", callback_data="bd:chart")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def pregnancy_picker() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="⚖️ Записать вес", callback_data="bd:weight"),
-                InlineKeyboardButton(
-                    text="🎯 Изменить цель" if has_goal else "🎯 Задать цель",
-                    callback_data="bd:goal",
-                ),
+                InlineKeyboardButton(text="Да", callback_data="bd:preg:y"),
+                InlineKeyboardButton(text="Нет", callback_data="bd:preg:n"),
             ],
-            [
-                InlineKeyboardButton(text="📏 Рост", callback_data="bd:field:height"),
-                InlineKeyboardButton(text="🎂 Возраст", callback_data="bd:field:age"),
-            ],
-            [
-                InlineKeyboardButton(text="⚧ Пол", callback_data="bd:field:sex"),
-                InlineKeyboardButton(text="🏃 Активность", callback_data="bd:field:activity"),
-            ],
-            [InlineKeyboardButton(text="📉 График веса", callback_data="bd:chart")],
+            [cancel_button()],
         ]
     )
 
@@ -461,6 +526,43 @@ def confirm_measurement() -> InlineKeyboardMarkup:
             [
                 InlineKeyboardButton(text="✅ Записать", callback_data="bd:save"),
                 InlineKeyboardButton(text="✏️ Скорректировать", callback_data="bd:field:weight"),
+            ],
+            [cancel_button()],
+        ]
+    )
+
+
+# ------------------------------------------------------------------ онбординг
+
+def onboarding_skip() -> InlineKeyboardMarkup:
+    """Любой шаг анкеты можно пропустить и заполнить позже через /body."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="⏭ Пропустить", callback_data="onb:skip")],
+            [cancel_button()],
+        ]
+    )
+
+
+def onboarding_sex_picker() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Мужской", callback_data="onb:sex:m"),
+                InlineKeyboardButton(text="Женский", callback_data="onb:sex:f"),
+            ],
+            [InlineKeyboardButton(text="⏭ Пропустить", callback_data="onb:skip")],
+            [cancel_button()],
+        ]
+    )
+
+
+def onboarding_pregnancy_picker() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Да", callback_data="onb:preg:y"),
+                InlineKeyboardButton(text="Нет", callback_data="onb:preg:n"),
             ],
             [cancel_button()],
         ]
@@ -564,6 +666,8 @@ __all__ = [
     "KIND_ICONS",
     "MENU_ROWS",
     "KIND_TABS",
+    "PIN_BUTTONS_LIMIT",
+    "PIN_LABEL_LIMIT",
     "activity_picker",
     "body_menu",
     "cancel_button",
@@ -576,12 +680,19 @@ __all__ = [
     "confirm_medication",
     "confirm_workout",
     "dictionary_page",
+    "dictionary_pins",
     "dictionary_suggestions",
     "feature_hint",
     "health_setup",
     "hidden_features",
     "main_menu",
+    "onboarding_pregnancy_picker",
+    "onboarding_sex_picker",
+    "onboarding_skip",
     "photo_kind",
+    "plate_meals_picker",
+    "plate_settings",
+    "pregnancy_picker",
     "product_actions",
     "rate_picker",
     "sex_picker",

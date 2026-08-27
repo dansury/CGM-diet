@@ -57,6 +57,7 @@ class FakeMessage:
     document: Any = None
     voice: Any = None
     audio: Any = None
+    bot: Any = None
     chat: FakeChat = field(default_factory=FakeChat)
     from_user: FakeUser = field(default_factory=FakeUser)
     sent: list[dict] = field(default_factory=list)
@@ -182,6 +183,25 @@ async def test_editing_the_draft_records_a_correction(engine, session, state):
     assert "овсянка 300" in corrections[0].new_value
 
 
+async def test_a_correction_photo_is_merged_into_the_draft(engine, session, state):
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    await confirm.meal_edit(FakeCallback(data="meal:edit", message=FakeMessage()), state)
+    assert await state.get_state() == MealFlow.editing.state
+
+    photo_message = FakeMessage(photo=[FakePhoto()], caption="ещё индейка")
+    await confirm.meal_apply_edit_photo(photo_message, state, FakeBot())
+    assert await state.get_state() == MealFlow.confirming.state
+    assert any("Гречка" in t for t in photo_message.texts)  # ответ мока на фото-правку
+
+    from sqlalchemy import select
+
+    from src.db.models import Correction
+
+    corrections = list(await session.scalars(select(Correction)))
+    assert len(corrections) == 1
+    assert corrections[0].new_value == "ещё индейка"
+
+
 async def test_the_bju_button_stores_the_numbers_and_says_so(engine, session, state):
     await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
     await confirm.meal_macros(FakeCallback(data="meal:macros", message=FakeMessage()), state)
@@ -226,19 +246,33 @@ async def test_check_mode_routes_a_photo_to_the_product_verdict(engine, session,
     assert (await repo.counts(session, user))["meals"] == 0  # nothing eaten yet
 
 
-async def test_the_second_package_side_is_merged_into_one_card(engine, session, state):
+async def test_both_package_sides_come_as_one_album(engine, session, state):
+    """Обе стороны упаковки уходят в модель одним вызовом — без отдельного шага."""
     await intake.start_check_mode(FakeMessage(), state)
-    await intake.on_photo(FakeMessage(photo=[FakePhoto("front")]), state, FakeBot())
-    await confirm.product_more(FakeCallback(data="prod:more", message=FakeMessage()), state)
-    assert await state.get_state() == ProductFlow.awaiting_second_side.state
-
     bot = FakeBot()
-    await intake.on_photo(FakeMessage(photo=[FakePhoto("back")]), state, bot)
-    assert bot.downloads == ["back", "front"]  # both sides re-sent together
+    await intake._handle_photos(
+        [FakeMessage(photo=[FakePhoto("front")]), FakeMessage(photo=[FakePhoto("back")])],
+        state,
+        bot,
+    )
+    assert bot.downloads == ["front", "back"]  # один вызов, обе стороны
     data = await state.get_data()
     from src.handlers.views import FILES_KEY
 
     assert data[FILES_KEY] == ["front", "back"]
+
+
+def test_the_product_card_has_no_second_side_button():
+    from src.keyboards import product_actions
+
+    for mode in ("check", "eaten"):
+        actions = {
+            button.callback_data
+            for row in product_actions(mode=mode).inline_keyboard
+            for button in row
+        }
+        assert "prod:more" not in actions
+        assert {"prod:eat", "prod:save", "prod:macros", "prod:edit"} <= actions
 
 
 async def test_saving_a_product_remembers_it(engine, session, state):

@@ -12,6 +12,7 @@
 | [spec/ingest.md](spec/ingest.md) | маршрутизация ввода, промпты, распознавание, голос (SpeechKit), текст, единицы, PDF | `src/vision/*`, `src/ingest/*` |
 | [spec/analytics.md](spec/analytics.md) | компоненты, окна, статистика, CGM-метрики, симптомы, активность | `src/analytics/*` |
 | [spec/bot.md](spec/bot.md) | команды, клавиатуры, FSM, обработчики, отчёты | `src/bot.py`, `src/handlers/*`, `src/keyboards.py` |
+| [spec/onboarding.md](spec/onboarding.md) | анкета о теле и целях при первом запуске | `src/handlers/onboarding.py` |
 | [spec/plate.md](spec/plate.md) | Гарвардская тарелка: категории, приём пищи как серия, режим питания, совет | `src/analytics/plate.py`, `src/handlers/plate.py` |
 | [spec/labs.md](spec/labs.md) | анализы: маркеры вне референса → продукты-источники | `src/analytics/labs.py`, `src/handlers/labs.py`, `config/nutrient_foods.json` |
 | [spec/features.md](spec/features.md) | рассказ о неиспользованных возможностях, скрытое меню, `/hidden` | `src/features.py`, `src/handlers/features.py`, `src/scheduler.py` |

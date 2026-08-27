@@ -38,6 +38,7 @@
 | `/delete` | удаление с подтверждением | `handlers/reports.py` |
 | `/health` | пошаговая инструкция Samsung Health, ключи, ссылка на мост | `handlers/reports.py` |
 | `/model`, `/models`, `/errors`, `/whereami` | только владелец, только в личке | `handlers/admin.py` |
+| `/users`, `/bot_settings` | панель владельца, только в личке | `handlers/admin_panel.py` |
 
 ## Клавиатуры (`src/keyboards.py`)
 
@@ -72,11 +73,11 @@ Callback-грамматика `<domain>:<action>[:<arg>]` (лимит Telegram �
 
 ```
 meal:ok|edit|macros|time|drop   glu:ok|edit|unit|drop
-prod:eat|save|more|macros|drop  lab:ok|drop
+prod:eat|save|macros|drop       lab:ok|drop
 kind:food|glucose_screen|food_label|lab_report|medication|body_scale|workout|drop
 photo:reroute
 med:ok|edit|time|drop         prod:edit   lab:edit
-dict:use:<id>|rm:<id>|new|page:<kind>:<n>|mode:<kind>:<use|del>|close
+dict:use:<id>|rm:<id>|pin:<id>|new|page:<kind>:<n>|mode:<kind>:<use|del>|close
 x:cancel                       # общий крестик на всех клавиатурах
 mdl:lvl:<global|slot|free> | mdl:slot:<slot> | mdl:set:<target>:<idx> | mdl:close
 wb:score:<1..5> | wb:sym:<id> | wb:other | wb:voice | wb:done
@@ -88,6 +89,7 @@ bd:act:<level> | bd:rate:<кг/нед ×100> | bd:save|bd:drop | bd:preg:<y|n>
 onb:skip | onb:sex:<m|f> | onb:preg:<y|n>   # анкета при первом запуске
 wo:ok|edit|time|hr|drop | wo:dur:<мин|other> | wo:int:<low|moderate|high>
 wo:sweat:<yes|light|no>
+botadm:<users|data|models|errors|health>   # панель владельца
 ```
 
 Черновики **не** передаются в callback-data — они лежат в FSM. Устаревшая
@@ -98,7 +100,7 @@ wo:sweat:<yes|light|no>
 ```
 MealFlow.confirming|editing|editing_macros|retiming
 GlucoseFlow.confirming|editing
-ProductFlow.confirming|awaiting_second_side|editing|editing_macros
+ProductFlow.confirming|editing|editing_macros
 LabFlow.confirming|editing
 MedicationFlow.confirming|editing|retiming
 WellbeingFlow.scoring|picking|free_text
@@ -116,10 +118,10 @@ SettingsFlow.editing
 
 ## Порядок роутеров (`src/handlers/__init__.py`)
 
-`admin → common → onboarding → reports → features → plate → labs →
+`admin → admin_panel → common → onboarding → reports → features → plate → labs →
 wellbeing → body → workout → dictionary → meds → confirm → intake → errors`.
-`admin` первый и полностью отфильтрован (владелец + личка): чужому апдейту он
-просто не соответствует и тот идёт дальше. `onboarding` сразу после `common`,
+`admin` и `admin_panel` первыми и полностью отфильтрованы (владелец + личка):
+чужому апдейту они просто не соответствуют и тот идёт дальше. `onboarding` сразу после `common`,
 чтобы анкета первого запуска перехватывала ответы раньше catch-all'ов
 (`spec/onboarding.md`). `intake` предпоследний: он ловит любой текст и любое
 фото. `errors` — наблюдатель `router.errors`, обработчиков сообщений не
@@ -138,9 +140,13 @@ sha256(data)
 ## Потоки
 
 **Еда:** фото → `classify_photo` → `recognize_meal_photo` → `views.show_meal_draft`
-(FSM `MealFlow.confirming`) → `meal:ok` → `repo.save_meal`. В том же сообщении —
+(FSM `MealFlow.confirming`) → `meal:ok` → `repo.save_meal`. Подтверждение —
+`reporting.format_meal_saved`: время, название и строка БЖУ в `<code>`
+(моноширинный блок в Telegram копируется одним касанием). В том же сообщении —
 полоса дневного коридора (`spec/body.md`) и оценка тарелки (`spec/plate.md`);
-обе части не обязательны и не могут отменить запись.
+обе части не обязательны и не могут отменить запись. Под сообщением —
+кнопки «⭐️ в словарь» на каждую позицию, которой ещё нет в словаре
+(`spec/dictionary.md` § Запись в словарь одной кнопкой).
 `meal:edit` → строка `гречка 250, курица 100` → `_parse_edit` пересчитывает
 нутриенты пропорционально порции, сохраняет теги, пишет `corrections`.
 
@@ -150,6 +156,8 @@ sha256(data)
 **Продукт:** фото(а) → `recognize_label` → в режиме `check` текст строится
 `reports.product_verdict_text` по статистике пользователя; `prod:eat`
 превращает продукт в `MealDraft` с порцией 100 г (редактируемой).
+Отдельного шага «вторая сторона упаковки» нет: обе стороны присылаются одним
+альбомом и уходят в модель одним вызовом (`AlbumBuffer`).
 
 **Анализы:** фото/PDF/текст → `recognize_labs` → карточка с пометками
 `🔺/🔻/✅` → `lab:ok` → сохранение + отдельным сообщением продукты-источники по
@@ -220,6 +228,28 @@ reset_examples()                                       # только для т�
 (`confirm`), «опишите еду» (`intake`, `dictionary`), приглашение и ошибка
 распознавания сахара (`intake`). `/start` и `/help` — справочные карточки,
 они не ротируются: словаря у нового пользователя ещё нет.
+
+## Панель владельца (`src/handlers/admin_panel.py`)
+
+Только `OWNER_TG_IDS`, только личка (те же фильтры, что у `handlers/admin.py`):
+не-владельцу роутер просто не соответствует, и бот не выдаёт, что команды есть.
+
+```
+/users            -> render_users()                # реестр пользователей
+/bot_settings     -> _MAIN_TEXT + owner_panel()    # inline-панель
+botadm:users|data|models|errors|health             # разделы панели
+```
+
+| Раздел | Что показывает |
+|---|---|
+| 👥 Пользователи | до 50 последних: `tg_id`, имя, `@username`, пояс, дата регистрации, пройдена ли анкета; под каждым — счётчики `repo.counts` (еда, сахар, вес, тренировки, лекарства, самочувствие) и последняя запись еды |
+| 📊 Данные | итоги по базе: пользователи, приёмы пищи, измерения сахара, тренировки, лекарства, опросы; те же числа за 7 дней |
+| 🧠 Нейросети | модели по слотам (`admin._explain`), уровень выбора, ключи провайдеров; смена — `/model` |
+| 🩺 Ошибки | последние отчёты `errors_report.recent_reports` |
+| ❤️ Health | БД, LLM (или `LLM_MOCK`), SpeechKit, health-sync |
+
+Раздел «Монетизация» и всё, что связано с каналами и подписками, из
+GrowthProducer не переносилось: в этом боте таких сущностей нет.
 
 ## Отчёты (`src/handlers/reports.py`)
 

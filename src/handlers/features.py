@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.types import (
@@ -86,11 +88,15 @@ async def sync_commands(bot: Bot, chat_id: int, hidden: set[str]) -> None:
         log.warning("could not sync command menu for %s", chat_id, exc_info=True)
 
 
-async def maybe_send_hint(bot: Bot, chat_id: int, *, first: bool = False) -> str | None:
+async def maybe_send_hint(
+    bot: Bot, chat_id: int, *, first: bool = False, at: datetime | None = None
+) -> str | None:
     """Отправить одну подсказку, если есть о чём рассказать.
 
     Возвращает ключ возможности или `None`. Отметку о показе ставим до
     отправки: повторный тик не должен слать второе сообщение о том же.
+    `at` — момент тика: отметка о показе должна лечь тем же временем, по
+    которому тик выбирал получателей, иначе следующая неделя не наступает.
     """
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, chat_id)
@@ -99,7 +105,7 @@ async def maybe_send_hint(bot: Bot, chat_id: int, *, first: bool = False) -> str
         feature = features.pick_hint(totals, states)
         if feature is None:
             return None
-        await repo.mark_feature_shown(session, user, feature.key)
+        await repo.mark_feature_shown(session, user, feature.key, at=at)
     try:
         await bot.send_message(
             chat_id,

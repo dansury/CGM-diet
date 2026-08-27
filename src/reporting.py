@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import datetime
+from html import escape
 
 from src.analytics.activity import ActivityContrast
 from src.analytics.cgm_metrics import CGMSummary
@@ -286,6 +287,44 @@ def format_meal_draft(
     lines.append("")
     lines.append("Всё верно?")
     lines.append(f"<i>{correction_hint(examples)}</i>")
+    return "\n".join(lines)
+
+
+SUGAR_AFTER_MEAL_HINT = "Через час-полтора пришлите сахар — и приём попадёт в статистику."
+DICTIONARY_SHORTCUT_HINT = (
+    "⭐️ Это блюдо теперь в личном словаре — в следующий раз хватит одной кнопки (/my)."
+)
+
+
+def format_meal_macros_line(draft: MealDraft) -> str:
+    """Одна строка БЖУ приёма пищи. Пусто, когда считать нечего."""
+    totals = draft.totals()
+    if not any(totals[key] for key in ("kcal", "protein_g", "fat_g", "carbs_g")):
+        return ""
+    about = "≈ " if any(item.estimated for item in draft.items) else ""
+    return (
+        f"{about}{totals['kcal']:.0f} ккал · Б {totals['protein_g']:.0f} · "
+        f"Ж {totals['fat_g']:.0f} · У {totals['carbs_g']:.0f} · "
+        f"клетчатка {totals['fiber_g']:.0f} г"
+    )
+
+
+def format_meal_saved(
+    draft: MealDraft, *, title: str, eaten_at: datetime, shortcut: bool = False
+) -> str:
+    """Подтверждение записи еды: время, название и БЖУ.
+
+    Название и числа идут одним моноширинным блоком — в Telegram такой блок
+    копируется одним касанием, и человек может перенести строку куда угодно,
+    не переписывая её руками.
+    """
+    body = escape(title)
+    macros = format_meal_macros_line(draft)
+    if macros:
+        body = f"{body}\n{macros}"
+    lines = [f"✅ Записано: {eaten_at:%H:%M} <code>{body}</code>", SUGAR_AFTER_MEAL_HINT]
+    if shortcut:
+        lines.append(DICTIONARY_SHORTCUT_HINT)
     return "\n".join(lines)
 
 
@@ -637,7 +676,14 @@ def progress_bar(share: float, *, width: int = BAR_WIDTH) -> str:
     return "▓" * filled + "░" * (width - filled)
 
 
-def format_day_progress(balance, *, goal=None, trend=None) -> str:
+def format_meals_today(meals_done: int, meals_per_day: int) -> str:
+    """«Приёмов пищи: 2 из 3». Пусто, когда сегодня ещё ни одного приёма."""
+    if meals_done <= 0:
+        return ""
+    return f"🍽 Приёмов пищи: {meals_done} из {meals_per_day}"
+
+
+def format_day_progress(balance, *, goal=None, trend=None, meals: str = "") -> str:
     """Дневной коридор после приёма пищи (`spec/body.md` § Дневной коридор)."""
     share = balance.share
     lines = ["📊 <b>Сегодня</b>"]
@@ -658,6 +704,8 @@ def format_day_progress(balance, *, goal=None, trend=None) -> str:
         lines.append(f"Осталось на сегодня: <b>{balance.available_kcal:.0f} ккал</b>")
     if balance.carbs_g:
         lines.append(f"Углеводы за день: {balance.carbs_g:.0f} г")
+    if meals:
+        lines.append(meals)
     if trend is not None and trend.rate_kg_week is not None:
         lines.append(
             f"Вес за {trend.days:.0f} дн.: {trend.first_kg:g} → {trend.last_kg:g} кг "
@@ -669,7 +717,7 @@ def format_day_progress(balance, *, goal=None, trend=None) -> str:
 GOAL_HINT = "🎯 Задайте цель — /body — и буду показывать коридор и остаток на день."
 
 
-def format_day_totals(balance) -> str:
+def format_day_totals(balance, *, meals: str = "") -> str:
     """Итог дня без коридора: цели нет — процентов и остатка тоже нет.
 
     Съеденное за день человек вправе видеть всегда; «73 % нормы» без цели —
@@ -680,7 +728,8 @@ def format_day_totals(balance) -> str:
         parts.append(f"углеводы {balance.carbs_g:.0f} г")
     if balance.burned_kcal:
         parts.append(f"тренировки ≈ {balance.burned_kcal:.0f} ккал")
-    return "📊 <b>Сегодня</b>: " + " · ".join(parts) + f"\n{GOAL_HINT}"
+    head = "📊 <b>Сегодня</b>: " + " · ".join(parts)
+    return "\n".join(part for part in (head, meals, GOAL_HINT) if part)
 
 
 # ------------------------------------------------------------------ Harvard plate
@@ -1115,10 +1164,13 @@ __all__ = [
     "format_measurement_draft",
     "format_labs",
     "format_meal_draft",
+    "format_meal_macros_line",
+    "format_meal_saved",
     "format_med_coverage",
     "format_med_side_effects",
     "format_medication_draft",
     "format_medications",
+    "format_meals_today",
     "format_feature_hint",
     "format_food_hint",
     "format_hidden_list",

@@ -134,7 +134,7 @@ async def run_feature_hints(bot: Bot, *, now: datetime | None = None) -> int:
         ]
     sent = 0
     for tg_id in targets:
-        if await maybe_send_hint(bot, tg_id):
+        if await maybe_send_hint(bot, tg_id, at=moment):
             sent += 1
     return sent
 

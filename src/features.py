@@ -1,8 +1,9 @@
 """Catalogue of user-facing features and the rules for talking about them.
 
-A bot that can do fifteen things teaches none of them by existing. Once at
-`/start` and once a week the user hears about exactly one feature they have
-never used — with two buttons. «Отлично» means «noted», «Не нужно» means the
+A bot that can do fifteen things teaches none of them by existing. Once a week —
+never in the first week, and never during the first-run questionnaire — the user
+hears about exactly one feature they have never used, chosen from the goals they
+named at the start, with two buttons. «Отлично» means «noted», «Не нужно» means the
 feature is hidden from the menu and never mentioned again; it stays reachable
 through `/hidden`.
 
@@ -184,15 +185,21 @@ def hidden_keys(states: dict[str, FeatureState]) -> set[str]:
 
 
 def pick_hint(
-    counts: dict[str, int], states: dict[str, FeatureState]
+    counts: dict[str, int],
+    states: dict[str, FeatureState],
+    *,
+    priority: tuple[str, ...] | list[str] = (),
 ) -> Feature | None:
     """Одна возможность, о которой уместно рассказать сейчас.
 
-    Порядок каталога — это и есть приоритет. Пропускаем всё, чем уже
-    пользовались, от чего отказались, что уже приняли и о чём рассказали
-    `MAX_HINTS` раз.
+    Первыми идут возможности, которые служат названным при знакомстве целям
+    (`src/goals.py` → `feature_order`), дальше — порядок каталога. Пропускаем
+    всё, чем уже пользовались, от чего отказались, что уже приняли и о чём
+    рассказали `MAX_HINTS` раз.
     """
-    for feature in FEATURES:
+    ordered = [BY_KEY[key] for key in priority if key in BY_KEY]
+    ordered += [feature for feature in FEATURES if feature.key not in set(priority)]
+    for feature in ordered:
         state = states.get(feature.key, FeatureState())
         if state.status in {STATUS_DECLINED, STATUS_ACCEPTED}:
             continue

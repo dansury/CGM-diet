@@ -1,11 +1,13 @@
 """Рассказ о неиспользованных возможностях и скрытое меню (`spec/features.md`).
 
-Один раз при `/start` и не чаще раза в неделю — ровно одна возможность, о
-которой человек ещё ничего не знает, с двумя кнопками. «Не нужно» уносит её из
-меню навсегда; работать она не перестаёт — `/hidden` возвращает.
+Не чаще раза в неделю и не в первую неделю знакомства — ровно одна возможность,
+о которой человек ещё ничего не знает, выбранная под его цели. «Не нужно»
+уносит её из меню навсегда; работать она не перестаёт — `/hidden` возвращает.
 """
 
 from __future__ import annotations
+
+from datetime import datetime
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command
@@ -16,7 +18,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
 )
 
-from src import features
+from src import features, goals
 from src.db import repo
 from src.handlers.deps import session_scope
 from src.keyboards import feature_hint, hidden_features, main_menu
@@ -86,24 +88,29 @@ async def sync_commands(bot: Bot, chat_id: int, hidden: set[str]) -> None:
         log.warning("could not sync command menu for %s", chat_id, exc_info=True)
 
 
-async def maybe_send_hint(bot: Bot, chat_id: int, *, first: bool = False) -> str | None:
+async def maybe_send_hint(bot: Bot, chat_id: int, *, at: datetime | None = None) -> str | None:
     """Отправить одну подсказку, если есть о чём рассказать.
 
-    Возвращает ключ возможности или `None`. Отметку о показе ставим до
-    отправки: повторный тик не должен слать второе сообщение о том же.
+    Возвращает ключ возможности или `None`. Первой идёт та, что служит целям,
+    названным при знакомстве (`spec/onboarding.md` § Цели). Отметку о показе
+    ставим до отправки: повторный тик не должен слать второе сообщение о том же.
+    `at` — момент тика: недельный интервал считается по нему, а не по часам
+    процесса.
     """
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, chat_id)
         totals = await repo.counts(session, user)
         states = await repo.feature_states(session, user)
-        feature = features.pick_hint(totals, states)
+        profile = await repo.get_body_profile(session, user)
+        priority = goals.feature_order(goals.decode(profile.focus if profile else None))
+        feature = features.pick_hint(totals, states, priority=priority)
         if feature is None:
             return None
-        await repo.mark_feature_shown(session, user, feature.key)
+        await repo.mark_feature_shown(session, user, feature.key, at=at)
     try:
         await bot.send_message(
             chat_id,
-            format_feature_hint(feature, first=first),
+            format_feature_hint(feature),
             reply_markup=feature_hint(feature.key),
         )
     except Exception:  # noqa: BLE001 — заблокированный чат не должен шуметь

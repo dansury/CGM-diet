@@ -98,6 +98,7 @@ def test_router_tree_builds():
         "onboarding",
         "reports",
         "features",
+        "goals",
         "plate",
         "labs",
         "wellbeing",

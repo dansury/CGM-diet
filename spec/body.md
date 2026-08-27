@@ -10,6 +10,7 @@
 ```
 body_profile   id user_id* height_cm birth_year sex(m|f|null) activity(sedentary|light|
                moderate|high|athlete) pregnant(bool|null) conditions(text|null)
+               focus(text|null) focus_note(text|null)
                weight_prompt_days last_weight_prompt_at updated_at
                -- uq(user_id)
 body_goals     id user_id kind(lose|maintain|gain) target_weight_kg start_weight_kg
@@ -113,6 +114,9 @@ share (0..~2), over:bool`.
   (`TASK: body_scale`), карточка → `bd:save`;
 - `/body` — карточка профиля и цели, поля правятся кнопками
   (`BodyFlow.awaiting` + ключ `body_field`);
+- цели (`focus`, `focus_note`) спрашиваются первым вопросом при знакомстве и
+  правятся кнопкой «🎯 Мои цели» (`bd:field:focus`); в карточке они строкой
+  «Цели: …» (`reporting._focus_line`), см. `spec/onboarding.md` § Цели;
 - беременность и особые состояния/заболевания задаются один раз при первом
   запуске (`spec/onboarding.md`) и правятся позже кнопками `/body`:
   `bd:field:pregnant` (кнопка видна только при `sex == "f"`) и
@@ -123,7 +127,8 @@ share (0..~2), over:bool`.
 
 ```
 bd:menu|weight|goal|chart|close
-bd:field:<height|age|sex|activity|weight|goal|pregnant|conditions>
+bd:field:<height|age|sex|activity|weight|goal|pregnant|conditions|focus>
+                                   # focus -> список целей, `spec/onboarding.md`
 bd:sex:<m|f>          bd:act:<sedentary|light|moderate|high|athlete>
 bd:preg:<y|n>
 bd:rate:<кг/нед ×100, целое>       # 25 → 0.25 кг/нед; целевой вес лежит в FSM

@@ -214,6 +214,11 @@ async def on_field(callback: CallbackQuery, state: FSMContext) -> None:
     if field == "pregnant":
         await callback.message.answer("🤰 Сейчас беременны?", reply_markup=pregnancy_picker())
         return
+    if field == "focus":
+        from src.handlers.goals import ask_focus
+
+        await ask_focus(callback.message, state)
+        return
     await _ask_field(callback.message, state, field)
 
 

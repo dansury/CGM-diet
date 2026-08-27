@@ -14,6 +14,7 @@ def build_router() -> Router:
         dictionary,
         errors,
         features,
+        goals,
         intake,
         labs,
         meds,
@@ -30,6 +31,7 @@ def build_router() -> Router:
     root.include_router(onboarding.router)
     root.include_router(reports.router)
     root.include_router(features.router)
+    root.include_router(goals.router)
     root.include_router(plate.router)
     root.include_router(labs.router)
     root.include_router(wellbeing.router)

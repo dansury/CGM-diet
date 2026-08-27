@@ -46,6 +46,10 @@ class BodyFlow(StatesGroup):
     confirming = State()   # карточка замера, распознанного с фото весов
 
 
+class GoalsFlow(StatesGroup):
+    note = State()         # «Свой вариант» цели — свободный текст
+
+
 class OnboardingFlow(StatesGroup):
     asking = State()       # текущий шаг анкеты — в ключе `onb_step`, очередь — `onb_queue`
 

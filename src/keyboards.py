@@ -415,6 +415,7 @@ def body_menu(*, has_goal: bool, show_pregnancy: bool = False) -> InlineKeyboard
             InlineKeyboardButton(text="🏃 Активность", callback_data="bd:field:activity"),
         ],
     ]
+    rows.append([InlineKeyboardButton(text="🎯 Мои цели", callback_data="bd:field:focus")])
     second_row = [InlineKeyboardButton(text="🩺 Особые состояния", callback_data="bd:field:conditions")]
     if show_pregnancy:
         second_row.append(InlineKeyboardButton(text="🤰 Беременность", callback_data="bd:field:pregnant"))
@@ -489,6 +490,43 @@ def confirm_measurement() -> InlineKeyboardMarkup:
             [cancel_button()],
         ]
     )
+
+
+# ------------------------------------------------------------------ цели
+
+def focus_picker(selected, *, skippable: bool = False) -> InlineKeyboardMarkup:
+    """Множественный выбор целей: одно нажатие — одна цель, «Готово» — конец.
+
+    Выбор живёт в FSM, а не в callback-data: кнопка, нажатая через сутки, не
+    может подменить чужой набор целей (`spec/onboarding.md` § Цели).
+    """
+    from src.goals import CUSTOM, GOALS
+
+    picked = set(selected or ())
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=("☑️ " if goal.key in picked else "▫️ ") + goal.title,
+                callback_data=f"gl:pick:{goal.key}",
+            )
+        ]
+        for goal in GOALS
+    ]
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text=("☑️ Свой вариант" if CUSTOM in picked else "✍️ Свой вариант"),
+                callback_data="gl:other",
+            )
+        ]
+    )
+    rows.append([InlineKeyboardButton(text="✅ Готово", callback_data="gl:done")])
+    rows.append(
+        [InlineKeyboardButton(text="⏭ Пропустить", callback_data="onb:skip")]
+        if skippable
+        else [cancel_button()]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # ------------------------------------------------------------------ онбординг
@@ -642,6 +680,7 @@ __all__ = [
     "health_setup",
     "hidden_features",
     "main_menu",
+    "focus_picker",
     "onboarding_pregnancy_picker",
     "onboarding_sex_picker",
     "onboarding_skip",

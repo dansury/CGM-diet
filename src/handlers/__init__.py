@@ -21,6 +21,7 @@ def build_router() -> Router:
         onboarding,
         plate,
         reports,
+        sleep,
         wellbeing,
         workout,
     )
@@ -31,6 +32,7 @@ def build_router() -> Router:
     root.include_router(common.router)
     root.include_router(onboarding.router)
     root.include_router(reports.router)
+    root.include_router(sleep.router)
     root.include_router(features.router)
     root.include_router(plate.router)
     root.include_router(labs.router)

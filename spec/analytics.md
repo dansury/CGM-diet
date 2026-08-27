@@ -1,7 +1,8 @@
 # analytics — окна, статистика, метрики
 
-Отдельными спеками описаны два модуля пакета: `src/analytics/plate.py` —
-`spec/plate.md`, `src/analytics/labs.py` — `spec/labs.md`.
+Отдельными спеками описаны три модуля пакета: `src/analytics/plate.py` —
+`spec/plate.md`, `src/analytics/labs.py` — `spec/labs.md`,
+`src/analytics/sleep.py` — `spec/sleep.md`.
 
 ## Components (`src/analytics/tags.py`)
 
@@ -121,6 +122,13 @@ daily_steps(buckets) -> {date: steps}
 ```
 
 `ActivityContrast.meaningful` требует ≥ 3 наблюдений в каждой группе.
+
+## Sleep
+
+`src/analytics/sleep.py` — ночи из Health Connect или из появлений в чате,
+ровность режима и контрасты «сутки после короткой/сдвинутой ночи» по калориям,
+углеводам, среднему сахару и среднему подъёму. Тот же порог `MIN_OBSERVATIONS`
+в каждой группе. Подробности — `spec/sleep.md`.
 
 ## Body & workouts
 

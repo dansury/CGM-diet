@@ -33,6 +33,7 @@ weights            id user_id measured_at weight_kg note
                    bmr_kcal source(manual|text|voice|photo|scale)   -- биоимпеданс необязателен
 body_profile       id user_id* height_cm birth_year sex(m|f) activity
                    pregnant(bool|null) conditions(text|null)
+                   focus(text|null) focus_note(text|null)   -- цели, `src/goals.py`
                    weight_prompt_days last_weight_prompt_at updated_at   -- uq(user_id)
 body_goals         id user_id kind(lose|maintain|gain) target_weight_kg start_weight_kg
                    rate_kg_week target_kcal target_date started_at is_active

@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from src import features
+from src import features, goals
 from src.db import repo
 from src.handlers import features as features_handler
 from src.keyboards import main_menu
@@ -22,6 +22,11 @@ NOW = datetime(2026, 8, 25, 12, 0, tzinfo=UTC)
 
 def test_the_first_hint_is_the_first_unused_feature():
     assert features.pick_hint({}, {}).key == "plate"
+
+
+def test_goals_named_at_the_start_decide_what_is_told_first():
+    """Пришёл за сахаром — первым слышит про статистику, а не про тарелку."""
+    assert features.pick_hint({}, {}, priority=goals.feature_order(["sugar"])).key == "stats"
 
 
 def test_a_feature_already_used_is_never_offered():
@@ -121,7 +126,7 @@ async def user(engine, session):
 
 async def test_the_hint_is_sent_once_and_counted(engine, session, user):
     bot = FakeBot()
-    key = await features_handler.maybe_send_hint(bot, TG_ID, first=True)
+    key = await features_handler.maybe_send_hint(bot, TG_ID)
     assert key == "plate"
     assert "Гарвардская тарелка" in bot.messages[0]["text"]
 
@@ -129,6 +134,14 @@ async def test_the_hint_is_sent_once_and_counted(engine, session, user):
     states = await repo.feature_states(session, user)
     assert states["plate"].shown == 1
     assert user.last_hint_at is not None
+
+
+async def test_the_hint_follows_the_goals_from_the_questionnaire(engine, session, user):
+    await repo.upsert_body_profile(session, user, focus="labs")
+    await session.commit()
+    bot = FakeBot()
+
+    assert await features_handler.maybe_send_hint(bot, TG_ID) == "labs"
 
 
 async def test_the_third_message_about_one_feature_never_happens(engine, session, user):
@@ -187,6 +200,7 @@ async def test_hidden_is_empty_by_default(engine, session, user):
 
 async def test_the_weekly_tick_writes_once_a_week(engine, session, user):
     user.onboarded = True
+    user.created_at = NOW - timedelta(days=30)
     await session.commit()
     bot = FakeBot()
 
@@ -195,8 +209,19 @@ async def test_the_weekly_tick_writes_once_a_week(engine, session, user):
     assert await run_feature_hints(bot, now=NOW + timedelta(days=8)) == 1
 
 
+async def test_the_first_week_belongs_to_the_user_not_to_the_hints(engine, session, user):
+    """Новичку про запас не рассказываем: он ещё занят тем, зачем пришёл."""
+    user.onboarded = True
+    user.created_at = NOW - timedelta(days=2)
+    await session.commit()
+
+    assert await run_feature_hints(FakeBot(), now=NOW) == 0
+    assert await run_feature_hints(FakeBot(), now=NOW + timedelta(days=6)) == 1
+
+
 async def test_the_tick_keeps_quiet_at_night(engine, session, user):
     user.onboarded = True
+    user.created_at = NOW - timedelta(days=30)
     await session.commit()
     bot = FakeBot()
     assert await run_feature_hints(bot, now=NOW.replace(hour=3)) == 0

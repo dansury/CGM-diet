@@ -1022,14 +1022,14 @@ def format_lab_review(review: LabReview, *, header: str = "🧪 <b>Ваши ан
 
 # ------------------------------------------------------------------ feature hints
 
-def format_feature_hint(feature, *, first: bool = False) -> str:
+def format_feature_hint(feature) -> str:
     """Рассказ об одной неиспользованной возможности — коротко и по делу."""
-    opener = (
-        "💡 <b>Одна возможность, которой вы ещё не пользовались</b>"
-        if not first
-        else "💡 <b>Пока вы не начали — одна возможность про запас</b>"
-    )
-    lines = [opener, "", f"<b>{feature.title}</b>", feature.blurb]
+    lines = [
+        "💡 <b>Одна возможность, которой вы ещё не пользовались</b>",
+        "",
+        f"<b>{feature.title}</b>",
+        feature.blurb,
+    ]
     if feature.command:
         lines.append(f"Команда: {feature.command}")
     lines.append("")
@@ -1120,6 +1120,9 @@ def format_body_card(
         lines.append(f"Активность: {ACTIVITY_LABELS.get(profile.activity, profile.activity)}")
         if profile.conditions:
             lines.append(f"Особые состояния: {profile.conditions}")
+        focus = _focus_line(profile)
+        if focus:
+            lines.append(focus)
     if bmi_value:
         note = f" — по классификации ВОЗ это {bmi_note}" if bmi_note else ""
         lines.append(f"ИМТ: {bmi_value:g}{note}")
@@ -1139,6 +1142,17 @@ def format_body_card(
             "буду показывать полосу дневного коридора."
         )
     return "\n".join(lines)
+
+
+def _focus_line(profile) -> str | None:
+    """Зачем человек пришёл — своими словами, как он их выбрал (`src/goals.py`)."""
+    from src.goals import decode, titles
+
+    picked = decode(getattr(profile, "focus", None))
+    if not picked:
+        return None
+    labels = titles(picked, note=getattr(profile, "focus_note", None) or None)
+    return "Цели: " + " · ".join(label.lower() for label in labels) if labels else None
 
 
 def _composition_line(row) -> str:

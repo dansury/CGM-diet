@@ -261,6 +261,10 @@ class BodyProfile(Base, TimestampMixin):
     activity: Mapped[str] = mapped_column(String(16), default="light", nullable=False)
     pregnant: Mapped[bool | None] = mapped_column(Boolean)
     conditions: Mapped[str | None] = mapped_column(Text)
+    # why the user came: comma-separated keys of `src/goals.py`; "" = asked and
+    # named nothing, NULL = never asked. Free-form variant lives in `focus_note`.
+    focus: Mapped[str | None] = mapped_column(Text)
+    focus_note: Mapped[str | None] = mapped_column(Text)
     # how often the bot asks for a weighing, days
     weight_prompt_days: Mapped[int] = mapped_column(Integer, default=14, nullable=False)
     last_weight_prompt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

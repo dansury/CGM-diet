@@ -1659,12 +1659,18 @@ async def mark_feature_used(
 async def users_due_for_hint(
     session: AsyncSession, *, now: datetime | None = None, period_days: int = 7
 ) -> list[User]:
-    """Кому пора рассказать об очередной незнакомой возможности."""
+    """Кому пора рассказать об очередной незнакомой возможности.
+
+    Тем, кому ещё ничего не рассказывали, отсчёт идёт от знакомства: в первую
+    неделю человек разбирается с тем, зачем пришёл, и подсказка про запас ему
+    только мешает (`spec/features.md`).
+    """
     moment = now or utcnow()
     cutoff = moment - timedelta(days=period_days)
     stmt = select(User).where(
         User.onboarded.is_(True),
-        (User.last_hint_at.is_(None)) | (User.last_hint_at <= cutoff),
+        (User.last_hint_at.is_(None) & (User.created_at <= cutoff))
+        | (User.last_hint_at <= cutoff),
     )
     return list(await session.scalars(stmt))
 

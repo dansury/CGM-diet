@@ -1,9 +1,11 @@
-"""First-run questionnaire: age, height, weight, sex, conditions, goal.
+"""First-run questionnaire: goals, age, height, weight, sex, conditions, target weight.
 
 Runs once, right after the welcome message, for a brand-new user
 (`common.cmd_start`). Every step can be skipped or interrupted — a photo
 switches straight to normal recognition, an explicit command or menu button
-ends the questionnaire and lets the usual handler take over. Numeric fields,
+ends the questionnaire and lets the usual handler take over. The first step is
+the goal picker (`handlers/goals.py`) — the answer decides whether a target
+weight is worth asking at all. Numeric fields,
 weight and the goal reuse `handlers/body.py` so the dietetic safety clamps and
 disclaimers stay in one place (`CLAUDE.md` #6/#7). See `spec/onboarding.md`.
 """
@@ -33,7 +35,7 @@ log = get_logger("handlers.onboarding")
 
 STEP_KEY = "onb_step"
 QUEUE_KEY = "onb_queue"
-STEPS: tuple[str, ...] = ("age", "height", "weight", "sex", "conditions", "goal")
+STEPS: tuple[str, ...] = ("focus", "age", "height", "weight", "sex", "conditions", "goal")
 
 _MENU_TEXTS = {text for row in MENU_ROWS for text in row} | {"◀️ Меню", "❌ Отменить"}
 
@@ -53,14 +55,19 @@ PROMPTS = {
 }
 
 INTRO = (
-    "Прежде чем начать — несколько вопросов о вас, они нужны для расчётов. Любой "
-    "можно пропустить и заполнить позже через /body; состав тела (биоимпеданс) "
-    "всегда можно добавить в любой момент — просто пришлите фото весов или напишите "
-    "«вес 82,4 жир 24%»."
+    "Начнём с главного — зачем вы здесь, а потом несколько чисел для расчётов. "
+    "Любой вопрос можно пропустить и заполнить позже через /body; состав тела "
+    "(биоимпеданс) добавляется в любой момент — просто пришлите фото весов или "
+    "напишите «вес 82,4 жир 24%»."
 )
 
 FINISH = (
     "Профиль готов, спасибо! Всё это можно поменять в /body в любой момент."
+)
+
+FINISH_NO_WEIGHT_GOAL = (
+    "Профиль готов, спасибо! Цель по весу не спрашиваю — вы пришли не за этим; "
+    "если понадобится, она в /body."
 )
 
 
@@ -75,11 +82,17 @@ async def _ask_next(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     queue = list(data.get(QUEUE_KEY) or [])
     if not queue:
-        await _finish(message, state)
+        text = FINISH_NO_WEIGHT_GOAL if data.get("onb_no_weight_goal") else FINISH
+        await _finish(message, state, text=text)
         return
     step = queue.pop(0)
     await state.update_data({QUEUE_KEY: queue, STEP_KEY: step})
     await state.set_state(OnboardingFlow.asking)
+    if step == "focus":
+        from src.handlers.goals import ask_focus
+
+        await ask_focus(message, state, skippable=True)
+        return
     if step == "sex":
         await message.answer(
             "⚧ Ваш пол — нужен для формулы обмена веществ.",
@@ -92,9 +105,28 @@ async def _ask_next(message: Message, state: FSMContext) -> None:
     await message.answer(PROMPTS[step], reply_markup=onboarding_skip())
 
 
-async def _finish(message: Message, state: FSMContext) -> None:
+async def _finish(message: Message, state: FSMContext, *, text: str = FINISH) -> None:
     await state.clear()
-    await message.answer(FINISH, reply_markup=await menu_of(message.chat.id))
+    await message.answer(text, reply_markup=await menu_of(message.chat.id))
+
+
+async def after_focus(message: Message, state: FSMContext, selected: list[str]) -> None:
+    """Цели названы — дальше анкета идёт под них.
+
+    Целевой вес спрашиваем только у того, кто пришёл менять вес: человеку с
+    целью «держать сахар в норме» вопрос «какой вес хотите видеть на весах»
+    не нужен и звучит навязчиво (`spec/onboarding.md` § Цели).
+    """
+    from src import goals
+
+    data = await state.get_data()
+    queue = list(data.get(QUEUE_KEY) or [])
+    dropped = False
+    if not goals.wants_weight_goal(selected) and "goal" in queue:
+        queue.remove("goal")
+        dropped = True
+    await state.update_data({QUEUE_KEY: queue, "onb_no_weight_goal": dropped})
+    await _ask_next(message, state)
 
 
 def _first_number(text: str) -> float | None:
@@ -165,7 +197,12 @@ async def on_answer(message: Message, state: FSMContext, bot: Bot) -> None:
     text = (message.text or "").strip()
     data = await state.get_data()
     step = data.get(STEP_KEY) or "age"
-    if step == "weight":
+    if step == "focus":
+        # Вместо кнопки человек написал цель словами — это тоже ответ.
+        from src.handlers.goals import save_note
+
+        await save_note(message, state, text)
+    elif step == "weight":
         await _answer_weight(message, state, text)
     elif step == "conditions":
         await _answer_conditions(message, state, text)
@@ -258,4 +295,4 @@ async def _handle_photo(message: Message, state: FSMContext, bot: Bot) -> None:
     )
 
 
-__all__ = ["router", "start"]
+__all__ = ["after_focus", "router", "start"]

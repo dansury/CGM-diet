@@ -1,8 +1,10 @@
 # features — рассказ о возможностях и скрытое меню
 
-Один раз при `/start` и не чаще раза в неделю — ровно одна возможность,
-которой пользователь ещё не пользовался. Об одной возможности — не больше двух
-сообщений за всё время.
+Не чаще раза в неделю и **не в первую неделю знакомства** — ровно одна
+возможность, которой пользователь ещё не пользовался. Об одной возможности — не
+больше двух сообщений за всё время. При первом `/start` подсказка не
+отправляется вовсе: у новичка на экране анкета (`spec/onboarding.md`), а не
+свободные руки.
 
 ## Каталог (`src/features.py`)
 
@@ -18,7 +20,10 @@ MAX_HINTS=2 ; HINT_PERIOD_DAYS=7
 ```
 is_used(feature, counts, state)->bool   # counter в repo.counts либо отметка used
 hidden_keys(states)->{key}
-pick_hint(counts, states)->Feature|None # пропускает used|accepted|declined|shown≥2
+pick_hint(counts, states, priority=())->Feature|None
+    # priority — `goals.feature_order(focus)`: сначала то, что служит целям
+    # пользователя, дальше порядок каталога; пропускает
+    # used|accepted|declined|shown≥2
 ```
 
 `counter` — ключ `repo.counts` для возможностей, оставляющих строки в БД. У
@@ -44,7 +49,8 @@ feat:close       закрыть список
 ## Обработчик (`src/handlers/features.py`)
 
 ```
-maybe_send_hint(bot, chat_id, first=False)->key|None  # отметка ставится до отправки
+maybe_send_hint(bot, chat_id, at=None)->key|None  # отметка ставится до отправки,
+                                                  # `at` — момент тика
 menu_for(session, user)->ReplyKeyboardMarkup ; menu_of(chat_id)->ReplyKeyboardMarkup
 mark_used(chat_id, key) ; sync_commands(bot, chat_id, hidden)
 /hidden -> список скрытого + кнопки возврата
@@ -57,8 +63,9 @@ mark_used(chat_id, key) ; sync_commands(bot, chat_id, hidden)
 
 `feature_hint_loop` — тот же часовой тик, что у напоминания о взвешивании.
 `run_feature_hints(bot, now?)`: `repo.users_due_for_hint` (onboarded,
-`last_hint_at` пуст или старше 7 дней) → тихие часы 9–20 локального времени →
-`maybe_send_hint`. Возвращает число отправленных.
+`last_hint_at` старше 7 дней; ни разу не рассказывали — отсчёт от
+`users.created_at`, то есть не в первую неделю) → тихие часы 9–20 локального
+времени → `maybe_send_hint(at=момент тика)`. Возвращает число отправленных.
 
 ## Меню
 

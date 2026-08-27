@@ -95,6 +95,7 @@ feat:ok:<key>|no:<key>|show:<key>|close
 bd:menu|profile|weight|goal|chart|close | bd:field:<name> | bd:sex:<m|f>
 bd:act:<level> | bd:rate:<кг/нед ×100> | bd:save|bd:drop | bd:preg:<y|n>
 onb:skip | onb:sex:<m|f> | onb:preg:<y|n>   # анкета при первом запуске
+gl:pick:<key> | gl:other | gl:done          # цели — `spec/onboarding.md`
 wo:ok|edit|time|hr|drop | wo:dur:<мин|other> | wo:int:<low|moderate|high>
 wo:sweat:<yes|light|no>
 botadm:<users|data|models|errors|health>   # панель владельца
@@ -115,6 +116,7 @@ WellbeingFlow.scoring|picking|free_text
 BodyFlow.awaiting              # какое поле ждём — в ключе `body_field`
 BodyFlow.confirming            # карточка замера с фото весов
 OnboardingFlow.asking          # анкета при первом запуске — `spec/onboarding.md`
+GoalsFlow.note                 # «Свой вариант» цели — свободный текст
 WorkoutFlow.confirming|asking|editing|retiming|awaiting_hr
 SettingsFlow.editing
 ```

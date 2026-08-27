@@ -36,6 +36,8 @@ log = get_logger("handlers.onboarding")
 STEP_KEY = "onb_step"
 QUEUE_KEY = "onb_queue"
 STEPS: tuple[str, ...] = ("focus", "age", "height", "weight", "sex", "conditions", "goal")
+#: шаги сахарного трека — не в статическом списке, их вставляет `after_focus`
+SUGAR_STEPS: tuple[str, ...] = ("dia", "dia_meds", "sugar_method", "sugar_pitch")
 
 _MENU_TEXTS = {text for row in MENU_ROWS for text in row} | {"◀️ Меню", "❌ Отменить"}
 
@@ -102,6 +104,11 @@ async def _ask_next(message: Message, state: FSMContext) -> None:
     if step == "pregnant":
         await message.answer("🤰 Вы сейчас беременны?", reply_markup=onboarding_pregnancy_picker())
         return
+    if step in SUGAR_STEPS:
+        from src.handlers.sugar import ask_step
+
+        await ask_step(message, state, step)
+        return
     await message.answer(PROMPTS[step], reply_markup=onboarding_skip())
 
 
@@ -115,9 +122,10 @@ async def after_focus(message: Message, state: FSMContext, selected: list[str]) 
 
     Целевой вес спрашиваем только у того, кто пришёл менять вес: человеку с
     целью «держать сахар в норме» вопрос «какой вес хотите видеть на весах»
-    не нужен и звучит навязчиво (`spec/onboarding.md` § Цели).
+    не нужен и звучит навязчиво (`spec/onboarding.md` § Цели). Ему вместо
+    этого достаются вопросы сахарного трека.
     """
-    from src import goals
+    from src import goals, sugar
 
     data = await state.get_data()
     queue = list(data.get(QUEUE_KEY) or [])
@@ -125,6 +133,10 @@ async def after_focus(message: Message, state: FSMContext, selected: list[str]) 
     if not goals.wants_weight_goal(selected) and "goal" in queue:
         queue.remove("goal")
         dropped = True
+    # Пришёл за сахаром — спрашиваем про сахар, и сразу: эти вопросы задают
+    # рамку всему остальному разговору (`spec/onboarding.md` § Сахарный трек).
+    if sugar.wants_sugar_track(selected):
+        queue = [step for step in SUGAR_STEPS if step not in queue] + queue
     await state.update_data({QUEUE_KEY: queue, "onb_no_weight_goal": dropped})
     await _ask_next(message, state)
 
@@ -202,6 +214,10 @@ async def on_answer(message: Message, state: FSMContext, bot: Bot) -> None:
         from src.handlers.goals import save_note
 
         await save_note(message, state, text)
+    elif step == "dia_meds":
+        from src.handlers.sugar import save_meds
+
+        await save_meds(message, state, text)
     elif step == "weight":
         await _answer_weight(message, state, text)
     elif step == "conditions":
@@ -295,4 +311,7 @@ async def _handle_photo(message: Message, state: FSMContext, bot: Bot) -> None:
     )
 
 
-__all__ = ["after_focus", "router", "start"]
+#: публичное имя для шагов, которые живут в других модулях (`handlers/sugar.py`)
+advance = _ask_next
+
+__all__ = ["SUGAR_STEPS", "advance", "after_focus", "router", "start"]

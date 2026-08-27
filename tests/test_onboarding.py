@@ -64,7 +64,8 @@ async def test_goals_are_saved_and_the_questionnaire_goes_on(engine, session, st
     user = await repo.get_user(session, TG_ID)
     profile = await repo.get_body_profile(session, user)
     assert profile.focus == "weight,sugar"
-    assert any("лет" in t for t in card.texts)  # следующий вопрос задан
+    # отмечен сахар — дальше идёт сахарный трек, а не возраст
+    assert any("диабет" in text.lower() for text in card.texts)
 
 
 async def test_a_goal_can_be_written_in_words(engine, session, state):

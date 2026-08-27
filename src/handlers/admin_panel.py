@@ -12,8 +12,10 @@ so the bot never leaks that these commands exist.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 from html import escape
+from zoneinfo import ZoneInfo
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -37,6 +39,11 @@ USERS_LIMIT = 50
 RECENT_DAYS = 7
 #: лимит сообщения Telegram — 4096; оставляем запас
 MESSAGE_LIMIT = 4000
+#: сколько строк переписки показывает `/last_msg_…` без явного числа
+LAST_MSG_DEFAULT = 10
+LAST_MSG_MAX = 50
+#: ключ переключателя уведомлений о новых пользователях (`settings_kv`)
+NOTIFY_KEY = "notify_new_users"
 
 
 def _is_owner(user_id: int | None) -> bool:
@@ -82,7 +89,13 @@ async def render_users() -> str:
     headline = f"👥 <b>Пользователи ({total})</b> · анкету прошли: {onboarded}"
     if blocked:
         headline += f" · 🚫 заблокировали: {blocked}"
-    head = [headline, ""]
+    notify = "включены" if await notifications_on() else "выключены"
+    head = [
+        headline,
+        f"Уведомления о новых пользователях: <b>{notify}</b>",
+        f"Переписка: <code>/last_msg_&lt;id или username&gt; [{LAST_MSG_DEFAULT}]</code>",
+        "",
+    ]
     if not rows:
         head.append("Пока никого — ждём первых /start.")
     return "\n".join([*head, *rows])
@@ -115,7 +128,111 @@ def _user_block(index: int, user: User, counters: dict[str, int], last_meal) -> 
 
 @router.message(Command("users"))
 async def cmd_users(message: Message) -> None:
-    await message.answer((await _safe(render_users(), "users"))[:MESSAGE_LIMIT])
+    await message.answer(
+        (await _safe(render_users(), "users"))[:MESSAGE_LIMIT],
+        reply_markup=_users_markup(await notifications_on()),
+    )
+
+
+# ------------------------------------------------------------------ уведомления
+
+async def notifications_on() -> bool:
+    """Слать ли владельцу DM о новых пользователях и блокировках.
+
+    По умолчанию да — выключать надо осознанно, а не по забытому ключу.
+    """
+    async with session_scope() as session:
+        value = await repo.get_setting(session, NOTIFY_KEY)
+    return True if value is None else bool(value)
+
+
+@router.callback_query(F.data == f"{CB_PREFIX}notify")
+async def on_notify_toggle(callback: CallbackQuery) -> None:
+    enabled = not await notifications_on()
+    async with session_scope() as session:
+        await repo.set_setting(session, NOTIFY_KEY, enabled)
+    await callback.answer("Уведомления включены" if enabled else "Уведомления выключены")
+    if callback.message is not None:
+        await callback.message.answer(
+            (await _safe(render_users(), "users"))[:MESSAGE_LIMIT],
+            reply_markup=_users_markup(enabled),
+        )
+
+
+def _users_markup(enabled: bool) -> InlineKeyboardMarkup:
+    label = "🔕 Выключить уведомления" if enabled else "🔔 Включить уведомления"
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=label, callback_data=f"{CB_PREFIX}notify")]]
+    )
+
+
+# ------------------------------------------------------------------ /last_msg_…
+
+_LAST_MSG_RE = re.compile(r"^/last_msg_(.+)$", re.IGNORECASE)
+_ARROW = {"in": "➡️", "out": "⬅️"}
+
+
+def _parse_last_msg(raw: str) -> tuple[str, int]:
+    """`<lookup> [N]` → (кого искать, сколько строк).
+
+    Голый числовой токен — это `tg_id`, а не количество: `/last_msg_5402655420`
+    должен найти пользователя, а не показать пять миллиардов сообщений.
+    """
+    parts = (raw or "").split()
+    limit = LAST_MSG_DEFAULT
+    if len(parts) >= 2 and parts[-1].isdigit():
+        limit = max(1, min(int(parts[-1]), LAST_MSG_MAX))
+        parts = parts[:-1]
+    return " ".join(parts).lstrip("@"), limit
+
+
+def _log_block(row, tz: str) -> str:
+    # naive-метки из SQLite считаем UTC — так же, как это делает `repo`
+    at = row.at
+    if at is not None and at.tzinfo is None:
+        at = at.replace(tzinfo=UTC)
+    stamp = at.astimezone(ZoneInfo(tz)).strftime("%d.%m %H:%M") if at else "—"
+    head = f"{_ARROW.get(row.direction, '·')} <code>{stamp}</code>"
+    if row.kind != "text":
+        head += f" [{escape(row.kind)}]"
+    body = escape(row.text or "")
+    lines = [head, body if body.strip() else "<i>(без текста)</i>"]
+    for line in row.buttons or []:
+        for button in line:
+            target = button.get("cb") or button.get("url") or ""
+            lines.append(f"   <i>[{escape(button.get('t', ''))} → {escape(target)}]</i>")
+    return "\n".join(lines)
+
+
+async def render_last_msg(lookup: str, limit: int, *, tz: str = "Europe/Moscow") -> str:
+    async with session_scope() as session:
+        user = await repo.find_user(session, lookup)
+        if user is None:
+            return f"⚠️ Пользователь «{escape(lookup)}» не найден."
+        rows = await repo.last_messages(session, user, limit=limit)
+        who = user.first_name or user.username or str(user.tg_id)
+        blocks = [_log_block(row, tz) for row in reversed(rows)]
+    head = f"💬 <b>{escape(who)}</b> · <code>{user.tg_id}</code> · последние {len(blocks)}"
+    if not blocks:
+        return (
+            f"{head}\n\n📭 Переписки нет. Журнал ведётся только с момента, когда "
+            "функция появилась в боте."
+        )
+    return "\n\n".join([head, *blocks])
+
+
+@router.message(F.text.regexp(_LAST_MSG_RE))
+async def cmd_last_msg(message: Message) -> None:
+    match = _LAST_MSG_RE.match(message.text or "")
+    lookup, limit = _parse_last_msg(match.group(1).strip() if match else "")
+    if not lookup:
+        await message.answer("Использование: <code>/last_msg_username [N]</code>")
+        return
+    async with session_scope() as session:
+        owner = await repo.get_or_create_user(session, message.chat.id)
+        tz = owner.tz
+    text = await _safe(render_last_msg(lookup, limit, tz=tz), "last_msg")
+    await message.answer(text[:MESSAGE_LIMIT])
 
 
 # ------------------------------------------------------------------ /bot_settings
@@ -264,8 +381,13 @@ async def on_section(callback: CallbackQuery) -> None:
 
 
 __all__ = [
+    "LAST_MSG_MAX",
+    "NOTIFY_KEY",
     "cmd_bot_settings",
+    "cmd_last_msg",
     "cmd_users",
+    "notifications_on",
+    "render_last_msg",
     "owner_panel",
     "render_data",
     "render_errors",

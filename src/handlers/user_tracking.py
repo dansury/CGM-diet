@@ -11,6 +11,8 @@ Ported from GrowthProducer (`handlers/user_tracking.py`). Two paths:
 
 Writes are throttled to one per user per hour unless the visible profile
 changed, so the middleware does not turn every message into an UPDATE.
+Owner DMs obey the switch in the panel (`spec/bot.md` § Уведомления
+владельцу); the registry itself is written either way.
 See `spec/bot.md` § Реестр пользователей.
 """
 
@@ -63,6 +65,18 @@ def _owner_ids() -> tuple[int, ...]:
 
 
 async def notify_owners(bot: Any, text: str, *, skip: int | None = None) -> None:
+    """DM владельцам, если рассылка не выключена в панели.
+
+    Выключатель гасит только письма: реестр и `last_seen_at` пишутся всегда —
+    иначе `/users` начал бы врать (`spec/bot.md` § Уведомления владельцу).
+    """
+    from src.handlers.admin_panel import notifications_on
+
+    try:
+        if not await notifications_on():
+            return
+    except Exception:  # noqa: BLE001 — недоступная настройка не повод молчать
+        log.warning("could not read the notification switch", exc_info=True)
     for owner_id in _owner_ids():
         if owner_id == skip:
             continue

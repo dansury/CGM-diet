@@ -226,6 +226,19 @@ def glucose_prompt(examples: Sequence[str] | None = None) -> str:
     )
 
 
+def format_glucose_after_meal() -> str:
+    """Предложение прислать замер после записи еды (`spec/onboarding.md`).
+
+    Просьба, а не обещание: бот не знает, каким этот сахар будет и почему, —
+    он только сопоставит замер с тем, что было съедено
+    (`.specify/memory/constitution.md`, принцип II).
+    """
+    return (
+        "🩸 Через 1–2 часа пришлите замер — число, фото глюкометра или скриншот "
+        "датчика. Сопоставлю с этой едой."
+    )
+
+
 def glucose_hint(examples: Sequence[str] | None = None) -> str:
     return f"Напишите значение текстом — {quoted(examples or glucose_examples())}."
 
@@ -1290,6 +1303,7 @@ __all__ = [
     "food_examples",
     "glucose_examples",
     "glucose_hint",
+    "format_glucose_after_meal",
     "glucose_prompt",
     "dish_example",
     "items_example",

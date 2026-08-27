@@ -43,6 +43,7 @@
 | `/sleep` | сон: длительность, режим, связи; переключатель наблюдения | `handlers/sleep.py` |
 | `/model`, `/models`, `/errors`, `/whereami` | только владелец, только в личке | `handlers/admin.py` |
 | `/users`, `/bot_settings` | панель владельца, только в личке | `handlers/admin_panel.py` |
+| `/last_msg_<username\|id> [N]` | только владелец: последняя переписка с пользователем | `handlers/admin_panel.py` |
 
 ## Клавиатуры (`src/keyboards.py`)
 
@@ -128,9 +129,9 @@ SettingsFlow.editing
 
 ## Порядок роутеров (`src/handlers/__init__.py`)
 
-`user_tracking → admin → admin_panel → common → onboarding → reports → sleep →
-features → plate → labs → wellbeing → body → workout → dictionary → meds →
-confirm → intake → errors`. `user_tracking` первым — его `my_chat_member`
+`user_tracking → admin → admin_panel → common → onboarding → goals → sugar →
+reports → sleep → features → plate → labs → wellbeing → body → workout →
+dictionary → meds → confirm → intake → errors`. `user_tracking` первым — его `my_chat_member`
 должен видеть блокировку раньше всех. `admin` и `admin_panel` полностью
 отфильтрованы (владелец + личка):
 чужому апдейту они просто не соответствуют и тот идёт дальше. `onboarding` сразу после `common`,
@@ -163,6 +164,39 @@ user_label(tg_id, username?, first_name?) -> str   # «<b>Имя</b> · @user ·
 (`admin_panel.render_users`, § Панель владельца): счётчики, метка 🚫 у
 заблокировавших и `last_seen_at` в строке пользователя.
 
+## Уведомления владельцу (переключатель)
+
+`settings_kv["notify_new_users"]` (по умолчанию `true`) решает, уходит ли
+владельцу DM «🆕 Новый пользователь» и «🚫/✅ …заблокировал бота».
+Переключает раздел «👥 Пользователи» панели: кнопка `botadm:notify`
+(`repo.set_setting`). Реестр и `last_seen_at` пишутся всегда — выключается
+только рассылка.
+
+## Журнал переписки (`src/handlers/message_log.py`)
+
+Владельцу нужно видеть, что человек написал боту и что бот ответил, — без
+этого разбор жалобы «бот меня не понял» невозможен.
+
+```
+LogIncomingMiddleware   # outer на message + callback_query, только личка
+  -> repo.log_message(direction="in", kind=text|photo|voice|document|callback)
+LogOutgoingMiddleware   # session middleware бота: SendMessage/SendPhoto/SendDocument
+  -> repo.log_message(direction="out", kind=…, buttons=[[{t,cb|url}]])
+```
+
+Пишется текст (обрезка `TEXT_LIMIT=3000`) и разметка инлайн-кнопок; файлы,
+голос и фото — только пометкой типа и подписью, содержимое не хранится.
+История подрезается до `LOG_KEEP=100` последних строк на пользователя,
+уезжает в `/export` и стирается по `/delete` (`spec/data_model.md`).
+Обе точки fail-soft: сбой записи в журнал не роняет ни апдейт, ни отправку.
+
+`/last_msg_<lookup> [N]` — владелец, личка, `N` по умолчанию 10, максимум
+`LAST_MSG_MAX=50`. `lookup` — `tg_id` числом или username (можно с `@`).
+Голый числовой токен всегда `lookup`, а не `N`: `N` разбирается, только если
+после `last_msg_` есть минимум два токена. Вывод — хронологически,
+`➡️`/`⬅️` по направлению, время локальное для владельца, кнопки строкой
+`[текст → callback_data]`.
+
 ## Плумбинг (`src/handlers/deps.py`)
 
 ```
@@ -185,6 +219,10 @@ sha256(data)
 (`spec/dictionary.md` § Запись в словарь одной кнопкой).
 `meal:edit` → строка `гречка 250, курица 100` → `_parse_edit` пересчитывает
 нутриенты пропорционально порции, сохраняет теги, пишет `corrections`.
+При `users.glucose_prompt_enabled` к тому же сообщению добавляется
+`reporting.format_glucose_prompt()` и кнопка `sg:log`
+(`spec/onboarding.md` § Сахарный трек); часть необязательная и не может
+отменить запись.
 
 **Глюкоза:** скриншот → `recognize_glucose_screenshot` → карточка →
 `glu:ok` (сохранить), `glu:unit` (пересчитать шкалу), `glu:edit` (`8.2 в 9:15`).

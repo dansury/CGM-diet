@@ -71,6 +71,12 @@ class User(Base, TimestampMixin):
     last_presence_reminder_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True)
     )
+    # Предлагать замер сахара после каждой записи еды. Включается только
+    # сахарным треком анкеты (`spec/onboarding.md`): человеку, который сахар
+    # не меряет, это предложение — шум.
+    glucose_prompt_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_hint_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -265,6 +271,12 @@ class BodyProfile(Base, TimestampMixin):
     # named nothing, NULL = never asked. Free-form variant lives in `focus_note`.
     focus: Mapped[str | None] = mapped_column(Text)
     focus_note: Mapped[str | None] = mapped_column(Text)
+    # Сахарный трек (`src/sugar.py`): что человек сам про себя рассказал.
+    # Ни диагноз, ни назначение — только контекст, записанный с его слов.
+    diabetes: Mapped[str | None] = mapped_column(String(16))
+    diabetes_meds: Mapped[str | None] = mapped_column(Text)
+    # чем меряет сахар: ключи через запятую; "" = спросили, ничем не меряет
+    glucose_methods: Mapped[str | None] = mapped_column(Text)
     # how often the bot asks for a weighing, days
     weight_prompt_days: Mapped[int] = mapped_column(Integer, default=14, nullable=False)
     last_weight_prompt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -566,6 +578,37 @@ class PresencePing(Base):
     )
     at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     source: Mapped[str] = mapped_column(String(16), default="telegram", nullable=False)
+
+
+class MessageLog(Base):
+    """The last stretch of one conversation — what the user sent, what we answered.
+
+    Owner tooling (`/last_msg_…`, `spec/bot.md` § Журнал переписки): without it
+    a complaint like «бот меня не понял» cannot be looked into at all. Only the
+    text and the inline buttons are kept — a photo, a voice message or a file is
+    a type mark plus its caption, never the content itself. Trimmed to the last
+    `repo.LOG_KEEP` rows per user, exported by `/export` and wiped by `/delete`
+    like any other record about a person.
+    """
+
+    __tablename__ = "message_log"
+    # составной индекс покрывает и выборку по пользователю, и порядок строк;
+    # отдельный индекс по user_id был бы его дубликатом
+    __table_args__ = (Index("ix_message_log_user_row", "user_id", "id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    direction: Mapped[str] = mapped_column(String(3), nullable=False)  # in|out
+    # text|photo|voice|document|callback
+    kind: Mapped[str] = mapped_column(String(16), default="text", nullable=False)
+    text: Mapped[str | None] = mapped_column(Text)
+    #: инлайн-кнопки как [[{"t": подпись, "cb"|"url": значение}]]
+    buttons: Mapped[list | None] = mapped_column(JSON)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
+    )
 
 
 class FoodStat(Base):

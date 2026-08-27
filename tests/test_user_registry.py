@@ -165,3 +165,29 @@ async def test_block_and_unblock_are_written_and_announced(engine, monkeypatch):
     async with factory() as s:
         assert (await repo.count_users(s)) == (1, 0)
     assert "разблокировал бота" in bot.sent[-1][1]
+
+
+# ---------------------------------------------------------------- переключатель
+
+
+async def test_notifications_are_on_until_someone_turns_them_off(engine, session):
+    assert await admin_panel.notifications_on() is True
+
+    await repo.set_setting(session, admin_panel.NOTIFY_KEY, False)
+    await session.commit()
+    assert await admin_panel.notifications_on() is False
+
+
+async def test_a_silenced_owner_still_gets_the_registry(engine, session, monkeypatch):
+    from src.handlers import user_tracking
+
+    user_tracking.reset_seen_cache()
+    monkeypatch.setattr(user_tracking, "_owner_ids", lambda: (777,))
+    await repo.set_setting(session, admin_panel.NOTIFY_KEY, False)
+    await session.commit()
+
+    bot = FakeBot()
+    await user_tracking.track(FakeMessage(), bot)
+
+    assert bot.sent == []                       # письма нет
+    assert (await repo.count_users(session))[0] == 1   # запись есть

@@ -15,6 +15,7 @@ users              id tg_id* username first_name locale tz glucose_unit sensor
                    plate_enabled meals_per_day? last_hint_at?
                    last_seen_at? blocked_at?          -- реестр владельца (`spec/bot.md`)
                    sleep_presence_enabled last_presence_reminder_at?
+                   glucose_prompt_enabled          -- предлагать замер после еды, `spec/onboarding.md`
                    consent_at onboarded created_at
 media_files        id user_id kind(meal|glucose|label|lab|voice) tg_file_id tg_unique_id
                    mime size_bytes sha256 local_path
@@ -34,6 +35,8 @@ weights            id user_id measured_at weight_kg note
 body_profile       id user_id* height_cm birth_year sex(m|f) activity
                    pregnant(bool|null) conditions(text|null)
                    focus(text|null) focus_note(text|null)   -- цели, `src/goals.py`
+                   diabetes(text|null) diabetes_meds(text|null)
+                   glucose_methods(text|null)      -- сахарный трек, `spec/onboarding.md`
                    weight_prompt_days last_weight_prompt_at updated_at   -- uq(user_id)
 body_goals         id user_id kind(lose|maintain|gain) target_weight_kg start_weight_kg
                    rate_kg_week target_kcal target_date started_at is_active
@@ -56,6 +59,8 @@ activity_samples   id user_id external_id kind(steps|workout|sleep|heart_rate)
                    start_at end_at steps distance_m kcal avg_hr source payload
                    -- uq(user_id, external_id)
 presence_pings     id user_id at source(telegram)   -- отметки появлений, `spec/sleep.md`
+message_log        id user_id direction(in|out) kind(text|photo|voice|document|callback)
+                   text buttons(JSON) at   -- переписка для /last_msg, `spec/bot.md`
 food_stats         id user_id key_type(item|tag|product) key window n
                    mean_delta median_delta max_delta ci_low ci_high confidence updated_at
 corrections        id user_id entity_type entity_id field old_value new_value created_at
@@ -68,7 +73,7 @@ feature_flags      id user_id feature status(new|shown|accepted|declined) shown
 `user_nutrition(user_id, key_norm)`,
 `meals(user_id, eaten_at)`, `glucose_readings(user_id, measured_at)`,
 `wellbeing_checkins(user_id, at)`, `activity_samples(user_id, start_at)`,
-`presence_pings(user_id, at)`,
+`presence_pings(user_id, at)`, `message_log(user_id, id)`,
 `meal_items(name_norm)`, `products(user_id, name_norm)`.
 
 ## Репозиторий (`src/db/repo.py`)
@@ -130,6 +135,10 @@ load_nutrition_memory(session, user, names?) -> dict[key_norm, Remembered]
 remember_meal_macros(session, user, draft) -> [name]     # позиции с macros_source=="user"
 
 get_setting / set_setting / all_settings                     # settings_kv
+log_message(session, user, direction, kind, text?, buttons?) -> MessageLog
+    # пишет и подрезает историю до LOG_KEEP=100 последних строк на пользователя
+last_messages(session, user, limit=10) -> [MessageLog]        # свежие первыми
+find_user(session, lookup) -> User?      # по tg_id числом либо по username (без @)
 counts(session, user) -> dict[str,int]   # + dictionary (для features)
 delete_user_data(session, user, drop_user=False)
 ```
@@ -138,8 +147,9 @@ delete_user_data(session, user, drop_user=False)
 голове, сильный голод, жажда, сердцебиение, дрожь, головная боль,
 раздражительность, приливы, слабость, тошнота).
 
-`delete_user_data` чистит и `user_dictionary`, и `user_nutrition`; `settings_kv`
-к пользователю не относится и переживает `/delete`. `feature_flags` — тоже
+`delete_user_data` чистит и `user_dictionary`, и `user_nutrition`, и
+`message_log` (переписка — такие же данные пользователя, как и дневник);
+`settings_kv` к пользователю не относится и переживает `/delete`. `feature_flags` — тоже
 настройка, а не запись дневника: скрытое меню переживает `/delete`.
 
 `delete_user_data` делает явные `DELETE` по таблицам: SQLite не выполняет

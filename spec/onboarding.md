@@ -129,3 +129,55 @@ normalize_note(text)->str|None
 
 Список целей — не диагноз и не сегментация здоровья: он влияет только на
 порядок сказанного, никогда — на клинические границы (`spec/clinical.md`).
+
+## Сахарный трек (`src/sugar.py`, `src/handlers/sugar.py`)
+
+Включается, если среди целей отмечено `sugar` («Держать сахар в норме»).
+`after_focus` вставляет в начало очереди три шага — `dia`, `dia_meds`,
+`sugar_method`, — а после последнего показывает `PITCH` и включает
+`users.glucose_prompt_enabled`, если человек хоть чем-то меряет сахар.
+Не отмечена цель `sugar` — ни один из шагов не задаётся и предложение
+присылать замеры не появляется.
+
+```
+DIABETES = t1, t2, pre, gest, no, unknown     # один выбор
+METHODS  = meter, cgm                         # множественный выбор
+NONE = "none"                                 # «никакие» — исключающий вариант
+
+decode_methods(raw)->(key,…) ; encode_methods(keys)->str
+tracks_glucose(raw|keys)->bool                # meter или cgm
+diabetes_title(key)->str|None ; method_titles(keys)->[str]
+wants_sugar_track(focus_keys)->bool           # "sugar" среди целей
+```
+
+| Шаг | Ввод | Куда пишется |
+|---|---|---|
+| `dia` | кнопки `sg:dia:<key>` | `body_profile.diabetes` |
+| `dia_meds` | свободный текст | `body_profile.diabetes_meds` (`normalize_meds`: «нет»/пусто → `None`) |
+| `sugar_method` | кнопки `sg:m:<key>`, `sg:m:none`, `sg:done` | `body_profile.glucose_methods` (ключи через запятую; `""` — спросили, ничем не меряет) |
+
+Шаг `dia_meds` сразу говорит, что лекарства стоит отмечать в боте наравне с
+едой (`/meds`) — иначе связь «еда → сахар» читается без половины контекста.
+Бот их только записывает: ни доз, ни назначений, ни отмен
+(`.specify/memory/constitution.md`, принцип I).
+
+### Callback-грамматика
+
+```
+sg:dia:<t1|t2|pre|gest|no|unknown>
+sg:m:<meter|cgm|none>     # none — исключающий, снимает остальные
+sg:done                   # сохранить способы и идти дальше
+sg:log                    # «🩸 Записать сахар» под записью еды -> pending_mode=glucose
+```
+
+### Предложение присылать замеры
+
+`users.glucose_prompt_enabled` (по умолчанию `false`, включается только
+сахарным треком). Пока включено, к подтверждению каждой записи еды
+добавляется строка `reporting.format_glucose_prompt()` и кнопка `sg:log`
+(`spec/bot.md` § Потоки). Выключается в `/set sugar off`, видно в
+`/settings`. Сбой этой части не имеет права съесть подтверждение записи.
+
+Текст `PITCH` объясняет, ради чего фотографировать каждый приём пищи, даже
+чашку кофе, и что бот ищет **связи** между едой и показателями, а не лечит:
+формулировки те же, что и в отчётах (`spec/clinical.md`, принцип II).

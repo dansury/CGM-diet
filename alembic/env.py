@@ -11,7 +11,12 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
-from src.config import Settings, ensure_sqlite_parent_dir, normalize_database_url
+from src.config import (
+    Settings,
+    ensure_sqlite_parent_dir,
+    normalize_database_url,
+    resolve_sqlite_url,
+)
 from src.db import models  # noqa: F401  -- registers tables on the metadata
 from src.db.base import metadata as target_metadata
 
@@ -25,7 +30,9 @@ except ImportError:
 
 def _database_url() -> str:
     raw = (os.environ.get("DATABASE_URL") or "").strip()
-    return normalize_database_url(raw) if raw else Settings().database_url
+    url = normalize_database_url(raw) if raw else Settings().database_url
+    # Same anchoring as the bot: migrations and the bot must open one file.
+    return resolve_sqlite_url(url)
 
 
 config = context.config

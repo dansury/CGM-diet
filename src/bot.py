@@ -90,6 +90,16 @@ async def prepare_runtime(bot: Bot, settings: Settings) -> None:
 
     wire_error_reporter(bot, settings)
 
+    # Проверка хранилища идёт сразу после репортера: если данные лежат на
+    # одноразовом диске, владелец узнает об этом сообщением, а не пропажей
+    # веса и цели после апдейта (`spec/infra.md` § Хранение данных).
+    from src.db.persistence import check_persistence
+
+    try:
+        check_persistence(settings)
+    except Exception:
+        log.warning("storage check failed", exc_info=True)
+
     from src.handlers.message_log import LogOutgoingMiddleware
 
     bot.session.middleware(LogOutgoingMiddleware())

@@ -91,10 +91,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await conn.execute(text("SELECT 1"))
         except Exception as exc:
             db_ok, detail = False, str(exc)[:200]
+        from src.db.persistence import describe_storage
+
+        storage = describe_storage(s)
         payload = {
             "status": "ok" if db_ok else "degraded",
             "env": s.app_env,
-            "db": {"ok": db_ok, "detail": detail},
+            "db": {
+                "ok": db_ok,
+                "detail": detail,
+                "kind": storage.kind,
+                "durable": storage.durable,
+            },
             "llm": {"mock": s.llm_mock, "configured": bool(s.openrouter_api_key)},
             "bot_mode": s.bot_mode,
         }

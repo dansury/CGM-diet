@@ -230,7 +230,9 @@ def test_the_text_stays_a_proportion_never_a_verdict():
     advice = plate.advise(current=current, day_sessions=[current], rhythm=rhythm)
     text = format_plate_advice(advice)
     assert "Тарелка" in text
-    assert "/plate" in text
+    # Полоса состава — на каждом показе, а не только в первый раз.
+    assert "из 100" in text
+    assert "▓" in text or "░" in text
     assert "/set plate off" not in text
     first_text = format_plate_advice(advice, with_rule=True)
     assert "/set plate off" in first_text

@@ -245,11 +245,17 @@ async def show_errors(message: Message) -> None:
 @router.message(Command("whereami"))
 async def show_context(message: Message) -> None:
     """Owner self-check: which chat id to put into OWNER_TG_IDS."""
+    from src.config import load_settings
+    from src.db.persistence import describe_storage
     from src.meds.side_effects import dataset_status
 
     status = dataset_status()
+    storage = describe_storage(load_settings())
+    durability = "переживёт перезапуск" if storage.durable else "⚠️ пропадёт при обновлении"
     await message.answer(
         f"chat_id: <code>{message.chat.id}</code>\n"
+        f"база: {storage.kind} — {durability}\n"
+        f"<code>{html.escape(storage.location)}</code>\n"
         f"справочник побочек: {status.rows} записей по {status.drugs} препаратам"
         f"{' (выборка)' if status.sample else ''}\n"
         f"<code>{html.escape(status.path)}</code>"

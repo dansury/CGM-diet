@@ -101,6 +101,39 @@ async def test_pregnancy_blocks_a_weight_loss_goal(engine, session, state):
     assert await repo.get_active_goal(session, user) is None
 
 
+async def test_a_goal_named_before_the_first_weight_is_not_forgotten(engine, session, state):
+    """«Сначала нужен вес» — обещание вернуться к цели, а не её потеря."""
+    await body.on_field(FakeCallback(data="bd:goal", message=FakeMessage()), state)
+    asked = FakeMessage(text="59")
+    await body.on_value(asked, state)
+    assert "59" in asked.texts[-1]  # цель названа и удержана
+
+    weighed = FakeMessage(text="62")
+    await body.on_value(weighed, state)
+
+    keyboard = weighed.sent[-1]["reply_markup"]
+    rates = [
+        button.callback_data
+        for row in keyboard.inline_keyboard
+        for button in row
+        if button.callback_data.startswith("bd:rate:")
+    ]
+    assert rates  # к цели вернулись сами: предлагаем темп
+    assert (await state.get_data())["goal_target"] == 59.0
+
+
+async def test_a_weight_outside_the_limits_does_not_resume_the_goal(engine, session, state):
+    await body.on_field(FakeCallback(data="bd:goal", message=FakeMessage()), state)
+    await body.on_value(FakeMessage(text="59"), state)
+    rejected = FakeMessage(text="4")
+    await body.on_value(rejected, state)
+    assert "от 25 до 400" in rejected.texts[-1]
+    assert not any(
+        (sent.get("reply_markup") and "bd:rate:" in str(sent["reply_markup"]))
+        for sent in rejected.sent
+    )
+
+
 async def test_a_confirmed_meal_shows_the_daily_corridor_once_a_goal_exists(
     engine, session, state
 ):
@@ -118,6 +151,24 @@ async def test_a_confirmed_meal_shows_the_daily_corridor_once_a_goal_exists(
     assert "ккал" in written
     assert "▓" in written or "░" in written
     assert "Этот приём" in written
+
+
+async def test_the_calorie_bar_and_the_plate_bar_live_side_by_side(engine, session, state):
+    """Полосы две и на первом показе, и на втором: калории и состав тарелки."""
+    await intake.handle_text(FakeMessage(text="рост 178 мне 44 пол мужской"), state)
+    await intake.handle_text(FakeMessage(text="вес 90"), state)
+    await intake.handle_text(FakeMessage(text="цель 80"), state)
+    await body.on_rate(FakeCallback(data="bd:rate:50", message=FakeMessage()), state)
+
+    for _ in range(2):
+        await intake.handle_text(FakeMessage(text="банан и бутерброд с сыром"), state)
+        card = FakeMessage()
+        await confirm.meal_ok(FakeCallback(data="meal:ok", message=card), state)
+        written = card.texts[-1]
+        assert "📊 <b>Сегодня</b>" in written
+        assert "🥗 <b>Тарелка</b> — " in written  # полоса состава, а не голый заголовок
+        assert written.count("\n▓") + written.count("\n░") >= 1
+        assert "ккал)" in written
 
 
 async def test_without_a_goal_there_is_no_corridor_bar(engine, session, state):

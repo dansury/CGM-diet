@@ -41,7 +41,7 @@
 | `/delete` | удаление с подтверждением | `handlers/reports.py` |
 | `/health` | пошаговая инструкция Samsung Health, ключи, ссылка на мост | `handlers/reports.py` |
 | `/sleep` | сон: длительность, режим, связи; переключатель наблюдения | `handlers/sleep.py` |
-| `/model`, `/models`, `/errors`, `/whereami` | только владелец, только в личке | `handlers/admin.py` |
+| `/model`, `/models`, `/errors`, `/whereami` (chat_id, тип и путь базы, живучесть — `spec/infra.md`) | только владелец, только в личке | `handlers/admin.py` |
 | `/users`, `/bot_settings` | панель владельца, только в личке | `handlers/admin_panel.py` |
 | `/last_msg_<username\|id> [N]` | только владелец: последняя переписка с пользователем | `handlers/admin_panel.py` |
 

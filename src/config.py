@@ -6,6 +6,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from src.paths import repo_path
+
 try:
     from dotenv import load_dotenv
 except ImportError:  # minimal CI
@@ -85,19 +87,44 @@ def normalize_database_url(url: str) -> str:
     return url
 
 
-def ensure_sqlite_parent_dir(url: str) -> None:
-    """SQLite never creates the DB file's parent dir — do it here."""
+def sqlite_path(url: str) -> Path | None:
+    """Filesystem path behind a SQLite URL, or None (other dialect, in-memory)."""
     if not url.startswith("sqlite"):
-        return
+        return None
     try:
         from sqlalchemy.engine import make_url
 
         database = make_url(url).database
     except Exception:
-        return
+        return None
     if not database or database == ":memory:":
+        return None
+    return Path(database).expanduser()
+
+
+def resolve_sqlite_url(url: str) -> str:
+    """Anchor a relative SQLite path to `APP_ROOT` instead of the process CWD.
+
+    A relative `data/cgm.db` follows whatever directory the process was started
+    from: restart the bot from elsewhere and it silently opens a brand-new empty
+    file while the real database stays where it was. See `spec/infra.md`
+    § Хранение данных.
+    """
+    path = sqlite_path(url)
+    if path is None or path.is_absolute():
+        return url
+    from sqlalchemy.engine import make_url
+
+    resolved = repo_path(path)
+    return make_url(url).set(database=str(resolved)).render_as_string(hide_password=False)
+
+
+def ensure_sqlite_parent_dir(url: str) -> None:
+    """SQLite never creates the DB file's parent dir — do it here."""
+    path = sqlite_path(url)
+    if path is None:
         return
-    parent = Path(database).expanduser().parent
+    parent = path.parent
     if str(parent) and not parent.exists():
         parent.mkdir(parents=True, exist_ok=True)
 
@@ -203,8 +230,8 @@ def load_settings(*, dotenv_path: Path | None = None, refresh: bool = False) -> 
     settings = Settings(
         telegram_bot_token=_read("TELEGRAM_BOT_TOKEN") or "",
         owner_tg_ids=_read_int_tuple("OWNER_TG_IDS"),
-        database_url=normalize_database_url(
-            _read("DATABASE_URL") or "sqlite+aiosqlite:///data/cgm.db"
+        database_url=resolve_sqlite_url(
+            normalize_database_url(_read("DATABASE_URL") or "sqlite+aiosqlite:///data/cgm.db")
         ),
         openrouter_api_key=_read("OPENROUTER_API_KEY") or "",
         openrouter_base_url=_read("OPENROUTER_BASE_URL") or "https://openrouter.ai/api/v1",

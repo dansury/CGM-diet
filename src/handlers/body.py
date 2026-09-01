@@ -53,6 +53,8 @@ log = get_logger("handlers.body")
 
 FIELD_KEY = "body_field"
 DRAFT_KEY = "draft"
+#: цель, названная до того, как бот узнал текущий вес — он к ней возвращается
+PENDING_GOAL_KEY = "goal_pending"
 
 PROMPTS = {
     "weight": (
@@ -386,8 +388,11 @@ async def on_value(message: Message, state: FSMContext, *, text_override: str | 
         return
 
     if field == "weight":
+        pending_goal = data.get(PENDING_GOAL_KEY)
         await state.clear()
-        await save_weight_entry(message, weight_kg=value, text=text, source="text")
+        saved = await save_weight_entry(message, weight_kg=value, text=text, source="text")
+        if saved and pending_goal:
+            await offer_goal(message, state, target_weight_kg=float(pending_goal))
         return
     if field == "goal":
         await offer_goal(message, state, target_weight_kg=value)
@@ -445,10 +450,14 @@ async def offer_goal(message: Message, state: FSMContext, *, target_weight_kg: f
         weight = last.weight_kg if last else None
     kind = body_math.goal_kind(weight, target_weight_kg)
     if weight is None:
-        await state.clear()
+        # Цель не теряем: держим её в FSM и сами спрашиваем вес — обещание
+        # «вернусь к цели» выполняет `on_value` (`spec/body.md` § Цель).
+        await state.set_state(BodyFlow.awaiting)
+        await state.update_data({FIELD_KEY: "weight", PENDING_GOAL_KEY: target_weight_kg})
         await message.answer(
-            "Сначала нужен текущий вес — напишите «вес 82,4», и я вернусь к цели.",
-            reply_markup=await menu_of(message.chat.id),
+            f"Сначала нужен текущий вес — напишите «вес 82,4» или просто число. "
+            f"Цель {target_weight_kg:g} кг я помню и вернусь к ней сразу после.",
+            reply_markup=cancel_only(),
         )
         return
     if kind == "maintain":
@@ -533,11 +542,15 @@ async def save_weight_entry(
     composition: dict[str, float] | None = None,
     source: str = "text",
     at: datetime | None = None,
-) -> None:
-    """Единственный путь записи взвешивания — им пользуются и текст, и фото."""
+) -> bool:
+    """Единственный путь записи взвешивания — им пользуются и текст, и фото.
+
+    Возвращает `False`, если вес не записан (вне допустимых границ): вызывающий
+    не должен продолжать цепочку — например, возвращаться к отложенной цели.
+    """
     if not 25.0 <= weight_kg <= 400.0:
         await message.answer("Вес должен быть от 25 до 400 кг.")
-        return
+        return False
     facts = parse_text(text).body if text else None
     payload = dict(composition or {})
     if facts is not None:
@@ -571,6 +584,7 @@ async def save_weight_entry(
     if progress:
         answer += "\n\n" + progress
     await message.answer(answer, reply_markup=await menu_of(message.chat.id))
+    return True
 
 
 # ------------------------------------------------------------------ фото весов

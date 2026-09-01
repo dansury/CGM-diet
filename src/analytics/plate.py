@@ -61,6 +61,8 @@ MIN_MEALS_PER_DAY = 2
 MAX_MEALS_PER_DAY = 8
 #: сколько дней с едой нужно, чтобы оценивать режим по статистике
 MIN_DAYS_FOR_RHYTHM = 5
+#: скользящее окно, по которому меряем фактический режим питания, дней
+RHYTHM_WINDOW_DAYS = 5
 
 #: масса одного приёма пищи, когда своей статистики ещё нет, г
 DEFAULT_MEAL_MASS_G = 500.0
@@ -337,18 +339,24 @@ def count_meals_today(
 
 
 def estimate_meals_per_day(
-    meals: list[PlateMeal], *, window_min: int, tzinfo=None
+    meals: list[PlateMeal], *, window_min: int, tzinfo=None, now: datetime | None = None
 ) -> int | None:
     """Сколько приёмов пищи в день у пользователя — медиана по дням с едой.
 
-    `None`, если дней с записями меньше `MIN_DAYS_FOR_RHYTHM`: режим по двум
-    дням — это не статистика.
+    Смотрим только на скользящее окно последних `RHYTHM_WINDOW_DAYS` дней
+    (от `now`, а без него — от последнего приёма пищи в истории): режим
+    питания меняется, и полугодовая история не должна перевешивать то, как
+    человек ест сейчас. `None`, если дней с записями внутри окна меньше
+    `MIN_DAYS_FOR_RHYTHM`: режим по двум дням — это не статистика.
     """
     sessions = meal_sessions(group_sessions(meals, window_min=window_min))
     if not sessions:
         return None
+    reference = now or max(session.started_at for session in sessions)
+    since = reference - timedelta(days=RHYTHM_WINDOW_DAYS)
+    recent = [session for session in sessions if since <= session.started_at <= reference]
     per_day: Counter[object] = Counter()
-    for session in sessions:
+    for session in recent:
         stamp = session.started_at
         if tzinfo is not None:
             stamp = stamp.astimezone(tzinfo)
@@ -378,11 +386,12 @@ def measure_rhythm(
     *,
     meals_per_day: int | None = None,
     tzinfo=None,
+    now: datetime | None = None,
 ) -> Rhythm:
     """Собрать режим питания: настройка пользователя важнее статистики."""
     window = session_window_min(history)
     session_source = "stats" if window != DEFAULT_SESSION_MIN else "default"
-    measured = estimate_meals_per_day(history, window_min=window, tzinfo=tzinfo)
+    measured = estimate_meals_per_day(history, window_min=window, tzinfo=tzinfo, now=now)
     if meals_per_day:
         count, meals_source = int(meals_per_day), "user"
     elif measured:
@@ -456,6 +465,7 @@ __all__ = [
     "MAX_MEALS_PER_DAY",
     "MEAL_MIN_CORE_G",
     "MIN_MEALS_PER_DAY",
+    "RHYTHM_WINDOW_DAYS",
     "TARGET_SHARES",
     "Gap",
     "MealSession",

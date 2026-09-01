@@ -825,7 +825,17 @@ def format_meals_today(meals_done: int, meals_per_day: int) -> str:
     return f"🍽 Приёмов пищи: {meals_done} из {meals_per_day}"
 
 
-def format_day_progress(balance, *, goal=None, trend=None, meals: str = "") -> str:
+def format_meal_progress(balance) -> str:
+    """Полоса калорий этого приёма пищи — суточный ориентир, делённый на число приёмов."""
+    return (
+        f"🍽 Этот приём: {progress_bar(balance.share)} {balance.share * 100:.0f}% "
+        f"({balance.consumed_kcal:.0f} из {balance.target_kcal:.0f} ккал)"
+    )
+
+
+def format_day_progress(
+    balance, *, goal=None, trend=None, meals: str = "", meal: str = ""
+) -> str:
     """Дневной коридор после приёма пищи (`spec/body.md` § Дневной коридор)."""
     share = balance.share
     lines = ["📊 <b>Сегодня</b>"]
@@ -848,6 +858,8 @@ def format_day_progress(balance, *, goal=None, trend=None, meals: str = "") -> s
         lines.append(f"Углеводы за день: {balance.carbs_g:.0f} г")
     if meals:
         lines.append(meals)
+    if meal:
+        lines.append(meal)
     if trend is not None and trend.rate_kg_week is not None:
         lines.append(
             f"Вес за {trend.days:.0f} дн.: {trend.first_kg:g} → {trend.last_kg:g} кг "

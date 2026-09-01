@@ -17,6 +17,7 @@ from src.reporting import (
     format_day_progress,
     format_day_totals,
     format_goal_plan,
+    format_meal_progress,
     progress_bar,
 )
 
@@ -140,6 +141,12 @@ def test_goal_kind_reads_the_direction():
     assert body_math.goal_kind(90.0, 80.0) == "lose"
     assert body_math.goal_kind(60.0, 65.0) == "gain"
     assert body_math.goal_kind(70.0, 70.2) == "maintain"
+
+
+def test_meal_target_kcal_splits_the_day_target_by_meals():
+    assert body_math.meal_target_kcal(1800.0, 3) == pytest.approx(600.0)
+    assert body_math.meal_target_kcal(1800.0, 2) == pytest.approx(900.0)
+    assert body_math.meal_target_kcal(1800.0, 0) == pytest.approx(1800.0)  # без деления на 0
 
 
 def test_day_balance_counts_the_workout_into_the_allowance():
@@ -302,6 +309,20 @@ def test_the_day_progress_names_the_numbers_behind_the_bar():
     text = format_day_progress(balance)
     assert "1420" in text and "2160" in text
     assert "Осталось" in text
+
+
+def test_the_meal_progress_bar_names_its_own_numbers():
+    balance = body_math.day_balance(target_kcal=600, consumed_kcal=350)
+    text = format_meal_progress(balance)
+    assert "350" in text and "600" in text
+    assert "▓" in text or "░" in text
+    assert "Этот приём" in text
+
+
+def test_day_progress_carries_the_meal_bar_line():
+    balance = body_math.day_balance(target_kcal=1900, consumed_kcal=700, burned_kcal=0)
+    text = format_day_progress(balance, meal="🍽 Этот приём: ▓░ 50% (300 из 600 ккал)")
+    assert "Этот приём" in text
 
 
 def test_the_day_total_without_a_goal_names_no_norm():

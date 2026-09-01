@@ -335,6 +335,11 @@ def day_balance(
     )
 
 
+def meal_target_kcal(day_target_kcal: float, meals_per_day: int) -> float:
+    """Ориентир калорий на один приём пищи — суточный, делённый на число приёмов."""
+    return day_target_kcal / max(int(meals_per_day), 1)
+
+
 def merge_burn(
     workouts: list[tuple[datetime, datetime | None, float | None]],
     samples: list[tuple[datetime, datetime | None, float | None]],
@@ -435,6 +440,7 @@ __all__ = [
     "day_balance",
     "goal_kind",
     "lean_mass",
+    "meal_target_kcal",
     "merge_burn",
     "rate_options",
     "safe_corridor",

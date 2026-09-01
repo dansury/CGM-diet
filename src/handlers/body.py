@@ -37,6 +37,7 @@ from src.reporting import (
     format_day_progress,
     format_day_totals,
     format_goal_plan,
+    format_meal_progress,
     format_meals_today,
     format_measurement_draft,
     format_weight_saved,
@@ -150,9 +151,10 @@ async def _plan_for(session, user: User, *, weight_kg: float | None = None) -> b
 async def day_progress_text(session, user: User, *, now: datetime) -> str | None:
     """Итог дня — то, что показывается после каждого приёма пищи.
 
-    С целью — полоса коридора и остаток; без цели «73 % нормы» ничего не
-    значит, поэтому остаются только съеденные калории и подсказка завести цель.
-    `None` — когда за день нечего показать (`spec/body.md` § Дневной коридор).
+    С целью — полоса коридора, остаток и полоса калорий текущего приёма;
+    без цели «73 % нормы» ничего не значит, поэтому остаются только съеденные
+    калории и подсказка завести цель. `None` — когда за день нечего показать
+    (`spec/body.md` § Дневной коридор).
     """
     goal = await repo.get_active_goal(session, user)
     plan = await _plan_for(session, user) if goal is not None else None
@@ -164,7 +166,9 @@ async def day_progress_text(session, user: User, *, now: datetime) -> str | None
         start=to_utc(start_local, user),
         end=to_utc(start_local + timedelta(days=1), user),
     )
-    meals = await _meals_today_text(session, user, start_local=start_local)
+    meals, meal_bar = await _meal_progress(
+        session, user, start_local=start_local, target_kcal=target
+    )
     if not target:
         # Цели нет (или коридор не посчитался) — но съеденное за день человек
         # вправе видеть всегда; процентов и остатка без цели не показываем.
@@ -179,7 +183,7 @@ async def day_progress_text(session, user: User, *, now: datetime) -> str | None
         for row in await repo.load_weights(session, user)
     ]
     return format_day_progress(
-        balance, goal=goal, trend=body_math.weight_trend(series), meals=meals
+        balance, goal=goal, trend=body_math.weight_trend(series), meals=meals, meal=meal_bar
     )
 
 
@@ -187,12 +191,21 @@ async def day_progress_text(session, user: User, *, now: datetime) -> str | None
 MEALS_HISTORY_DAYS = 60
 
 
-async def _meals_today_text(session, user: User, *, start_local: datetime) -> str:
-    """«🍽 Приёмов пищи: 2 из 3» — сколько приёмов уже было и сколько их обычно.
+async def _meal_progress(
+    session, user: User, *, start_local: datetime, target_kcal: float | None
+) -> tuple[str, str]:
+    """(строка «🍽 Приёмов пищи: N из M», полоса калорий текущего приёма).
 
     Считает `src/analytics/plate.py`: приёмом пищи считается сессия с настоящей
-    едой, одинокий кофе — нет (`spec/plate.md`). Сбой расчёта убирает строку и
-    не трогает остальной итог дня.
+    едой, одинокий кофе — нет (`spec/plate.md`). Сбой расчёта убирает обе
+    строки и не трогает остальной итог дня.
+
+    Ориентир на один приём — суточный ориентир, делённый на число приёмов
+    (`body_math.meal_target_kcal`). Число приёмов — по умолчанию 3, если
+    пользователь не назвал своё (в анкете или `/set meals`) и статистика за
+    последние `plate.RHYTHM_WINDOW_DAYS` дней не показывает больше трёх
+    (`spec/plate.md` § Сколько приёмов пищи в день). Полоса не показывается
+    без цели по калориям и для перекуса — только для настоящего блюда.
     """
     from src.analytics import plate as plate_math
 
@@ -200,16 +213,48 @@ async def _meals_today_text(session, user: User, *, start_local: datetime) -> st
         history = await repo.load_plate_meals(
             session, user, since=to_utc(start_local - timedelta(days=MEALS_HISTORY_DAYS), user)
         )
+        now_utc = to_utc(start_local, user)
         rhythm = plate_math.measure_rhythm(
-            history, meals_per_day=user.meals_per_day, tzinfo=user_tz(user)
+            history, meals_per_day=user.meals_per_day, tzinfo=user_tz(user), now=now_utc
         )
+        day_start = now_utc
         done = plate_math.count_meals_today(
-            history, day_start=to_utc(start_local, user), window_min=rhythm.session_min
+            history, day_start=day_start, window_min=rhythm.session_min
         )
+        meals_line = format_meals_today(done, rhythm.meals_per_day)
     except Exception:
         log.exception("meals-per-day count failed")
-        return ""
-    return format_meals_today(done, rhythm.meals_per_day)
+        return "", ""
+
+    if not target_kcal:
+        return meals_line, ""
+    try:
+        # Статистика делит калораж на число приёмов, только когда их видно
+        # больше 3 в день — иначе безопаснее суточный ориентир по умолчанию
+        # (`spec/plate.md`); своя настройка пользователя всегда в приоритете.
+        if rhythm.meals_source == "user":
+            meals_for_kcal = rhythm.meals_per_day
+        elif rhythm.meals_source == "stats" and rhythm.meals_per_day > plate_math.DEFAULT_MEALS_PER_DAY:
+            meals_for_kcal = rhythm.meals_per_day
+        else:
+            meals_for_kcal = plate_math.DEFAULT_MEALS_PER_DAY
+        today = [meal for meal in history if meal.eaten_at >= day_start]
+        if not today:
+            return meals_line, ""
+        current = plate_math.group_sessions(today, window_min=rhythm.session_min)[-1]
+        if not plate_math.is_meal(current.items):
+            return meals_line, ""
+        energy = await repo.day_energy(
+            session, user, start=current.started_at, end=current.ended_at + timedelta(minutes=1)
+        )
+        balance = body_math.day_balance(
+            target_kcal=body_math.meal_target_kcal(target_kcal, meals_for_kcal),
+            consumed_kcal=energy["consumed_kcal"],
+        )
+        return meals_line, format_meal_progress(balance)
+    except Exception:
+        log.exception("meal calorie bar failed")
+        return meals_line, ""
 
 
 # ------------------------------------------------------------------ callbacks

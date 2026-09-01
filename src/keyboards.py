@@ -588,6 +588,16 @@ def onboarding_skip() -> InlineKeyboardMarkup:
     )
 
 
+def onboarding_meals_picker() -> InlineKeyboardMarkup:
+    """Сколько раз в день человек обычно ест — вопрос анкеты."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=str(n), callback_data=f"onb:meals:{n}") for n in (2, 3, 4, 5)],
+            [InlineKeyboardButton(text="⏭ Не знаю, посчитай сам", callback_data="onb:skip")],
+        ]
+    )
+
+
 def onboarding_sex_picker() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -789,6 +799,7 @@ __all__ = [
     "diabetes_picker",
     "glucose_log_button",
     "glucose_method_picker",
+    "onboarding_meals_picker",
     "onboarding_skip",
     "photo_kind",
     "plate_meals_picker",

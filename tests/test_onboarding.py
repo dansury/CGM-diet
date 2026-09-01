@@ -109,6 +109,7 @@ async def test_walking_through_every_step_fills_the_profile(engine, session, sta
 
     await onboarding.on_pregnant(FakeCallback(data="onb:preg:n", message=FakeMessage()), state)
     await onboarding.on_answer(FakeMessage(text="нет"), state, FakeBot())  # conditions
+    await onboarding.on_meals(FakeCallback(data="onb:meals:4", message=FakeMessage()), state)
     await onboarding.on_answer(FakeMessage(text="70"), state, FakeBot())   # goal == текущий вес → maintain
 
     assert await state.get_state() is None  # анкета закончена
@@ -120,10 +121,28 @@ async def test_walking_through_every_step_fills_the_profile(engine, session, sta
     assert profile.sex == "f"
     assert profile.pregnant is False
     assert profile.conditions is None  # «нет» не хранится как состояние
+    assert user.meals_per_day == 4
     assert (await repo.last_weight(session, user)).weight_kg == 70.0
     goal = await repo.get_active_goal(session, user)
     assert goal is not None
     assert goal.kind == "maintain"
+
+
+async def test_the_meal_frequency_step_asks_and_can_be_typed(engine, session, state):
+    await onboarding.start(FakeMessage(), state)
+    await _pick(state, "weight")
+    await onboarding.on_answer(FakeMessage(text="30"), state, FakeBot())   # age
+    await onboarding.on_answer(FakeMessage(text="178"), state, FakeBot())  # height
+    await onboarding.on_answer(FakeMessage(text="70"), state, FakeBot())   # weight
+    await onboarding.on_sex(FakeCallback(data="onb:sex:m", message=FakeMessage()), state)
+    await onboarding.on_answer(FakeMessage(text="нет"), state, FakeBot())  # conditions
+
+    data = await state.get_data()
+    assert data.get(onboarding.STEP_KEY) == "meals"
+
+    await onboarding.on_answer(FakeMessage(text="2"), state, FakeBot())    # meals, typed
+    user = await repo.get_user(session, TG_ID)
+    assert user.meals_per_day == 2
 
 
 async def test_any_step_can_be_skipped(engine, session, state):

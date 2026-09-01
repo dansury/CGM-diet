@@ -117,6 +117,7 @@ async def test_a_confirmed_meal_shows_the_daily_corridor_once_a_goal_exists(
     assert "Записано" in written
     assert "ккал" in written
     assert "▓" in written or "░" in written
+    assert "Этот приём" in written
 
 
 async def test_without_a_goal_there_is_no_corridor_bar(engine, session, state):
@@ -127,6 +128,69 @@ async def test_without_a_goal_there_is_no_corridor_bar(engine, session, state):
     written = card.texts[-1]
     assert "ккал)" not in written
     assert "Осталось на сегодня" not in written
+    assert "Этот приём" not in written  # без цели нет и ориентира на приём
+
+
+async def test_the_meal_bar_splits_the_target_by_three_meals_by_default(
+    engine, session, state
+):
+    """Без явной настройки и статистики — по умолчанию делим на 3 приёма."""
+    await intake.handle_text(FakeMessage(text="рост 178 мне 44 пол мужской"), state)
+    await intake.handle_text(FakeMessage(text="вес 90"), state)
+    await intake.handle_text(FakeMessage(text="цель 80"), state)
+    await body.on_rate(FakeCallback(data="bd:rate:50", message=FakeMessage()), state)
+
+    user = await repo.get_user(session, TG_ID)
+    plan = await body._plan_for(session, user)
+
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    card = FakeMessage()
+    await confirm.meal_ok(FakeCallback(data="meal:ok", message=card), state)
+
+    written = card.texts[-1]
+    expected_target = round(plan.target_kcal / 3.0)
+    assert f"из {expected_target} ккал" in written
+
+
+async def test_the_meal_bar_follows_a_meals_per_day_the_user_set(engine, session, state):
+    await intake.handle_text(FakeMessage(text="рост 178 мне 44 пол мужской"), state)
+    await intake.handle_text(FakeMessage(text="вес 90"), state)
+    await intake.handle_text(FakeMessage(text="цель 80"), state)
+    await body.on_rate(FakeCallback(data="bd:rate:50", message=FakeMessage()), state)
+
+    user = await repo.get_user(session, TG_ID)
+    user.meals_per_day = 2
+    await session.commit()
+    plan = await body._plan_for(session, user)
+
+    await intake.handle_text(FakeMessage(text="съела овсянку с бананом"), state)
+    card = FakeMessage()
+    await confirm.meal_ok(FakeCallback(data="meal:ok", message=card), state)
+
+    written = card.texts[-1]
+    expected_target = round(plan.target_kcal / 2.0)
+    assert f"из {expected_target} ккал" in written
+
+
+async def test_a_snack_alone_gets_no_meal_bar(engine, session, state):
+    """Перекус (кофе) сам по себе — не приём пищи ни для тарелки, ни для калорий."""
+    from src.handlers import views
+    from src.vision.schemas import ItemDraft, MealDraft
+
+    await intake.handle_text(FakeMessage(text="рост 178 мне 44 пол мужской"), state)
+    await intake.handle_text(FakeMessage(text="вес 90"), state)
+    await intake.handle_text(FakeMessage(text="цель 80"), state)
+    await body.on_rate(FakeCallback(data="bd:rate:50", message=FakeMessage()), state)
+
+    draft = MealDraft(
+        title="Кофе с молоком",
+        items=[ItemDraft(name="кофе с молоком", portion_g=200, kcal=90, tags=["milk"])],
+    )
+    await views.show_meal_draft(FakeMessage(), state, draft)
+    card = FakeMessage()
+    await confirm.meal_ok(FakeCallback(data="meal:ok", message=card), state)
+
+    assert "Этот приём" not in card.texts[-1]
 
 
 async def test_the_guided_weight_prompt_writes_what_the_user_typed(engine, session, state):

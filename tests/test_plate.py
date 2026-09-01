@@ -140,6 +140,52 @@ def test_meals_per_day_is_the_median_over_days_with_food():
     assert plate.estimate_meals_per_day(meals, window_min=60) == 3
 
 
+def test_meals_per_day_only_looks_at_the_last_five_days():
+    """Старая привычка не должна перевешивать то, как человек ест сейчас."""
+    meals = []
+    idx = 0
+    # 10 старых дней по 2 приёма — вне окна в 5 дней
+    for day in range(10):
+        for hour in (8, 19):
+            idx += 1
+            meals.append(
+                plate.PlateMeal(
+                    id=idx,
+                    eaten_at=NOW.replace(hour=hour) + timedelta(days=day),
+                    items=[plate.PlateItem("еда", 200, ["protein"])],
+                )
+            )
+    # 5 последних дней по 4 приёма — то, что попадает в скользящее окно
+    for day in range(10, 15):
+        for hour in (8, 12, 16, 20):
+            idx += 1
+            meals.append(
+                plate.PlateMeal(
+                    id=idx,
+                    eaten_at=NOW.replace(hour=hour) + timedelta(days=day),
+                    items=[plate.PlateItem("еда", 200, ["protein"])],
+                )
+            )
+    assert plate.estimate_meals_per_day(meals, window_min=60) == 4
+
+
+def test_meals_per_day_window_is_relative_to_now_when_given():
+    """`now` — например, вечер записи еды, а не время последней записи в истории."""
+    meals = [
+        plate.PlateMeal(
+            id=idx,
+            eaten_at=NOW.replace(hour=hour) + timedelta(days=day),
+            items=[plate.PlateItem("еда", 200, ["protein"])],
+        )
+        for day in range(6)
+        for idx, hour in enumerate((8, 13, 19), start=day * 3)
+    ]
+    # окно от последней записи (день 5) видит все 6 дней — хватает статистики
+    assert plate.estimate_meals_per_day(meals, window_min=60) == 3
+    # то же окно, но «сегодня» — день 0: впереди пока нет истории вовсе
+    assert plate.estimate_meals_per_day(meals, window_min=60, now=NOW) is None
+
+
 def test_the_user_setting_outranks_the_statistics():
     meals = [
         plate.PlateMeal(

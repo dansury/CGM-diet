@@ -45,7 +45,7 @@ async def plate_advice_text(
     if not history:
         return None
     rhythm = plate_math.measure_rhythm(
-        history, meals_per_day=user.meals_per_day, tzinfo=user_tz(user)
+        history, meals_per_day=user.meals_per_day, tzinfo=user_tz(user), now=to_utc(now, user)
     )
     day_start = to_utc(now.replace(hour=0, minute=0, second=0, microsecond=0), user)
     today = [meal for meal in history if meal.eaten_at >= day_start]
@@ -73,7 +73,7 @@ async def _plate_card(session: AsyncSession, user: User) -> tuple[str, bool]:
     )
     window = plate_math.session_window_min(history)
     measured = plate_math.estimate_meals_per_day(
-        history, window_min=window, tzinfo=user_tz(user)
+        history, window_min=window, tzinfo=user_tz(user), now=to_utc(now, user)
     )
     text = format_plate_settings(
         enabled=user.plate_enabled,

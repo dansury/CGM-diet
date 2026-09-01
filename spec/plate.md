@@ -33,18 +33,18 @@ score_items(items)->PlateScore               # score = 100·Σmin(share,target)/
 session_window_min(meals, default=60)->int   # медиана разрывов (10..150] мин, [30..120]
 group_sessions(meals, window_min)->[MealSession]
 meal_sessions(sessions)->[MealSession]       # только is_meal, без одиночных перекусов
-estimate_meals_per_day(meals, window_min, tzinfo?)->int|None   # None при <5 днях
+estimate_meals_per_day(meals, window_min, tzinfo?, now?)->int|None   # None при <5 днях в окне
 typical_meal_mass(meals, window_min)->float|None               # медиана, [250..1200] г
-measure_rhythm(history, meals_per_day?, tzinfo?)->Rhythm
+measure_rhythm(history, meals_per_day?, tzinfo?, now?)->Rhythm
 advise(current, day_sessions, rhythm)->PlateAdvice
 count_meals_today(history, day_start, window_min)->int   # приёмов пищи с day_start
 ```
 
 Константы: `DEFAULT_SESSION_MIN=60`, `DEFAULT_MEALS_PER_DAY=3`,
-`MIN/MAX_MEALS_PER_DAY=2/8`, `MIN_DAYS_FOR_RHYTHM=5`, `BURST_GAP_MIN=10`,
-`DEFAULT_MEAL_MASS_G=500`, `FALLBACK_PORTION_G=100`, `MIN_GAP_G=30`,
-`CORE_CATEGORIES=(veg, fruit, grain, protein, refined)`, `MEAL_MIN_CORE_G=200`,
-`BALANCED_SCORE=80`.
+`MIN/MAX_MEALS_PER_DAY=2/8`, `MIN_DAYS_FOR_RHYTHM=5`, `RHYTHM_WINDOW_DAYS=5`,
+`BURST_GAP_MIN=10`, `DEFAULT_MEAL_MASS_G=500`, `FALLBACK_PORTION_G=100`,
+`MIN_GAP_G=30`, `CORE_CATEGORIES=(veg, fruit, grain, protein, refined)`,
+`MEAL_MIN_CORE_G=200`, `BALANCED_SCORE=80`.
 
 ## Что считается приёмом пищи в статистике
 
@@ -82,12 +82,26 @@ count_meals_today(history, day_start, window_min)->int   # приёмов пищ
 
 ## Сколько приёмов пищи в день
 
-Приоритет: `users.meals_per_day` (задал пользователь) → медиана **приёмов пищи**
-(`meal_sessions`) по дням с едой (нужно ≥5 таких дней) → 3.
+Приоритет: `users.meals_per_day` (задал пользователь — в анкете знакомства
+или `/set meals`) → медиана **приёмов пищи** (`meal_sessions`) по дням с едой
+внутри скользящего окна `RHYTHM_WINDOW_DAYS` (5 дней от `now`, а без него —
+от последнего приёма в истории; нужно ≥5 таких дней внутри окна) → 3. Окно
+не даёт полугодовой истории перевешивать то, как человек ест сейчас.
 
 Сколько приёмов уже было сегодня — `count_meals_today(history, day_start,
 window_min)`; это же число показывает дневной итог после каждой записи
 (`spec/body.md` § Дневной коридор).
+
+### Приёмы пищи для деления калоража
+
+Дневной ориентир по калориям делится на число приёмов для полосы одного
+приёма (`spec/body.md` § Полоса калорий одного приёма) — но не тем же числом,
+что идёт в пробелы тарелки. Там, где для пропорций тарелки достаточно любой
+статистики, для калорий действует более осторожное правило: по умолчанию 3,
+пока пользователь не назвал своё число или статистика за `RHYTHM_WINDOW_DAYS`
+не показывает **больше** 3 — тогда берётся она. Здесь `rhythm.meals_source`
+из того же `measure_rhythm` решает: `user` — берём как есть, `stats` — только
+если `rhythm.meals_per_day > DEFAULT_MEALS_PER_DAY`, иначе снова 3.
 
 ## Совет
 

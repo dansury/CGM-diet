@@ -36,6 +36,7 @@ safe_rate_range(weight_kg, kind) -> (min_kg_week, max_kg_week)
 build_plan(profile, weight_kg, goal_kind, target_weight_kg, rate_kg_week?,
     pregnant=False) -> EnergyPlan
 day_balance(target_kcal, consumed_kcal, burned_kcal) -> DayBalance
+meal_target_kcal(day_target_kcal, meals_per_day) -> float   # day_target_kcal / meals_per_day
 weight_trend(series:[(at, kg)], window_days=14) -> WeightTrend|None
 merge_burn(workouts, samples) -> float    # ккал за день без двойного счёта
 ```
@@ -91,6 +92,23 @@ share (0..~2), over:bool`.
 `handlers/confirm.py` и `handlers/workout.py` fail-soft — исключение пишется в
 лог, сообщение о записи уходит без полосы.
 
+### Полоса калорий одного приёма
+
+Кроме дневной полосы, после каждой записи с активной целью — вторая полоса
+«🍽 Этот приём» (`format_meal_progress`): та же `progress_bar`, но её `share`
+считается для одного приёма — `day_balance(target_kcal=meal_target_kcal(...),
+consumed_kcal=<калории текущей сессии>)`. Это ориентир, а не другая метрика:
+число приёмов для деления — то же самое, что подсчитано `plate.measure_rhythm`
+для остальной статистики питания, только по более осторожному правилу
+(`spec/plate.md` § Приёмы пищи для деления калоража).
+
+Текущая сессия — та же `MealSession`, что и в `spec/plate.md` (склейка блюд
+подряд в пределах `rhythm.session_min`), калории на неё — `repo.day_energy`
+с `start`/`end` границами сессии вместо границ суток. Полоса не показывается:
+без активной цели (нет `target_kcal`), без записей за сегодня, и когда
+последняя сессия — перекус, а не блюдо (`plate.is_meal`). Сбой расчёта —
+`handlers/body._meal_progress` fail-soft, как и остальной итог дня.
+
 ## Напоминание о взвешивании (`src/scheduler.py`)
 
 `start_scheduler(bot)` поднимает `weight_reminder_loop(bot, interval_s=3600)` в
@@ -144,7 +162,8 @@ bd:save                            # карточка замера с фото; 
 
 ```
 format_body_card(profile?, last?, goal?, plan?, trend?, bmi_value?, bmi_note?, age?) -> str
-format_day_progress(balance, *, goal?, trend?) -> str
+format_day_progress(balance, *, goal?, trend?, meals="", meal="") -> str
+format_meal_progress(balance) -> str          # полоса одного приёма
 format_day_totals(balance) -> str
 format_measurement_draft(draft) -> str
 format_goal_plan(plan, *, kind, target_weight_kg) -> str

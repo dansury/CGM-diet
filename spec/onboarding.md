@@ -15,7 +15,7 @@ False` на входе (флаг проверяется **до** того, ка�
 ```
 OnboardingFlow.asking          # текущий шаг — `onb_step`, очередь — `onb_queue`
 GoalsFlow.note                 # «Свой вариант» цели — свободный текст
-STEPS = focus, age, height, weight, sex, conditions, goal
+STEPS = focus, age, height, weight, sex, conditions, meals, goal
 ```
 
 `pregnant` — не в статическом списке: вставляется в начало очереди из
@@ -30,6 +30,7 @@ STEPS = focus, age, height, weight, sex, conditions, goal
 onb:skip              # пропустить текущий шаг
 onb:sex:<m|f>
 onb:preg:<y|n>
+onb:meals:<2|3|4|5>   # сколько раз в день человек ест -> users.meals_per_day
 gl:pick:<key>         # цель отмечена/снята (множественный выбор)
 gl:other              # «Свой вариант» -> GoalsFlow.note
 gl:done               # сохранить выбор и идти дальше
@@ -71,6 +72,7 @@ gl:done               # сохранить выбор и идти дальше
 | `sex` | кнопки `onb:sex:<m|f>` | `body_profile.sex`; `f` → доп. вопрос `pregnant` |
 | `pregnant` | кнопки `onb:preg:<y|n>` | `body_profile.pregnant` |
 | `conditions` | свободный текст | `body_profile.conditions` (`body.normalize_conditions`: «нет»/пусто → `None`) |
+| `meals` | кнопки `onb:meals:<2..5>` или число 2–8 текстом; пропуск = по статистике | `users.meals_per_day` — та же настройка, что и `/set meals` (`spec/plate.md` § Сколько приёмов пищи в день) |
 | `goal` | число (целевой вес) | `body.offer_goal` — та же цепочка `bd:rate:*` / `_save_goal`, что и в `/body`; сама завершает анкету |
 
 `goal` в очереди остаётся, только если `goals.wants_weight_goal(focus)` —
@@ -88,6 +90,7 @@ gl:done               # сохранить выбор и идти дальше
 onboarding_skip()               # «⏭ Пропустить» + общий крестик
 onboarding_sex_picker()         # мужской/женский + пропустить + крестик
 onboarding_pregnancy_picker()   # да/нет + крестик
+onboarding_meals_picker()       # 2/3/4/5 + «не знаю, посчитай сам» (= onb:skip)
 focus_picker(selected, skippable?)  # цели: ☑️/▫️ + «Свой вариант» + «Готово»
                                     # + «Пропустить» (анкета) либо крестик (/body)
 ```

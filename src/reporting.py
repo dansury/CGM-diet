@@ -898,7 +898,12 @@ _PLATE_ORDER = ("veg", "fruit", "grain", "protein", "refined", "extra")
 
 
 def format_plate_score(score: PlateScore, *, with_score: bool = True) -> str:
-    """Состав тарелки по массе — только доли, без оценок «правильно/нет»."""
+    """Состав тарелки по массе — только доли, без оценок «правильно/нет».
+
+    Полоса — вторая в сообщении, рядом с полосой дневного коридора: одна про
+    состав тарелки, другая про калории, и убирать её при повторных показах
+    нельзя (`spec/plate.md` § Показ).
+    """
     if score.mass_g <= 0:
         return ""
     if with_score:
@@ -942,7 +947,7 @@ def format_plate_advice(advice: PlateAdvice, *, with_rule: bool = False) -> str:
     Рекомендация по питанию — она разрешена (`spec/clinical.md`), но говорит
     только о пропорциях тарелки и никогда о болезнях и «нормах» человека.
     """
-    parts = [format_plate_score(advice.score, with_score=with_rule)]
+    parts = [format_plate_score(advice.score)]
     rhythm = advice.rhythm
     if advice.now:
         gaps = ", ".join(_format_gap(gap, round_50=True) for gap in advice.now)

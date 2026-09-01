@@ -6,7 +6,7 @@
 
 | Спека | Покрывает | Исходники |
 |---|---|---|
-| [spec/infra.md](spec/infra.md) | конфиг, логирование, пути, движок БД, миграции, Docker | `src/config.py`, `src/logging_setup.py`, `src/paths.py`, `src/db/{base,engine}.py`, `alembic/`, `Dockerfile`, `docker-compose.yml`, `scripts/` |
+| [spec/infra.md](spec/infra.md) | конфиг, логирование, пути, движок БД, живучесть данных, миграции, Docker | `src/config.py`, `src/logging_setup.py`, `src/paths.py`, `src/db/{base,engine,persistence}.py`, `alembic/`, `Dockerfile`, `docker-compose.yml`, `scripts/` |
 | [spec/data_model.md](spec/data_model.md) | 24 таблицы, соглашения хранения, репозиторий, экспорт, удаление | `src/db/models.py`, `src/db/repo.py`, `src/export.py` |
 | [spec/llm.md](spec/llm.md) | протокол клиента, OpenRouter, mock, разбор JSON | `src/llm/*` |
 | [spec/ingest.md](spec/ingest.md) | маршрутизация ввода, промпты, распознавание, голос (SpeechKit), текст, единицы, PDF | `src/vision/*`, `src/ingest/*` |

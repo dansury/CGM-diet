@@ -75,6 +75,36 @@ JSON на запись (`ts, level, logger, msg, exc`). Шумные логге�
 
 Подробности доставки — `spec/errors.md`.
 
+## Хранение данных
+
+Пользовательские данные не удаляются приложением никогда (кроме `/delete`),
+поэтому «бот забыл вес и цель после обновления» — всегда потеря самого
+хранилища. Два источника и защита от каждого:
+
+- **относительный путь SQLite.** `sqlite:///data/cgm.db` считается от CWD:
+  запуск из другого каталога открывает пустой файл, а настоящий остаётся
+  лежать рядом. `config.resolve_sqlite_url(url)` привязывает относительный путь
+  к `APP_ROOT` — и в боте, и в `alembic/env.py`, чтобы миграции и бот открывали
+  один файл. `config.sqlite_path(url)->Path|None` — общий разбор URL.
+- **одноразовый диск.** SQLite внутри контейнера умирает вместе с ним.
+  `src/db/persistence.py`:
+  `describe_storage(settings)->StorageReport(kind, location, exists, size_bytes,
+  ephemeral, strays, durable)` и `check_persistence(settings)`.
+  `ephemeral` = `app_env != "local"` и под каталогом файла ничего не
+  примонтировано (`os.path.ismount` по цепочке родителей). `strays` — другие
+  непустые `*.db` рядом (`data/`, CWD, `/app/data`, `/data`).
+
+`check_persistence` вызывается в `prepare_runtime` сразу после
+`wire_error_reporter`: ERROR уходит владельцу в Telegram (`spec/errors.md`),
+а не тихо в лог. Хранилище видно и снаружи: `/health` → `db.kind`, `db.durable`,
+`/whereami` → тип базы, путь и «переживёт перезапуск» / «пропадёт при
+обновлении».
+
+Продакшен: `DATABASE_URL` на Postgres (как в `docker-compose.yml`) либо том,
+примонтированный в `/app/data`. Анонимный том из `VOLUME` в `Dockerfile`
+переживает рестарт контейнера, но не его пересоздание — для `docker run`
+нужен именованный том: `-v cgm_data:/app/data`.
+
 ## Данные вне репозитория
 
 `data/` в `.gitignore` целиком:

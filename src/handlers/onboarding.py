@@ -24,6 +24,7 @@ from src.handlers.features import menu_of
 from src.handlers.states import OnboardingFlow
 from src.keyboards import (
     MENU_ROWS,
+    onboarding_meals_picker,
     onboarding_pregnancy_picker,
     onboarding_sex_picker,
     onboarding_skip,
@@ -35,11 +36,26 @@ log = get_logger("handlers.onboarding")
 
 STEP_KEY = "onb_step"
 QUEUE_KEY = "onb_queue"
-STEPS: tuple[str, ...] = ("focus", "age", "height", "weight", "sex", "conditions", "goal")
+STEPS: tuple[str, ...] = (
+    "focus",
+    "meals",
+    "age",
+    "height",
+    "weight",
+    "sex",
+    "conditions",
+    "goal",
+)
 #: шаги сахарного трека — не в статическом списке, их вставляет `after_focus`
 SUGAR_STEPS: tuple[str, ...] = ("dia", "dia_meds", "sugar_method", "sugar_pitch")
 
 _MENU_TEXTS = {text for row in MENU_ROWS for text in row} | {"◀️ Меню", "❌ Отменить"}
+
+MEALS_PROMPT = (
+    "🍽 Сколько раз в день вы обычно едите? Разобью дневной калораж поровну "
+    "между приёмами пищи — так проще держать порции под контролем. Не знаете "
+    "точно — посчитаю сам по вашей статистике, как только наберётся история."
+)
 
 PROMPTS = {
     "age": "🎂 Сколько вам полных лет? Это нужно для точного расчёта обмена веществ.",
@@ -94,6 +110,9 @@ async def _ask_next(message: Message, state: FSMContext) -> None:
         from src.handlers.goals import ask_focus
 
         await ask_focus(message, state, skippable=True)
+        return
+    if step == "meals":
+        await message.answer(MEALS_PROMPT, reply_markup=onboarding_meals_picker())
         return
     if step == "sex":
         await message.answer(
@@ -174,6 +193,17 @@ async def on_skip(callback: CallbackQuery, state: FSMContext) -> None:
     await _ask_next(callback.message, state)
 
 
+@router.callback_query(F.data.startswith("onb:meals:"), OnboardingFlow.asking)
+async def on_meals(callback: CallbackQuery, state: FSMContext) -> None:
+    count = callback.data.split(":")[2]
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, callback.from_user.id)
+        user.meals_per_day = int(count)
+    await callback.answer("Записал")
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await _ask_next(callback.message, state)
+
+
 @router.callback_query(F.data.startswith("onb:sex:"), OnboardingFlow.asking)
 async def on_sex(callback: CallbackQuery, state: FSMContext) -> None:
     sex = callback.data.split(":")[2]
@@ -246,6 +276,16 @@ async def _answer_number(message: Message, state: FSMContext, step: str, text: s
                 return
             year = local_now(user).year - int(value)
             await repo.upsert_body_profile(session, user, birth_year=year)
+        elif step == "meals":
+            from src.analytics.plate import MAX_MEALS_PER_DAY, MIN_MEALS_PER_DAY
+
+            if not MIN_MEALS_PER_DAY <= value <= MAX_MEALS_PER_DAY:
+                await message.answer(
+                    f"Приёмов пищи в день — от {MIN_MEALS_PER_DAY} до {MAX_MEALS_PER_DAY}.",
+                    reply_markup=onboarding_skip(),
+                )
+                return
+            user.meals_per_day = int(value)
     await _ask_next(message, state)
 
 

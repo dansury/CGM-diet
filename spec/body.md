@@ -70,6 +70,11 @@ share (0..~2), over:bool`.
 `day_balance` считает: `available = target + burned − consumed`.
 `share = consumed / (target + burned)`.
 
+`target_kcal_for(session, user, goal?)->float|None` — суточный ориентир по
+калориям: план (`_plan_for`), иначе `goal.target_kcal`, иначе `None` (цели
+нет). Общая точка для итога дня и калорийного бюджета одного приёма
+(`spec/plate.md` § Калории приёма) — единый ориентир, не два разных расчёта.
+
 `day_progress_text(session, user, now)` — единая точка: после каждого
 подтверждённого приёма пищи (`meal:ok`), после тренировки, после записи веса,
 в `/body` и `/today`.

@@ -12,7 +12,7 @@ from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from src.db import repo
-from src.handlers import common, confirm, dictionary, labs, plate
+from src.handlers import body, common, confirm, dictionary, intake, labs, plate
 from src.vision.schemas import ItemDraft, MealDraft
 
 TG_ID = 626262
@@ -142,6 +142,35 @@ async def test_the_day_summary_counts_the_meals(engine, session, state):
         ),
     )
     assert "🍽 Приёмов пищи: 1 из 3" in card.texts[-1]
+
+
+async def test_meal_confirmation_shows_a_calorie_bar_for_this_meal_when_a_goal_exists(
+    engine, session, state
+):
+    await intake.handle_text(FakeMessage(text="рост 178 мне 30 пол мужской"), state)
+    await intake.handle_text(FakeMessage(text="вес 90"), state)
+    await intake.handle_text(FakeMessage(text="цель 80"), state)
+    await body.on_rate(FakeCallback(data="bd:rate:50", message=FakeMessage()), state)
+
+    card = await _confirm_draft(
+        state,
+        MealDraft(
+            title="Гречка с курицей",
+            items=[
+                ItemDraft(name="гречка", portion_g=200, kcal=180, carbs_g=45, tags=["whole_grain"]),
+                ItemDraft(name="курица", portion_g=150, kcal=250, tags=["protein"]),
+            ],
+        ),
+    )
+    written = card.texts[-1]
+    assert "🍽" in written
+    assert "430" in written  # съедено за этот приём
+    assert "ккал на приём" in written
+
+
+async def test_no_active_goal_means_no_calorie_bar_for_the_meal(engine, session, state):
+    card = await _confirm_meal(state)
+    assert "ккал на приём" not in card.texts[-1]
 
 
 async def test_the_plate_is_scored_right_after_the_meal_is_written(engine, session, state):

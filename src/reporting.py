@@ -907,6 +907,19 @@ def format_plate_score(score: PlateScore, *, with_score: bool = True) -> str:
     return "\n".join(lines)
 
 
+def format_meal_kcal_progress(meal_kcal: float, meal_kcal_budget: float) -> str:
+    """Полоса калорий этого приёма — суточный ориентир, делённый на приёмы.
+
+    `spec/plate.md` § Калории приёма. Показывается при каждой записи, в
+    отличие от полосы пропорций, которая говорит только при дисбалансе.
+    """
+    share = meal_kcal / meal_kcal_budget
+    return (
+        f"🍽 {progress_bar(share)} {share * 100:.0f}% "
+        f"({meal_kcal:.0f} из {meal_kcal_budget:.0f} ккал на приём)"
+    )
+
+
 _ROUND_UP_CATEGORIES = {"veg", "protein"}
 
 
@@ -1322,6 +1335,7 @@ __all__ = [
     "format_measurement_draft",
     "format_labs",
     "format_meal_draft",
+    "format_meal_kcal_progress",
     "format_meal_macros_line",
     "format_meal_saved",
     "format_med_coverage",

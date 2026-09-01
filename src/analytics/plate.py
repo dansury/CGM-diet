@@ -151,6 +151,7 @@ class PlateMeal:
     id: int | None
     eaten_at: datetime
     items: list[PlateItem] = field(default_factory=list)
+    kcal: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +181,10 @@ class MealSession:
     def mass_g(self) -> float:
         return sum(_portion(item) for item in self.items)
 
+    @property
+    def kcal(self) -> float:
+        return sum(meal.kcal or 0.0 for meal in self.meals)
+
 
 @dataclass(frozen=True, slots=True)
 class Gap:
@@ -207,6 +212,8 @@ class PlateAdvice:
     meals_done: int
     meals_left: int
     rhythm: Rhythm
+    meal_kcal: float
+    meal_kcal_budget: float | None
 
 
 def _portion(item: PlateItem) -> float:
@@ -409,11 +416,23 @@ def _gaps(grams: dict[str, float], targets: dict[str, float]) -> list[Gap]:
     return sorted(out, key=lambda gap: gap.grams, reverse=True)
 
 
+def meal_budget_kcal(rhythm: Rhythm, target_kcal: float | None) -> float | None:
+    """Калорийный ориентир одного приёма пищи — суточный, делённый на `rhythm.meals_per_day`.
+
+    `None`, когда суточного ориентира нет (нет активной цели/плана):
+    процент без знаменателя ничего не значит (`spec/body.md` § Дневной коридор).
+    """
+    if not target_kcal or target_kcal <= 0:
+        return None
+    return target_kcal / rhythm.meals_per_day
+
+
 def advise(
     *,
     current: MealSession,
     day_sessions: list[MealSession],
     rhythm: Rhythm,
+    target_kcal: float | None = None,
 ) -> PlateAdvice:
     """Чего добрать сейчас и что остаётся на оставшиеся приёмы пищи.
 
@@ -439,6 +458,8 @@ def advise(
         meals_done=meals_done,
         meals_left=meals_left,
         rhythm=rhythm,
+        meal_kcal=current.kcal,
+        meal_kcal_budget=meal_budget_kcal(rhythm, target_kcal),
     )
 
 
@@ -474,6 +495,7 @@ __all__ = [
     "is_balanced",
     "is_meal",
     "meal_sessions",
+    "meal_budget_kcal",
     "measure_rhythm",
     "score_items",
     "session_window_min",

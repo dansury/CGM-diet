@@ -15,7 +15,7 @@ False` на входе (флаг проверяется **до** того, ка�
 ```
 OnboardingFlow.asking          # текущий шаг — `onb_step`, очередь — `onb_queue`
 GoalsFlow.note                 # «Свой вариант» цели — свободный текст
-STEPS = focus, age, height, weight, sex, conditions, goal
+STEPS = focus, meals, age, height, weight, sex, conditions, goal
 ```
 
 `pregnant` — не в статическом списке: вставляется в начало очереди из
@@ -28,6 +28,7 @@ STEPS = focus, age, height, weight, sex, conditions, goal
 
 ```
 onb:skip              # пропустить текущий шаг
+onb:meals:<2|3|4|5>   # приёмов пищи в день; «Не знаю» = onb:skip (auto)
 onb:sex:<m|f>
 onb:preg:<y|n>
 gl:pick:<key>         # цель отмечена/снята (множественный выбор)
@@ -65,6 +66,7 @@ gl:done               # сохранить выбор и идти дальше
 | Шаг | Ввод | Куда пишется |
 |---|---|---|
 | `focus` | кнопки `gl:pick:*` + `gl:done`; свободный текст = свой вариант | `body_profile.focus` (ключи через запятую), `focus_note` |
+| `meals` | кнопки `onb:meals:2..5`; число 2–8 текстом; «Не знаю» = `onb:skip` | `users.meals_per_day` (та же колонка, что и `/set meals`, `spec/plate.md` § Сколько приёмов пищи в день) |
 | `age` | число 10–120 | `body_profile.birth_year` |
 | `height` | число 100–250 | `body_profile.height_cm` |
 | `weight` | число 25–400 или фото весов | `body.save_weight_entry` (та же запись, что и `/weight`) |

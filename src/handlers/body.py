@@ -147,6 +147,21 @@ async def _plan_for(session, user: User, *, weight_kg: float | None = None) -> b
 
 # ------------------------------------------------------------------ прогресс
 
+async def target_kcal_for(session, user: User, *, goal=None) -> float | None:
+    """Суточный ориентир по калориям — общая точка для итога дня и тарелки.
+
+    План (`build_plan`) точнее цели, когда его удаётся пересобрать; иначе —
+    сохранённый `target_kcal` цели. `None` — активной цели нет вовсе
+    (`spec/body.md` § Дневной коридор, `spec/plate.md` § Калории приёма).
+    """
+    if goal is None:
+        goal = await repo.get_active_goal(session, user)
+    if goal is None:
+        return None
+    plan = await _plan_for(session, user)
+    return (plan.target_kcal if plan else None) or goal.target_kcal
+
+
 async def day_progress_text(session, user: User, *, now: datetime) -> str | None:
     """Итог дня — то, что показывается после каждого приёма пищи.
 
@@ -155,8 +170,7 @@ async def day_progress_text(session, user: User, *, now: datetime) -> str | None
     `None` — когда за день нечего показать (`spec/body.md` § Дневной коридор).
     """
     goal = await repo.get_active_goal(session, user)
-    plan = await _plan_for(session, user) if goal is not None else None
-    target = (plan.target_kcal if plan else None) or (goal.target_kcal if goal else None)
+    target = await target_kcal_for(session, user, goal=goal)
     start_local = now.replace(hour=0, minute=0, second=0, microsecond=0)
     totals = await repo.day_energy(
         session,
@@ -626,4 +640,5 @@ __all__ = [
     "save_weight_entry",
     "send_weight_charts",
     "show_measurement_draft",
+    "target_kcal_for",
 ]

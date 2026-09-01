@@ -613,6 +613,22 @@ def onboarding_pregnancy_picker() -> InlineKeyboardMarkup:
     )
 
 
+def onboarding_meals_picker() -> InlineKeyboardMarkup:
+    """Сколько раз в день человек обычно ест — сид для приёмов пищи (`spec/plate.md`)."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="2 раза", callback_data="onb:meals:2"),
+                InlineKeyboardButton(text="3 раза", callback_data="onb:meals:3"),
+                InlineKeyboardButton(text="4 раза", callback_data="onb:meals:4"),
+                InlineKeyboardButton(text="5 раз", callback_data="onb:meals:5"),
+            ],
+            [InlineKeyboardButton(text="⏭ Не знаю — посчитай сам", callback_data="onb:skip")],
+            [cancel_button()],
+        ]
+    )
+
+
 def diabetes_picker() -> InlineKeyboardMarkup:
     """Один выбор из каталога `src/sugar.py`; вопрос можно пропустить."""
     from src.sugar import DIABETES
@@ -784,6 +800,7 @@ __all__ = [
     "hidden_features",
     "main_menu",
     "focus_picker",
+    "onboarding_meals_picker",
     "onboarding_pregnancy_picker",
     "onboarding_sex_picker",
     "diabetes_picker",

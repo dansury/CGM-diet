@@ -108,13 +108,20 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
             progress = None
         # Гарвардская тарелка — после каждой записи, если не выключена
         # (`spec/plate.md`); сбой оценки не имеет права съесть подтверждение.
-        from src.handlers.plate import plate_advice_text
+        from src.handlers.plate import meal_kcal_text, plate_advice_text
 
         try:
             plate_text = await plate_advice_text(session, user, now=local_now(user))
         except Exception:
             log.exception("plate advice failed")
             plate_text = None
+        # Калорийная полоса приёма — отдельно от баланса пропорций, показывается
+        # каждый раз, пока есть суточная цель по калориям (`spec/plate.md`).
+        try:
+            meal_kcal = await meal_kcal_text(session, user, now=local_now(user))
+        except Exception:
+            log.exception("meal kcal progress failed")
+            meal_kcal = None
         # Замер после еды предлагаем только тем, кто сахар действительно меряет
         # (`spec/onboarding.md` § Сахарный трек).
         ask_glucose = bool(user.glucose_prompt_enabled)
@@ -127,6 +134,7 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.message.edit_text(
         head
         + (f"\n\n{progress}" if progress else "")
+        + (f"\n\n{meal_kcal}" if meal_kcal else "")
         + (f"\n\n{plate_text}" if plate_text else "")
         + (f"\n\n{glucose_text}" if glucose_text else ""),
         reply_markup=dictionary_pins(pins, glucose=ask_glucose),

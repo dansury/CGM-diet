@@ -19,7 +19,7 @@ from src.db.models import User
 from src.handlers.deps import local_now, session_scope, to_utc, user_tz
 from src.keyboards import plate_meals_picker, plate_settings
 from src.logging_setup import get_logger
-from src.reporting import format_plate_advice, format_plate_settings
+from src.reporting import format_meal_kcal_progress, format_plate_advice, format_plate_settings
 
 router = Router(name="plate")
 log = get_logger("handlers.plate")
@@ -28,15 +28,14 @@ log = get_logger("handlers.plate")
 HISTORY_DAYS = 60
 
 
-async def plate_advice_text(
+async def _current_advice(
     session: AsyncSession, user: User, *, now: datetime
-) -> str | None:
-    """Текст оценки тарелки после только что записанного приёма пищи.
+) -> plate_math.PlateAdvice | None:
+    """Совет по текущему приёму пищи — общий расчёт для текста разбора и калорийной полосы.
 
-    `None`, когда говорить не о чем: оценка выключена, сегодня ещё нечего
-    оценивать, последняя запись — перекус (кофе, горсть орехов), а не блюдо,
-    или пропорции тарелки и так собраны. Fail-soft у вызывающего: подсказка
-    не имеет права съесть подтверждение записи.
+    `None`, когда считать не о чем: оценка выключена, сегодня ещё нечего
+    оценивать, последняя запись — перекус (кофе, горсть орехов), а не блюдо
+    (`spec/plate.md` § Когда показываем).
     """
     if not user.plate_enabled:
         return None
@@ -58,12 +57,44 @@ async def plate_advice_text(
     # тарелку покажем уже вместе с ним (`spec/plate.md` § Когда показываем).
     if not plate_math.is_meal(current.items):
         return None
-    advice = plate_math.advise(current=current, day_sessions=sessions, rhythm=rhythm)
+    from src.handlers.body import target_kcal_for
+
+    target_kcal = await target_kcal_for(session, user)
+    return plate_math.advise(
+        current=current, day_sessions=sessions, rhythm=rhythm, target_kcal=target_kcal
+    )
+
+
+async def plate_advice_text(
+    session: AsyncSession, user: User, *, now: datetime
+) -> str | None:
+    """Текст оценки тарелки после только что записанного приёма пищи.
+
+    `None`, когда пропорции тарелки и так собраны, помимо причин
+    `_current_advice`. Fail-soft у вызывающего: подсказка не имеет права
+    съесть подтверждение записи.
+    """
+    advice = await _current_advice(session, user, now=now)
+    if advice is None:
+        return None
     # Ровные пропорции разбора не требуют.
     if plate_math.is_balanced(advice.score):
         return None
     first_time = await repo.mark_feature_used(session, user, "plate")
     return format_plate_advice(advice, with_rule=first_time)
+
+
+async def meal_kcal_text(session: AsyncSession, user: User, *, now: datetime) -> str | None:
+    """Калорийная полоса текущего приёма пищи (`spec/plate.md` § Калории приёма).
+
+    В отличие от `plate_advice_text`, не зависит от баланса пропорций —
+    показывается при каждой записи, пока есть активная цель по калориям.
+    `None` без цели: процент без суточного ориентира ничего не значит.
+    """
+    advice = await _current_advice(session, user, now=now)
+    if advice is None or not advice.meal_kcal_budget:
+        return None
+    return format_meal_kcal_progress(advice.meal_kcal, advice.meal_kcal_budget)
 
 
 async def _plate_card(session: AsyncSession, user: User) -> tuple[str, bool]:
@@ -143,4 +174,4 @@ async def cb_plate_meals_edit(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-__all__ = ["plate_advice_text", "router"]
+__all__ = ["meal_kcal_text", "plate_advice_text", "router"]

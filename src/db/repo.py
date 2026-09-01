@@ -1620,7 +1620,9 @@ async def load_plate_meals(
             PlateItem(name=item.name, portion_g=item.portion_g, tags=list(item.tags or []))
             for item in meal.items
         ]
-        out.append(PlateMeal(id=meal.id, eaten_at=_aware(meal.eaten_at), items=items))
+        out.append(
+            PlateMeal(id=meal.id, eaten_at=_aware(meal.eaten_at), items=items, kcal=meal.kcal)
+        )
     return out
 
 

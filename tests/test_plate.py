@@ -155,6 +155,33 @@ def test_the_user_setting_outranks_the_statistics():
     assert plate.measure_rhythm(meals).meals_source == "stats"
 
 
+def test_meal_budget_kcal_splits_the_daily_target_across_meals():
+    rhythm = plate.Rhythm(
+        meals_per_day=4,
+        meals_source="user",
+        session_min=60,
+        session_source="default",
+        meal_mass_g=500,
+        mass_source="default",
+    )
+    assert plate.meal_budget_kcal(rhythm, 2000) == 500
+    assert plate.meal_budget_kcal(rhythm, None) is None
+    assert plate.meal_budget_kcal(rhythm, 0) is None
+
+
+def test_advice_carries_the_meals_own_calories_and_its_budget():
+    current = plate.group_sessions(
+        [meal(0, [plate.PlateItem("гречка", 200, ["whole_grain"])])], window_min=60
+    )[0]
+    rhythm = plate.measure_rhythm([])  # нет истории — 3 приёма по умолчанию
+    with_goal = plate.advise(
+        current=current, day_sessions=[current], rhythm=rhythm, target_kcal=1800
+    )
+    assert with_goal.meal_kcal_budget == 600  # 1800 / 3
+    without_goal = plate.advise(current=current, day_sessions=[current], rhythm=rhythm)
+    assert without_goal.meal_kcal_budget is None
+
+
 def test_advice_names_what_is_missing_now_and_for_the_rest_of_the_day():
     current = plate.group_sessions(
         [meal(0, [plate.PlateItem("гречка", 200, ["whole_grain"])])], window_min=60
@@ -265,6 +292,16 @@ def test_even_proportions_need_no_advice():
     assert plate.is_balanced(even)
     skewed = plate.score_items([plate.PlateItem("картошка", 500, ["potato"])])
     assert not plate.is_balanced(skewed)
+
+
+def test_format_meal_kcal_progress_shows_the_bar_percent_and_numbers():
+    from src.reporting import format_meal_kcal_progress
+
+    text = format_meal_kcal_progress(300, 600)
+    assert "🍽" in text
+    assert "50%" in text
+    assert "300" in text
+    assert "600" in text
 
 
 def test_gap_recommendations_are_rounded_to_50g():

@@ -57,6 +57,18 @@ async def test_start_asks_about_goals_first(engine, session, state):
     assert data[onboarding.STEP_KEY] == "focus"
 
 
+async def test_meals_per_day_is_asked_right_after_goals(engine, session, state):
+    await onboarding.start(FakeMessage(), state)
+    card = await _pick(state, "weight")
+    assert (await state.get_data())[onboarding.STEP_KEY] == "meals"
+    assert any("раз в день" in text.lower() for text in card.texts)
+
+    await onboarding.on_meals(FakeCallback(data="onb:meals:2", message=FakeMessage()), state)
+    user = await repo.get_user(session, TG_ID)
+    assert user.meals_per_day == 2
+    assert (await state.get_data())[onboarding.STEP_KEY] == "age"
+
+
 async def test_goals_are_saved_and_the_questionnaire_goes_on(engine, session, state):
     await onboarding.start(FakeMessage(), state)
     card = await _pick(state, "weight", "sugar")
@@ -97,6 +109,7 @@ async def test_walking_through_every_step_fills_the_profile(engine, session, sta
     await onboarding.start(FakeMessage(), state)
 
     await _pick(state, "weight")                                          # цели
+    await onboarding.on_meals(FakeCallback(data="onb:meals:4", message=FakeMessage()), state)
     await onboarding.on_answer(FakeMessage(text="30"), state, FakeBot())   # age
     await onboarding.on_answer(FakeMessage(text="178"), state, FakeBot())  # height
     await onboarding.on_answer(FakeMessage(text="70"), state, FakeBot())   # weight
@@ -116,6 +129,7 @@ async def test_walking_through_every_step_fills_the_profile(engine, session, sta
     user = await repo.get_user(session, TG_ID)
     profile = await repo.get_body_profile(session, user)
     assert profile.focus == "weight"
+    assert user.meals_per_day == 4
     assert profile.height_cm == 178.0
     assert profile.sex == "f"
     assert profile.pregnant is False

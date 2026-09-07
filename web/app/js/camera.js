@@ -6,7 +6,7 @@
  */
 import { getKV, addRecord, getAll } from './db.js';
 import { recognizeMeal, fileToCompressedDataUrl } from './recognize.js';
-import { bumpDictionaryFromMeal, suggest, draftFromEntry } from './dictionary.js';
+import { bumpDictionaryFromMeal, suggest, draftFromEntry, exampleLabels } from './dictionary.js';
 import { el, showToast, formatTime, round1 } from './utils.js';
 import { track, getClientId } from './telemetry.js';
 
@@ -134,8 +134,8 @@ async function renderCaptureView(container) {
         <div>
             <button class="btn btn-secondary" id="capture-back">← Назад</button>
             <div class="capture-actions">
-                <div>
-                    <input type="text" class="onb-input" id="capture-quick-input" placeholder="Начните вводить название — «овсянка»…" autocomplete="off">
+                <div id="capture-quick" hidden>
+                    <input type="text" class="onb-input" id="capture-quick-input" autocomplete="off">
                     <div class="dict-suggestions" id="capture-quick-suggestions"></div>
                 </div>
                 <input type="file" accept="image/*" capture="environment" id="capture-camera-input" hidden>
@@ -151,7 +151,7 @@ async function renderCaptureView(container) {
     container.appendChild(wrap);
 
     wrap.querySelector('#capture-back').addEventListener('click', () => renderListView(container));
-    wireQuickDictionaryInput(wrap, container);
+    await wireQuickDictionaryInput(wrap, container);
 
     const cameraInput = wrap.querySelector('#capture-camera-input');
     const uploadInput = wrap.querySelector('#capture-upload-input');
@@ -188,9 +188,20 @@ async function renderCaptureView(container) {
     });
 }
 
-function wireQuickDictionaryInput(wrap, container) {
+/**
+ * Quick dictionary input. Promising suggestions to someone whose dictionary is
+ * still empty is a lie, so the field appears only once there is something to
+ * suggest — and the placeholder shows one of the user's own names, not a made-up
+ * «овсянка» (spec/web.md § Словарь, spec/bot.md § Примеры в подсказках).
+ */
+async function wireQuickDictionaryInput(wrap, container) {
+    const examples = await exampleLabels({ limit: 1 });
+    if (examples.length === 0) return;
+    const block = wrap.querySelector('#capture-quick');
     const input = wrap.querySelector('#capture-quick-input');
     const box = wrap.querySelector('#capture-quick-suggestions');
+    input.placeholder = `Начните вводить название — «${examples[0]}»…`;
+    block.hidden = false;
     let debounceTimer = null;
 
     input.addEventListener('input', () => {

@@ -137,8 +137,8 @@ async def cb_plate_meals_auto(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "plt:medit")
 async def cb_plate_meals_edit(callback: CallbackQuery) -> None:
     await callback.message.answer(
-        "Сколько приёмов пищи в день? Напишите число от 2 до 8, "
-        "например: <code>/set meals 4</code>"
+        f"Сколько приёмов пищи в день? Напишите число от {plate_math.MIN_MEALS_PER_DAY} "
+        f"до {plate_math.MAX_MEALS_PER_DAY}, например: <code>/set meals 4</code>"
     )
     await callback.answer()
 

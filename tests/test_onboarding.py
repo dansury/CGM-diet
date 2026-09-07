@@ -10,6 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
 from aiogram.fsm.storage.memory import MemoryStorage
 
+from src import keyboards
 from src.db import repo
 from src.handlers import common, onboarding
 from src.handlers import goals as goals_handler
@@ -165,3 +166,47 @@ async def test_a_photo_ends_the_questionnaire_and_is_recognised_as_food(engine, 
     assert await state.get_state() == MealFlow.confirming.state
     assert any("Гречка" in t for t in message.texts)
     assert any("/body" in t for t in message.texts)
+
+
+async def test_the_meal_frequency_step_accepts_one_to_seven(engine, session, state):
+    """Границы 1–7: один приём в день — не опечатка, восемь — уже нет."""
+    from src.analytics.plate import MAX_MEALS_PER_DAY, MIN_MEALS_PER_DAY
+
+    assert (MIN_MEALS_PER_DAY, MAX_MEALS_PER_DAY) == (1, 7)
+
+    await onboarding.start(FakeMessage(), state)
+    await _pick(state, "weight")
+    await onboarding.on_answer(FakeMessage(text="30"), state, FakeBot())   # age
+    await onboarding.on_answer(FakeMessage(text="178"), state, FakeBot())  # height
+    await onboarding.on_answer(FakeMessage(text="70"), state, FakeBot())   # weight
+    await onboarding.on_sex(FakeCallback(data="onb:sex:m", message=FakeMessage()), state)
+    await onboarding.on_answer(FakeMessage(text="нет"), state, FakeBot())  # conditions
+
+    rejected = FakeMessage(text="8")
+    await onboarding.on_answer(rejected, state, FakeBot())
+    assert any("от 1 до 7" in text for text in rejected.texts)
+    data = await state.get_data()
+    assert data.get(onboarding.STEP_KEY) == "meals"  # шаг не сдвинулся
+
+    await onboarding.on_answer(FakeMessage(text="1"), state, FakeBot())
+    user = await repo.get_user(session, TG_ID)
+    assert user.meals_per_day == 1
+
+
+async def test_the_answered_picker_stays_visible_with_the_choice_marked(engine, session, state):
+    """Кнопка не «подсвечивается» сама: клавиатуру перерисовывают с ✅."""
+    await onboarding.start(FakeMessage(), state)
+    await _pick(state, "weight")
+    for text in ("30", "178", "70"):
+        await onboarding.on_answer(FakeMessage(text=text), state, FakeBot())
+
+    card = FakeMessage()
+    await onboarding.on_sex(FakeCallback(data="onb:sex:m", message=card), state)
+    markup = next(sent["markup"] for sent in card.sent if "markup" in sent)
+    labels = [button.text for row in markup.inline_keyboard for button in row]
+    assert labels == ["✅ Мужской", "Женский"]
+    # Отвеченная клавиатура больше ничего не делает — иначе повторное нажатие
+    # сдвинуло бы анкету ещё на шаг.
+    assert {button.callback_data for row in markup.inline_keyboard for button in row} == {
+        keyboards.ONB_NOOP
+    }

@@ -7,7 +7,13 @@ import { getAll } from './db.js';
 import { el, formatDateShort } from './utils.js';
 import { track } from './telemetry.js';
 
-function drawLineChart(canvas, points, { color = '#1f9d6b', unit = '', minZero = false } = {}) {
+/** One design token as a colour, so charts follow the theme like everything else. */
+function token(name, fallback) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+}
+
+function drawLineChart(canvas, points, { color = token('--accent', '#0c8f86'), unit = '', minZero = false } = {}) {
     const dpr = window.devicePixelRatio || 1;
     const rect = canvas.getBoundingClientRect();
     const w = Math.max(rect.width, 280);
@@ -20,7 +26,7 @@ function drawLineChart(canvas, points, { color = '#1f9d6b', unit = '', minZero =
     ctx.clearRect(0, 0, w, h);
 
     if (points.length === 0) {
-        ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--fg-muted') || '#999';
+        ctx.fillStyle = token('--fg-muted', '#999');
         ctx.font = '13px sans-serif';
         ctx.fillText('Пока нет данных', 10, h / 2);
         return;
@@ -52,7 +58,7 @@ function drawLineChart(canvas, points, { color = '#1f9d6b', unit = '', minZero =
         ctx.fill();
     });
 
-    ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--fg-muted') || '#999';
+    ctx.fillStyle = token('--fg-muted', '#999');
     ctx.font = '11px sans-serif';
     ctx.fillText(round(maxV) + unit, 2, 12);
     ctx.fillText(round(minV) + unit, 2, h - 6);
@@ -93,8 +99,8 @@ export async function renderChartsView(container) {
     wrap.appendChild(chartCard('Самочувствие, 1–5', 'chart-wellbeing'));
     container.appendChild(wrap);
 
-    drawLineChart(wrap.querySelector('#chart-glucose'), glucose.map((g) => ({ ts: g.ts, v: g.mmol })), { unit: '', color: '#c9433f' });
-    drawLineChart(wrap.querySelector('#chart-weight'), weight.map((w2) => ({ ts: w2.ts, v: w2.kg })), { color: '#1f9d6b' });
+    drawLineChart(wrap.querySelector('#chart-glucose'), glucose.map((g) => ({ ts: g.ts, v: g.mmol })), { unit: '', color: token('--danger', '#c2453f') });
+    drawLineChart(wrap.querySelector('#chart-weight'), weight.map((w2) => ({ ts: w2.ts, v: w2.kg })), { color: token('--accent', '#0c8f86') });
 
     const byDay = {};
     for (const m of meals) {
@@ -102,7 +108,7 @@ export async function renderChartsView(container) {
         byDay[day] = (byDay[day] || 0) + (m.totalKcal || 0);
     }
     const kcalPoints = Object.entries(byDay).map(([day, v]) => ({ ts: day, v }));
-    drawLineChart(wrap.querySelector('#chart-kcal'), kcalPoints, { minZero: true, color: '#b8862f' });
+    drawLineChart(wrap.querySelector('#chart-kcal'), kcalPoints, { minZero: true, color: token('--warn', '#a8762a') });
 
-    drawLineChart(wrap.querySelector('#chart-wellbeing'), wellbeing.map((w3) => ({ ts: w3.ts, v: w3.score })), { minZero: true, color: '#5b6b63' });
+    drawLineChart(wrap.querySelector('#chart-wellbeing'), wellbeing.map((w3) => ({ ts: w3.ts, v: w3.score })), { minZero: true, color: token('--fg-muted', '#6b8682') });
 }

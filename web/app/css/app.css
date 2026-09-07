@@ -1,4 +1,8 @@
-/* app.css — mobile-first PWA shell. Design tokens: ../../css/tokens.css. */
+/* app.css — mobile-first PWA shell. Tokens: ../../css/tokens.css.
+ * The romanesco lives here too: a slow head behind the content, and the head
+ * that opens while the model looks at a photo.
+ * spec: spec/web.md § Визуальный язык.
+ */
 
 html, body {
     height: 100%;
@@ -6,6 +10,8 @@ html, body {
 }
 
 #app {
+    position: relative;
+    z-index: 3;
     display: flex;
     flex-direction: column;
     min-height: 100vh;
@@ -13,25 +19,40 @@ html, body {
     padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* the ambient head sits behind everything, at very low contrast */
+.rom-canvas { z-index: 0; }
+.rom-veil {
+    background: radial-gradient(80% 55% at 50% 45%, var(--bg) 0%, rgba(0, 0, 0, 0) 78%);
+    opacity: 0.82;
+}
+
 .topbar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 12px 16px;
-    padding-top: calc(12px + env(safe-area-inset-top));
+    gap: var(--s2);
+    padding: 10px 16px;
+    padding-top: calc(10px + env(safe-area-inset-top));
     border-bottom: 1px solid var(--border);
-    background: var(--bg-elevated);
+    background: var(--bg-glass);
+    backdrop-filter: blur(14px) saturate(130%);
     position: sticky;
     top: 0;
     z-index: 5;
 }
 
-.topbar h1 { font-size: 17px; margin: 0; }
+.topbar .mark { color: var(--accent); flex: none; }
+.topbar h1 {
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    margin: 0;
+}
 
 main#view {
     flex: 1;
-    padding: 16px;
-    padding-bottom: 96px;
+    padding: var(--s4) 16px;
+    padding-bottom: 104px;
     max-width: 560px;
     width: 100%;
     margin: 0 auto;
@@ -41,7 +62,8 @@ nav.tabbar {
     position: fixed;
     left: 0; right: 0; bottom: 0;
     display: flex;
-    background: var(--bg-elevated);
+    background: var(--bg-glass);
+    backdrop-filter: blur(14px) saturate(130%);
     border-top: 1px solid var(--border);
     padding-bottom: env(safe-area-inset-bottom);
     z-index: 5;
@@ -49,85 +71,162 @@ nav.tabbar {
 
 nav.tabbar button {
     flex: 1;
+    position: relative;
     background: none;
     border: none;
-    padding: 10px 4px 8px;
+    padding: 10px 4px 9px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 2px;
+    gap: 3px;
     font-size: 11px;
+    letter-spacing: 0.01em;
     color: var(--fg-muted);
+    cursor: pointer;
+    transition: color var(--dur) var(--ease);
+}
+nav.tabbar button svg { display: block; opacity: 0.7; transition: opacity var(--dur) var(--ease); }
+nav.tabbar button.active { color: var(--accent); }
+nav.tabbar button.active svg { opacity: 1; }
+nav.tabbar button.active::before {
+    content: "";
+    position: absolute; top: 0; left: 50%; width: 22px; height: 2px;
+    transform: translateX(-50%);
+    background: var(--accent);
 }
 
-nav.tabbar button .tab-icon { font-size: 20px; }
-nav.tabbar button.active { color: var(--accent); }
+/* ---------- type ---------- */
 
-.section-title { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); margin: 20px 0 8px; }
+.section-title {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: var(--fg-muted);
+    margin: var(--s5) 0 var(--s2);
+}
 .section-title:first-child { margin-top: 0; }
 
-.list { display: flex; flex-direction: column; gap: 8px; }
-.list-item { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; }
+.display { font-family: var(--font-display); font-weight: 400; letter-spacing: -0.01em; }
+
+.list { display: flex; flex-direction: column; gap: var(--s2); }
+.list-item { display: flex; justify-content: space-between; align-items: center; padding: 13px 16px; }
 .list-item .name { font-weight: 600; }
 .list-item .meta { font-size: 13px; color: var(--fg-muted); }
 
-.empty-hint { text-align: center; color: var(--fg-muted); padding: 40px 16px; }
+.empty-hint {
+    text-align: center; color: var(--fg-muted);
+    padding: var(--s6) 16px; font-size: 14.5px; line-height: 1.6;
+}
 
-/* Onboarding */
+/* ---------- onboarding ---------- */
+
 .onb-step { display: flex; flex-direction: column; min-height: 60vh; }
-.onb-title { font-size: 20px; margin: 8px 0 20px; }
+.onb-title { font-family: var(--font-display); font-weight: 400; font-size: 22px; line-height: 1.25; margin: var(--s2) 0 var(--s4); }
 .onb-body { flex: 1; }
-.onb-actions { display: flex; justify-content: space-between; gap: 12px; padding-top: 16px; }
-.onb-input {
+.onb-actions { display: flex; justify-content: space-between; gap: 12px; padding-top: var(--s4); }
+.onb-input, .capture-textarea {
     width: 100%; padding: 12px 14px; border-radius: var(--radius-sm);
-    border: 1px solid var(--border); background: var(--bg-elevated); color: var(--fg);
-    font-size: 16px;
+    border: 1px solid var(--border-2); background: var(--bg-elevated); color: var(--fg);
+    font-family: inherit; font-size: 16px;
 }
-.onb-goals { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.onb-input:focus, .capture-textarea:focus { border-color: var(--accent); outline: none; }
+.onb-goals { display: flex; flex-wrap: wrap; gap: var(--s2); margin-bottom: 12px; }
 .onb-goal-btn {
-    padding: 10px 14px; border-radius: 999px; border: 1px solid var(--border);
-    background: var(--bg-elevated); color: var(--fg); font-size: 14px;
+    padding: 9px 15px; border-radius: var(--radius-pill); border: 1px solid var(--border-2);
+    background: var(--bg-elevated); color: var(--fg); font-size: 14px; cursor: pointer;
+    transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease);
 }
+.onb-goal-btn:hover { border-color: var(--accent); }
 .onb-goal-btn.selected { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-.onb-choice-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.onb-choice-row { display: flex; gap: var(--s2); flex-wrap: wrap; }
 /* Picked .btn — single-choice rows (пол, беременность, приёмы пищи) and the
    dictionary tabs. Without this .selected styled only the pill goals. */
 .btn.selected { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
-/* Camera / capture */
-.capture-actions { display: flex; flex-direction: column; gap: 12px; margin-top: 24px; }
-.capture-preview { width: 100%; border-radius: var(--radius); margin-bottom: 16px; max-height: 40vh; object-fit: cover; }
-.capture-textarea { width: 100%; min-height: 70px; padding: 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-elevated); color: var(--fg); font-size: 15px; }
+/* ---------- capture ---------- */
 
-/* Recognized meal draft */
-.draft-item { display: grid; grid-template-columns: 1fr 70px; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
-.draft-item input[type=number] { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); text-align: right; }
-.draft-total { display: flex; justify-content: space-between; font-weight: 600; padding-top: 10px; }
+.capture-actions { display: flex; flex-direction: column; gap: 12px; margin-top: var(--s4); }
+.capture-preview { width: 100%; border-radius: var(--radius); margin-bottom: var(--s4); max-height: 40vh; object-fit: cover; }
+.capture-textarea { min-height: 74px; font-size: 15px; }
 
-/* Dictionary autocomplete */
-.dict-suggestions { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
-.dict-suggestion { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--bg-elevated); }
+/* ---------- the wait while the model looks ---------- */
+
+.thinking {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: var(--s4); padding: var(--s5) var(--s4);
+    min-height: 72vh;
+    text-align: center;
+}
+/* the ambient head steps back so the one being watched is the only one */
+body.is-waiting .rom-canvas { opacity: 0.18; }
+.thinking__head {
+    width: min(74vw, 268px);
+    aspect-ratio: 1 / 1;
+    position: relative;
+    border-radius: 50%;
+    overflow: hidden;                 /* a porthole: the head keeps growing past it */
+    border: 1px solid var(--accent-line);
+    background: radial-gradient(circle at 50% 50%, var(--bg-elevated) 0%, var(--bg) 100%);
+}
+.thinking__head canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.thinking__line {
+    font-size: 14.5px; color: var(--fg-2); min-height: 2.6em;
+    max-width: 30ch; line-height: 1.5;
+    transition: opacity 420ms var(--ease);
+}
+.thinking__line.is-fading { opacity: 0; }
+.thinking__note {
+    font-family: var(--font-mono); font-size: 10.5px;
+    letter-spacing: 0.16em; text-transform: uppercase; color: var(--fg-muted);
+}
+
+/* ---------- recognized meal draft ---------- */
+
+.draft-item {
+    display: grid; grid-template-columns: 1fr 78px; gap: var(--s2);
+    align-items: center; padding: 11px 0; border-bottom: 1px solid var(--border);
+}
+.draft-item input[type=number] {
+    width: 100%; padding: 8px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-2); background: var(--bg-elevated); color: var(--fg);
+    font-family: inherit; text-align: right;
+}
+.draft-total { display: flex; justify-content: space-between; font-weight: 600; padding-top: 12px; }
+
+/* ---------- dictionary ---------- */
+
+.dict-suggestions { display: flex; flex-direction: column; gap: 6px; margin-top: var(--s2); }
+.dict-suggestion {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 11px 13px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--bg-elevated); cursor: pointer;
+    transition: border-color var(--dur) var(--ease);
+}
+.dict-suggestion:hover { border-color: var(--accent); }
 .dict-suggestion .grams { width: 64px; text-align: right; }
 
-/* Charts */
-.chart-card { margin-bottom: 16px; }
-.chart-card h3 { margin: 0 0 8px; font-size: 15px; }
+/* ---------- charts ---------- */
+
+.chart-card { margin-bottom: var(--s3); }
+.chart-card h3 { margin: 0 0 var(--s2); font-size: 15px; font-weight: 600; }
 canvas.chart-canvas { width: 100%; height: 160px; display: block; }
 
-/* Settings */
-.settings-row { display: flex; justify-content: space-between; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--border); }
+/* ---------- settings ---------- */
+
+.settings-row { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); padding: 14px 0; border-bottom: 1px solid var(--border); }
 .settings-row:last-child { border-bottom: none; }
-.switch { position: relative; width: 46px; height: 26px; }
+.switch { position: relative; width: 46px; height: 26px; flex: none; }
 .switch input { opacity: 0; width: 0; height: 0; }
-.switch .track { position: absolute; inset: 0; background: var(--border); border-radius: 999px; transition: background 0.15s; }
-.switch .thumb { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; background: #fff; border-radius: 50%; transition: transform 0.15s; }
+.switch .track { position: absolute; inset: 0; background: var(--border-2); border-radius: var(--radius-pill); transition: background 0.18s; }
+.switch .thumb { position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; background: var(--bg-elevated); border-radius: 50%; transition: transform 0.18s; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2); }
 .switch input:checked + .track { background: var(--accent); }
 .switch input:checked + .track .thumb { transform: translateX(20px); }
 
 .toast {
-    position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%);
-    background: var(--fg); color: var(--bg); padding: 10px 16px; border-radius: 999px;
+    position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%);
+    background: var(--fg); color: var(--bg); padding: 10px 18px; border-radius: var(--radius-pill);
     font-size: 14px; z-index: 20; opacity: 0; transition: opacity 0.2s;
-    pointer-events: none;
+    pointer-events: none; max-width: calc(100% - 32px); text-align: center;
 }
 .toast.show { opacity: 0.95; }

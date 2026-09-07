@@ -3,12 +3,16 @@
  * spec: spec/web.md § Push-уведомления.
  */
 
-const CACHE_NAME = 'cgmdiet-shell-v1';
+const CACHE_NAME = 'cgmdiet-shell-v2';
 const SHELL_FILES = [
     './',
     './index.html',
     './css/app.css',
     '../css/tokens.css',
+    '../js/motion.js',
+    '../js/romanesco.js',
+    '../assets/fonts/electrolize.woff2',
+    '../assets/favicon.svg',
 ];
 
 self.addEventListener('install', (event) => {

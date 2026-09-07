@@ -55,8 +55,17 @@ function registerServiceWorker() {
     }
 }
 
+/** The head behind the shell — low contrast, slow, never in the way. */
+function mountBackground() {
+    const canvas = document.getElementById('rom-bg');
+    if (canvas && window.Romanesco) {
+        window.romanescoBg = window.Romanesco.mount(canvas, { mode: 'ambient', fill: 0.5, eyeY: 0.42 });
+    }
+}
+
 async function boot() {
     await initTheme();
+    mountBackground();
     await initTelemetry();
     registerServiceWorker();
     setupRouter();

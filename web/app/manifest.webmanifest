@@ -1,0 +1,16 @@
+{
+    "name": "CGM-diet",
+    "short_name": "CGM-diet",
+    "description": "Фото еды вместо ручного ввода. Связи между едой, сахаром, весом и самочувствием.",
+    "start_url": "./",
+    "scope": "./",
+    "display": "standalone",
+    "background_color": "#f6f7f5",
+    "theme_color": "#1f9d6b",
+    "orientation": "portrait",
+    "icons": [
+        { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+        { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+        { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    ]
+}

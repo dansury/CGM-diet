@@ -1,0 +1,105 @@
+/* Shared design tokens — landing (web/index.php) and app (web/app/index.html).
+ * Theme source: prefers-color-scheme by default; app.js can force one via
+ * data-theme on <html> (spec/web.md § Тема). */
+
+:root {
+    --bg: #f6f7f5;
+    --bg-elevated: #ffffff;
+    --fg: #16201c;
+    --fg-muted: #5b6b63;
+    --border: #dbe3dd;
+    --accent: #1f9d6b;
+    --accent-fg: #ffffff;
+    --danger: #c9433f;
+    --warn: #b8862f;
+    --shadow: 0 1px 3px rgba(20, 30, 25, 0.08), 0 8px 24px rgba(20, 30, 25, 0.06);
+    --radius: 16px;
+    --radius-sm: 10px;
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --bg: #10140f;
+        --bg-elevated: #1a2018;
+        --fg: #eef3ee;
+        --fg-muted: #93a297;
+        --border: #2a332a;
+        --accent: #38c98a;
+        --accent-fg: #06170f;
+        --danger: #e5726d;
+        --warn: #e0ac52;
+        --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+}
+
+:root[data-theme="dark"] {
+    --bg: #10140f;
+    --bg-elevated: #1a2018;
+    --fg: #eef3ee;
+    --fg-muted: #93a297;
+    --border: #2a332a;
+    --accent: #38c98a;
+    --accent-fg: #06170f;
+    --danger: #e5726d;
+    --warn: #e0ac52;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font);
+}
+
+body { -webkit-font-smoothing: antialiased; }
+
+a { color: var(--accent); }
+
+button {
+    font-family: inherit;
+}
+
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border: none;
+    border-radius: var(--radius-sm);
+    padding: 14px 20px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.btn-primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+}
+
+.btn-secondary {
+    background: var(--bg-elevated);
+    color: var(--fg);
+    border: 1px solid var(--border);
+}
+
+.btn-danger {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid var(--danger);
+}
+
+.card {
+    background: var(--bg-elevated);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 16px;
+}
+
+.muted { color: var(--fg-muted); }

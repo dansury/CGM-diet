@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f7f6f1">
+<meta name="description" content="Романеско линиями: спираль по золотому углу разворачивается по мере прокрутки.">
+<title>Романеско — линии</title>
+<style>
+  :root{
+    --paper:#f7f6f1;
+    --ink:#1c2118;
+    --dim:#8d9184;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --paper:#0e100c; --ink:#dce6cf; --dim:#5f665a; }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:auto}
+  body{margin:0;background:var(--paper);color:var(--ink);
+    font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-text-size-adjust:100%}
+  #stage{position:fixed;inset:0;width:100vw;height:100vh;display:block}
+  .scroll{height:520vh}
+
+  .ui{position:fixed;inset:0;pointer-events:none}
+  .title{position:absolute;left:26px;top:24px;
+    font-size:12px;letter-spacing:.22em;text-transform:lowercase;color:var(--ink)}
+  .title i{display:block;font-style:normal;margin-top:4px;color:var(--dim);letter-spacing:.14em}
+  .title a{display:inline-block;margin-top:10px;color:var(--dim);text-decoration:none;
+    letter-spacing:.14em;border-bottom:1px solid currentColor;pointer-events:auto}
+  .title a:hover{color:var(--ink)}
+  .cap{position:absolute;left:26px;bottom:34px;max-width:min(420px,calc(100vw - 52px));
+    font-size:12.5px;letter-spacing:.06em;color:var(--dim);
+    transition:opacity .45s ease}
+  .rail{position:absolute;right:26px;top:26px;bottom:26px;width:1px;background:currentColor;
+    color:var(--dim);opacity:.35}
+  .knob{position:absolute;right:22px;top:26px;width:9px;height:1px;background:var(--ink)}
+  @media (max-width:560px){
+    .title{left:18px;top:18px}
+    .cap{left:18px;bottom:24px}
+    .rail,.knob{right:14px}
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div class="ui">
+  <div class="title">романеско<i>прокрутите страницу</i>
+    <a href="romanesco.html">объёмная версия</a></div>
+  <div class="cap" id="cap"></div>
+  <div class="rail"></div>
+  <div class="knob" id="knob"></div>
+</div>
+<div class="scroll"></div>
+
+<script>
+(function(){
+'use strict';
+
+var TAU = Math.PI * 2;
+var GA = Math.PI * (3 - Math.sqrt(5));        // golden angle, 137.507°
+var RING = 14;                                // points per floret outline
+
+var P = {
+  counts: [89, 21],      // children per level: head -> bud -> floret
+  pack: 1.22,            // florets overlap: ближние закрывают дальние, как и надо
+  tilt: 0.52             // lean towards the parent apex
+};
+// Innermost radius of the spiral. The head winds almost to its tip; a bud keeps
+// a bare cone on top, otherwise its florets differ in size several times over.
+function rmin(d){ return d === 0 ? 0.13 : 0.34; }
+function ratio(d){ return d === 0 ? 1.72 : (d < P.counts.length ? 1.55 : 1.80); }
+
+function nrm(v){ var l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0]/l, v[1]/l, v[2]/l]; }
+function crs(a, b){
+  return [a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]];
+}
+
+// Nearest phyllotactic neighbour on a cone; the spiral is self-similar, so one
+// radius describes all of them. Half of it is how big a floret may grow.
+function minDist(lam, hr){
+  var c = Math.exp(-lam), lim = Math.min(300, Math.ceil(7 / lam)), best = Infinity;
+  for(var m = 1; m <= lim; m++){
+    var rm = Math.pow(c, m), th = m * GA;
+    var d = Math.hypot(rm * Math.cos(th) - 1, hr * (1 - rm), rm * Math.sin(th));
+    if(d < best) best = d;
+  }
+  return best;
+}
+
+/* ---------- model ---------- */
+
+var cones = [];
+
+// Scroll position at which a cone starts to grow, per level.
+var B0 = [0, 0.06, 0.40], BI = [0, 0.26, 0.14], BP = [0, 0, 0.34];
+var GROW = 0.09;
+
+function push(o, a, u, v, R, H, birth, depth){
+  var dirs = new Float32Array(RING * 3);
+  for(var i = 0; i < RING; i++){
+    var ph = i / RING * TAU, c = Math.cos(ph), s = Math.sin(ph);
+    dirs[i*3]   = u[0]*c + v[0]*s;
+    dirs[i*3+1] = u[1]*c + v[1]*s;
+    dirs[i*3+2] = u[2]*c + v[2]*s;
+  }
+  cones.push({
+    ox:o[0], oy:o[1], oz:o[2], ax:a[0], ay:a[1], az:a[2],
+    d:dirs, R:R, H:H, birth:birth, depth:depth,
+    cx:o[0] + a[0]*H*0.45, cy:o[1] + a[1]*H*0.45, cz:o[2] + a[2]*H*0.45,
+    sr:(R + H) * 0.55, c0:0, c1:0
+  });
+  return cones[cones.length - 1];
+}
+
+function grow(o, a, u, v, R, depth, phase, birth, pf){
+  var hr = ratio(depth), H = R * hr;
+  var self = push(o, a, u, v, R * 0.98, H * 0.96, birth, depth);
+  if(depth >= P.counts.length) return;
+  var c0 = 1e9, c1 = 0;
+
+  var N = P.counts[depth], lam = Math.log(1 / rmin(depth)) / N, c = Math.exp(-lam);
+  var pr = 0.5 * minDist(lam, hr) * P.pack;
+  for(var i = 0; i < N; i++){
+    var f = i / N, r = R * Math.pow(c, i), th = phase + i * GA;
+    var ct = Math.cos(th), st = Math.sin(th);
+    var rx = u[0]*ct + v[0]*st, ry = u[1]*ct + v[1]*st, rz = u[2]*ct + v[2]*st;
+    var hh = H * (1 - r / R);
+    var p = [o[0] + rx*r + a[0]*hh, o[1] + ry*r + a[1]*hh, o[2] + rz*r + a[2]*hh];
+    var n = nrm([rx*hr + a[0], ry*hr + a[1], rz*hr + a[2]]);
+    n = nrm([n[0] + a[0]*P.tilt, n[1] + a[1]*P.tilt, n[2] + a[2]*P.tilt]);
+    var u2 = nrm(crs(a, n)), v2 = crs(n, u2);
+    var k = depth + 1;
+    var cb = B0[k] + BI[k] * f + BP[k] * (depth === 0 ? 0 : pf);
+    if(cb < c0) c0 = cb;
+    if(cb + GROW > c1) c1 = cb + GROW;
+    grow(p, n, u2, v2, pr * r, k, th * 1.7, cb, depth === 0 ? f : pf);
+  }
+  self.c0 = c0; self.c1 = c1;
+}
+
+function build(){
+  cones = [];
+  grow([0, -0.58, 0], [0,1,0], [1,0,0], [0,0,-1], 1, 0, 0, -GROW, 0);
+}
+
+/* ---------- convex hull of the projected outline ---------- */
+
+var qx = new Float64Array(RING + 1), qy = new Float64Array(RING + 1);
+var idx = new Int32Array(RING + 1);
+var hx = new Float64Array(2 * RING + 4), hy = new Float64Array(2 * RING + 4);
+
+function hull(n){
+  var i, j, t;
+  for(i = 0; i < n; i++) idx[i] = i;
+  for(i = 1; i < n; i++){                       // insertion sort by x, then y
+    t = idx[i];
+    for(j = i - 1; j >= 0 && (qx[idx[j]] > qx[t] ||
+        (qx[idx[j]] === qx[t] && qy[idx[j]] > qy[t])); j--) idx[j+1] = idx[j];
+    idx[j+1] = t;
+  }
+  var k = 0, p;
+  for(i = 0; i < n; i++){                       // lower chain
+    p = idx[i];
+    while(k >= 2 && (hx[k-1]-hx[k-2])*(qy[p]-hy[k-2]) -
+                    (hy[k-1]-hy[k-2])*(qx[p]-hx[k-2]) <= 0) k--;
+    hx[k] = qx[p]; hy[k] = qy[p]; k++;
+  }
+  for(i = n - 2, t = k + 1; i >= 0; i--){       // upper chain
+    p = idx[i];
+    while(k >= t && (hx[k-1]-hx[k-2])*(qy[p]-hy[k-2]) -
+                    (hy[k-1]-hy[k-2])*(qx[p]-hx[k-2]) <= 0) k--;
+    hx[k] = qx[p]; hy[k] = qy[p]; k++;
+  }
+  return k - 1;                                 // last point repeats the first
+}
+
+/* ---------- scene ---------- */
+
+var canvas = document.getElementById('stage');
+var ctx = canvas.getContext('2d', { alpha: false });
+var cap = document.getElementById('cap'), knob = document.getElementById('knob');
+var W = 0, H = 0, dpr = 1, paper = '#f7f6f1', ink = '#1c2118';
+var camZ = 3.7, t = 0, shown = 0, drift = 0;
+var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function theme(){
+  var cs = getComputedStyle(document.documentElement);
+  paper = cs.getPropertyValue('--paper').trim() || '#f7f6f1';
+  ink = cs.getPropertyValue('--ink').trim() || '#1c2118';
+}
+
+function resize(){
+  dpr = Math.min(1.75, window.devicePixelRatio || 1);
+  W = Math.round(innerWidth * dpr); H = Math.round(innerHeight * dpr);
+  canvas.width = W; canvas.height = H;
+  canvas.style.width = innerWidth + 'px'; canvas.style.height = innerHeight + 'px';
+}
+
+function ease(x){ return x < 0.5 ? 2*x*x : 1 - Math.pow(-2*x + 2, 2) / 2; }
+function step(a, b, x){ x = (x - a) / (b - a); return x < 0 ? 0 : (x > 1 ? 1 : x*x*(3 - 2*x)); }
+
+var CAPS = [
+  [0.00, 'конус — и одна спираль на нём'],
+  [0.07, 'каждое следующее соцветие — на 137,5° дальше по кругу'],
+  [0.34, 'поэтому они не встают в ряды, а сходятся в спирали'],
+  [0.44, 'каждое соцветие — тот же конус и та же спираль'],
+  [0.92, 'и так далее, до бесконечности']
+];
+var capAt = -1;
+var list = [];                                   // reused, no per-frame garbage
+
+function draw(){
+  var yaw = shown * TAU * 1.15 + drift;
+  // конус сбоку -> вид сверху на спираль -> три четверти
+  var pitch = 0.55 + 0.70 * step(0.02, 0.30, shown) - 0.83 * step(0.38, 0.78, shown);
+  var zoom = 1.14 - 0.20 * step(0.24, 0.80, shown);
+
+  var cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+  var m00 = cy,       m01 = 0,  m02 = sy;
+  var m10 = sp * sy,  m11 = cp, m12 = -sp * cy;
+  var m20 = -cp * sy, m21 = sp, m22 = cp * cy;
+
+  var asp = W / H;
+  var k = Math.min(asp > 1 ? 2.5 * asp : 2.5, asp > 1 ? 2.15 : 2.15 / asp) * zoom;
+  var fx = k * W * 0.5 / (asp > 1 ? asp : 1);
+  var fy = k * H * 0.5 * (asp > 1 ? 1 : asp);
+  var ox = W * 0.5, oy = H * 0.5;
+
+  ctx.fillStyle = paper;
+  ctx.fillRect(0, 0, W, H);
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = ink;
+
+  var n = cones.length, live = 0, i, j, c;
+  for(i = 0; i < n; i++){
+    c = cones[i];
+    if(shown < c.birth) continue;
+    var dep = camZ - (m20*c.cx + m21*c.cy + m22*c.cz);
+    if(dep < 0.4) continue;
+    // отвёрнутые от нас соцветия всё равно закрыты телом кочана — не считаем их
+    if(m20*c.ax + m21*c.ay + m22*c.az < -0.55) continue;
+    c.k = dep + c.sr;                            // big shapes sort to the back
+    list[live++] = c;
+  }
+  list.length = live;
+  list.sort(byDepth);
+
+  for(i = 0; i < live; i++){
+    c = list[i];
+    var s = step(c.birth, c.birth + GROW, shown);
+    if(s <= 0.01) continue;
+    var R = c.R * s, Hc = c.H * s;
+    var bx = c.ox, by = c.oy, bz = c.oz, d = c.d, near = 1e9;
+
+    for(j = 0; j < RING; j++){
+      var x = bx + d[j*3]*R, y = by + d[j*3+1]*R, z = bz + d[j*3+2]*R;
+      var Z = camZ - (m20*x + m21*y + m22*z);
+      if(Z < near) near = Z;
+      qx[j] = ox + (m00*x + m01*y + m02*z) * fx / Z;
+      qy[j] = oy - (m10*x + m11*y + m12*z) * fy / Z;
+    }
+    var ax = bx + c.ax*Hc, ay = by + c.ay*Hc, az = bz + c.az*Hc;
+    var AZ = camZ - (m20*ax + m21*ay + m22*az);
+    if(AZ < 0.35 || near < 0.35) continue;
+    qx[RING] = ox + (m00*ax + m01*ay + m02*az) * fx / AZ;
+    qy[RING] = oy - (m10*ax + m11*ay + m12*az) * fy / AZ;
+
+    var size = R * fx / near;                    // radius on screen, px
+    if(size < 1.1 * dpr) continue;
+
+    var hn = hull(RING + 1);
+    if(hn < 3) continue;
+    ctx.beginPath();
+    ctx.moveTo(hx[0], hy[0]);
+    for(j = 1; j < hn; j++) ctx.lineTo(hx[j], hy[j]);
+    ctx.closePath();
+    ctx.fill();                                  // paper, hides whatever is behind
+    var sa = c.c1 ? 1 - step(c.c0, c.c1, shown) : 1;
+    if(sa < 0.02) continue;                      // затянуло собственными соцветиями
+    ctx.globalAlpha = sa;
+    ctx.lineWidth = Math.max(0.55, Math.min(1.35, size * 0.055)) * dpr;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+}
+function byDepth(a, b){ return b.k - a.k; }
+
+/* ---------- scroll & loop ---------- */
+
+function target(){
+  var h = document.documentElement.scrollHeight - innerHeight;
+  return h > 0 ? Math.min(1, Math.max(0, scrollY / h)) : 0;
+}
+
+var last = 0;
+function tick(ts){
+  var dt = last ? Math.min(0.05, (ts - last) / 1000) : 0;
+  last = ts;
+  t = target();
+  shown += (t - shown) * Math.min(1, dt * 6.5);     // догоняет прокрутку мягко
+  if(!reduce) drift += dt * 0.05;
+
+  draw();
+
+  knob.style.top = (26 + (innerHeight - 52) * t) + 'px';
+  var want = 0;
+  for(var i = 0; i < CAPS.length; i++) if(t >= CAPS[i][0]) want = i;
+  if(want !== capAt){
+    capAt = want;
+    cap.style.opacity = '0';
+    setTimeout(function(){ cap.textContent = CAPS[capAt][1]; cap.style.opacity = '1'; }, 180);
+  }
+  requestAnimationFrame(tick);
+}
+
+addEventListener('resize', function(){ resize(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', theme);
+theme();
+resize();
+build();
+cap.textContent = CAPS[0][1];
+requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

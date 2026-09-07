@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1411">
+<meta name="description" content="Капуста романеско: филлотаксис по золотому углу, самоподобие и вращение в браузере.">
+<title>Романеско — фрактальная спираль</title>
+<style>
+  :root{
+    --bg:#060b08;
+    --panel:rgba(10,20,14,.74);
+    --line:rgba(150,210,130,.20);
+    --txt:#dcecd2;
+    --dim:#8ba382;
+    --acc:#a9d84a;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;color:var(--txt);
+    background:radial-gradient(ellipse at 50% 40%, #17281e 0%, #0b1411 46%, #050907 100%);
+    background-attachment:fixed;
+    font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    overscroll-behavior:none;-webkit-text-size-adjust:100%}
+  #stage{display:block;width:100vw;height:100vh;touch-action:none;cursor:grab}
+  #stage.drag{cursor:grabbing}
+
+  .hud{position:fixed;left:16px;top:16px;width:274px;max-width:calc(100vw - 32px);
+    background:var(--panel);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+    border:1px solid var(--line);border-radius:16px;
+    box-shadow:0 20px 46px rgba(0,0,0,.5);overflow:hidden}
+  .hud header{display:flex;align-items:center;gap:10px;padding:13px 14px;cursor:pointer;
+    user-select:none;-webkit-user-select:none}
+  .hud header h1{font-size:14px;font-weight:600;margin:0;letter-spacing:.2px;flex:1}
+  .hud header .chev{color:var(--dim);font-size:12px;transition:transform .2s}
+  .hud.closed .chev{transform:rotate(-90deg)}
+  .hud.closed .body{display:none}
+  .body{padding:2px 14px 14px}
+  .row{margin:11px 0}
+  .row .lab{display:flex;justify-content:space-between;align-items:baseline;
+    font-size:12px;color:var(--dim);margin-bottom:5px}
+  .row .lab b{color:var(--txt);font-weight:600;font-variant-numeric:tabular-nums}
+  input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:22px;
+    background:transparent;margin:0;display:block}
+  input[type=range]::-webkit-slider-runnable-track{height:3px;border-radius:2px;
+    background:rgba(255,255,255,.14)}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
+    width:14px;height:14px;border-radius:50%;background:var(--acc);margin-top:-5.5px;
+    box-shadow:0 0 0 4px rgba(169,216,74,.14)}
+  input[type=range]::-moz-range-track{height:3px;border-radius:2px;background:rgba(255,255,255,.14)}
+  input[type=range]::-moz-range-thumb{width:14px;height:14px;border:0;border-radius:50%;
+    background:var(--acc)}
+  .seg{display:flex;gap:6px}
+  .seg button{flex:1;padding:6px 0;font:inherit;font-size:12px;color:var(--dim);
+    background:rgba(255,255,255,.05);border:1px solid transparent;border-radius:9px;cursor:pointer}
+  .seg button.on{color:#0d1a09;background:var(--acc);font-weight:600}
+  .checks{display:flex;flex-direction:column;gap:8px;margin:12px 0 4px}
+  label.ck{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--dim);cursor:pointer}
+  label.ck input{accent-color:var(--acc);width:15px;height:15px;margin:0}
+  .acts{display:flex;gap:6px;margin-top:12px}
+  .acts button{flex:1;padding:8px 0;font:inherit;font-size:12px;color:var(--txt);
+    background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:9px;cursor:pointer}
+  .acts button:active{background:rgba(255,255,255,.12)}
+  .stat{margin-top:11px;padding-top:10px;border-top:1px solid var(--line);
+    font-size:11.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+  .hint{position:fixed;right:16px;bottom:14px;font-size:11.5px;color:rgba(139,163,130,.72);
+    text-align:right;pointer-events:none}
+  .fail{position:fixed;inset:0;display:none;place-items:center;text-align:center;padding:24px;
+    color:var(--dim);font-size:14px}
+  @media (max-width:560px){
+    .hud{left:10px;top:10px;right:10px;width:auto}
+    .hint{display:none}
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<div class="hud" id="hud">
+  <header id="hudHead"><h1>Романеско</h1><span class="chev">▾</span></header>
+  <div class="body">
+    <div class="row">
+      <div class="lab"><span>Соцветий в головке</span><b id="vN0">144</b></div>
+      <input type="range" id="n0" min="55" max="420" step="1" value="144">
+    </div>
+    <div class="row">
+      <div class="lab"><span>Соцветий в бутоне</span><b id="vN1">120</b></div>
+      <input type="range" id="n1" min="13" max="260" step="1" value="120">
+    </div>
+    <div class="row">
+      <div class="lab"><span>Уровней самоподобия</span><b id="vD">2</b></div>
+      <div class="seg" id="depth">
+        <button data-d="1">1</button><button data-d="2" class="on">2</button><button data-d="3">3</button>
+      </div>
+    </div>
+    <div class="row">
+      <div class="lab"><span>Скорость вращения</span><b id="vS">0.30</b></div>
+      <input type="range" id="spd" min="0" max="120" step="1" value="30">
+    </div>
+    <div class="row">
+      <div class="lab"><span>Свет</span><b id="vL">-40°</b></div>
+      <input type="range" id="lt" min="-180" max="180" step="1" value="-40">
+    </div>
+    <div class="checks">
+      <label class="ck"><input type="checkbox" id="auto" checked> Автовращение</label>
+      <label class="ck"><input type="checkbox" id="spir" checked> Подсветить спирали</label>
+    </div>
+    <div class="acts">
+      <button id="reset">Сброс</button>
+      <button id="png">PNG</button>
+    </div>
+    <div class="stat" id="stat">—</div>
+  </div>
+</div>
+
+<div class="hint">тяните мышью — поворот · колесо — приближение · пробел — пауза</div>
+<div class="fail" id="fail">Нужен WebGL — включите аппаратное ускорение в браузере.</div>
+
+<script>
+(function(){
+'use strict';
+
+var TAU = Math.PI * 2;
+var GA = Math.PI * (3 - Math.sqrt(5));      // golden angle, 137.507°
+var MAX_LEAVES = 32000;
+
+function el(id){ return document.getElementById(id); }
+function nrm(v){ var l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0]/l, v[1]/l, v[2]/l]; }
+function crs(a, b){
+  return [a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]];
+}
+
+/* ================= geometry ================= */
+
+var SMALL = Math.min(innerWidth, innerHeight) < 720;      // phones get a lighter model
+var DEF = { n0: SMALL ? 110 : 144, n1: SMALL ? 70 : 120,
+            depth: 2, speed: 0.30, light: -40, auto: true, spiral: true };
+var P = {
+  n0: DEF.n0, n1: DEF.n1, depth: DEF.depth,
+  headRatio: 1.80,    // height / base radius of the whole head
+  budRatio: 1.70,     // same for an intermediate floret
+  leafRatio: 1.72,    // same for a terminal floret
+  headPow: 0.92,      // profile h = H(1 - (r/R)^pow); < 1 = concave sides, sharp tip
+  budPow: 0.95,
+  rmin: 0.085,        // innermost radius as a fraction of the base radius
+  pack: 1.36,         // how tightly neighbouring florets touch — they overlap
+  tilt: 0.72,         // extra lean of a floret towards the parent apex
+  mLeaf: 8, mCore: 26
+};
+
+// Colours: [shadow, body, tip]. Three leaf variants mark the parastichy families.
+var TONES = [
+  [[0.090,0.170,0.050], [0.38,0.62,0.15], [0.66,0.82,0.28]],
+  [[0.080,0.165,0.062], [0.33,0.59,0.17], [0.60,0.80,0.31]],
+  [[0.070,0.160,0.080], [0.28,0.56,0.22], [0.53,0.77,0.36]],
+  [[0.008,0.020,0.010], [0.020,0.045,0.018], [0.034,0.070,0.026]]   // core filler
+];
+var CORE = 3;
+
+function profH(rf, pw){ return 1 - Math.pow(rf, pw); }              // height, in units of H
+function profS(rf, pw, hr){                                          // |dh/dr|, in units of R
+  return Math.min(8, hr * pw * Math.pow(Math.max(rf, 1e-3), pw - 1));
+}
+
+// Distance to the nearest phyllotactic neighbour, in units of the base radius.
+// The spiral is self-similar, so one radius describes the whole cone.
+function minDist(lam, hr, pw){
+  var c = Math.exp(-lam), lim = Math.min(400, Math.ceil(7 / lam)), best = Infinity;
+  for(var m = 1; m <= lim; m++){
+    var rm = Math.pow(c, m), th = m * GA;
+    var d = Math.hypot(rm * Math.cos(th) - 1, hr * profH(rm, pw), rm * Math.sin(th));
+    if(d < best) best = d;
+  }
+  return best;
+}
+
+// Requested floret counts -> plastochrone ratio and floret size, capped by the budget.
+function plan(){
+  var span = Math.log(1 / P.rmin), out = [], d;
+  for(d = 0; d < P.depth; d++){
+    out.push({
+      hr: d === 0 ? P.headRatio : P.budRatio,
+      pw: d === 0 ? P.headPow : P.budPow,
+      N: d === 0 ? P.n0 : (d === 1 ? P.n1 : Math.max(13, P.n1 >> 1))
+    });
+  }
+  function total(){ return out.reduce(function(a, o){ return a * o.N; }, 1); }
+  for(var g = 0; g < 200 && total() > MAX_LEAVES; g++){
+    var j = 0;                                   // thin out the deepest level first
+    for(var i = out.length - 1; i >= 0; i--) if(out[i].N > 13){ j = i; break; }
+    out[j].N = Math.max(13, Math.round(out[j].N * 0.92));
+  }
+  return out.map(function(o){
+    var lam = span / o.N;
+    return { lam: lam, N: o.N, pr: 0.5 * minDist(lam, o.hr, o.pw) * P.pack };
+  });
+}
+
+var cones = [], leaves = 0;
+
+// Rings of a body of revolution: [radius fraction, height fraction, ao, colour blend].
+var LEAF_RINGS = [[1, 0, 0.38, 0], [0.55, 0.42, 0.82, 0.62]];
+
+function coreRings(pw, skirt){
+  var top = profH(P.rmin * 1.6, pw), out = [];
+  // a short taper below the base plane hides the underside of the head
+  if(skirt) out.push([0.40, -0.17, 0.12, 0], [0.82, -0.06, 0.28, 0]);
+  for(var i = 0; i < 4; i++){
+    var rf = 1 - i * 0.24;
+    out.push([rf, profH(rf, pw) / top, 0.5 + i * 0.14, 0.25 + i * 0.2]);
+  }
+  return out;
+}
+
+function cone(o, a, u, v, R, H, M, tone, ao, rings, cap){
+  cones.push({ o:o, a:a, u:u, v:v, R:R, H:H, M:M, tone:tone, ao:ao, rings:rings, cap:cap });
+}
+
+function grow(o, a, u, v, R, depth, ao, phase, lv, arm){
+  var hr = depth === 0 ? P.headRatio : P.budRatio;
+  var pw = depth === 0 ? P.headPow : P.budPow;
+  var H = R * hr, N = lv[depth].N;
+  var c = Math.exp(-lv[depth].lam), pr = lv[depth].pr;
+
+  // dark body of the cone — fills whatever shows between the florets
+  cone(o, a, u, v, R * 0.995, H * profH(P.rmin * 1.6, pw), depth === 0 ? P.mCore : 9,
+       CORE, ao * 0.55, coreRings(pw, depth === 0), true);
+
+  for(var i = 0; i < N; i++){
+    var rf = Math.pow(c, i), r = R * rf, th = phase + i * GA;
+    var ct = Math.cos(th), st = Math.sin(th);
+    var rx = u[0]*ct + v[0]*st, ry = u[1]*ct + v[1]*st, rz = u[2]*ct + v[2]*st;
+    var hh = H * profH(rf, pw);
+    var p = [o[0] + rx*r + a[0]*hh, o[1] + ry*r + a[1]*hh, o[2] + rz*r + a[2]*hh];
+    var sl = profS(rf, pw, hr);
+    var n = nrm([rx*sl + a[0], ry*sl + a[1], rz*sl + a[2]]);         // surface normal
+    n = nrm([n[0] + a[0]*P.tilt, n[1] + a[1]*P.tilt, n[2] + a[2]*P.tilt]);
+    var u2 = nrm(crs(a, n)), v2 = crs(n, u2);
+    var s = pr * r;
+    var band = depth === 0 ? i : arm;                                // top-level spiral family
+    if(depth + 1 < lv.length){
+      grow(p, n, u2, v2, s, depth + 1, ao * 0.95, th * 1.7, lv, band);
+    }else{
+      cone(p, n, u2, v2, s, s * P.leafRatio, P.mLeaf,
+           spiral ? (band % 13) % 3 : 1, ao, LEAF_RINGS);
+      leaves++;
+    }
+  }
+}
+
+function coneSize(c){
+  var K = c.rings.length;
+  return { v: K * c.M + 1 + (c.cap ? 1 : 0),
+           i: 3 * ((K - 1) * 2 * c.M + c.M + (c.cap ? c.M : 0)) };
+}
+
+// Smooth normals from the true surface slope, ambient occlusion baked per ring.
+function emit(c, vo, io, pos, nml, col, idx){
+  var M = c.M, R = c.R, H = c.H, o = c.o, a = c.a, u = c.u, v = c.v;
+  var rg = c.rings, K = rg.length, t = TONES[c.tone], ao = c.ao, r, i, q;
+
+  var slope = [];
+  for(r = 0; r < K; r++){
+    var r2 = r + 1 < K ? rg[r+1][0] : 0, h2 = r + 1 < K ? rg[r+1][1] : 1;
+    var lo = (h2 - rg[r][1]) * H / Math.max(1e-4, (rg[r][0] - r2) * R);
+    var hi = r > 0 ? (rg[r][1] - rg[r-1][1]) * H / Math.max(1e-4, (rg[r-1][0] - rg[r][0]) * R) : lo;
+    slope.push(Math.min(9, (lo + hi) * 0.5));
+  }
+
+  for(r = 0; r < K; r++){
+    var rr = R * rg[r][0], hh = H * rg[r][1], sl = slope[r];
+    var w = ao * rg[r][2], k = rg[r][3];
+    for(i = 0; i < M; i++){
+      var ph = i / M * TAU, cp = Math.cos(ph), sp = Math.sin(ph);
+      var dx = u[0]*cp + v[0]*sp, dy = u[1]*cp + v[1]*sp, dz = u[2]*cp + v[2]*sp;
+      q = (vo + r*M + i) * 3;
+      pos[q] = o[0] + dx*rr + a[0]*hh;
+      pos[q+1] = o[1] + dy*rr + a[1]*hh;
+      pos[q+2] = o[2] + dz*rr + a[2]*hh;
+      var n = nrm([dx*sl + a[0], dy*sl + a[1], dz*sl + a[2]]);
+      nml[q] = n[0]; nml[q+1] = n[1]; nml[q+2] = n[2];
+      col[q]   = (t[0][0] + (t[1][0] - t[0][0]) * k) * w;
+      col[q+1] = (t[0][1] + (t[1][1] - t[0][1]) * k) * w;
+      col[q+2] = (t[0][2] + (t[1][2] - t[0][2]) * k) * w;
+    }
+  }
+
+  var ap = vo + K*M;
+  q = ap * 3;
+  pos[q] = o[0] + a[0]*H; pos[q+1] = o[1] + a[1]*H; pos[q+2] = o[2] + a[2]*H;
+  nml[q] = a[0]; nml[q+1] = a[1]; nml[q+2] = a[2];
+  col[q] = t[2][0] * ao; col[q+1] = t[2][1] * ao; col[q+2] = t[2][2] * ao;
+
+  var w2 = io, j, e, A, B, C, D;
+  for(r = 0; r + 1 < K; r++){
+    for(j = 0; j < M; j++){
+      e = (j + 1) % M;
+      A = vo + r*M + j; B = vo + r*M + e; C = vo + (r+1)*M + e; D = vo + (r+1)*M + j;
+      idx[w2++] = A; idx[w2++] = B; idx[w2++] = C;
+      idx[w2++] = A; idx[w2++] = C; idx[w2++] = D;
+    }
+  }
+  for(j = 0; j < M; j++){
+    e = (j + 1) % M;
+    idx[w2++] = vo + (K-1)*M + j; idx[w2++] = vo + (K-1)*M + e; idx[w2++] = ap;
+  }
+
+  if(c.cap){                                   // floor disc, so nothing shows from below
+    var cp = ap + 1, ch = H * rg[0][1];
+    q = cp * 3;
+    pos[q] = o[0] + a[0]*ch; pos[q+1] = o[1] + a[1]*ch; pos[q+2] = o[2] + a[2]*ch;
+    nml[q] = -a[0]; nml[q+1] = -a[1]; nml[q+2] = -a[2];
+    col[q] = t[0][0] * ao * 0.3; col[q+1] = t[0][1] * ao * 0.3; col[q+2] = t[0][2] * ao * 0.3;
+    for(j = 0; j < M; j++){
+      e = (j + 1) % M;
+      idx[w2++] = vo + e; idx[w2++] = vo + j; idx[w2++] = cp;
+    }
+  }
+}
+
+/* ================= WebGL ================= */
+
+var canvas = el('stage');
+// preserveDrawingBuffer keeps the PNG export reliable
+var ATTRS = { antialias: true, alpha: true, depth: true,
+              premultipliedAlpha: false, preserveDrawingBuffer: true };
+var gl = canvas.getContext('webgl2', ATTRS);
+if(!gl){
+  gl = canvas.getContext('webgl', ATTRS);
+  if(gl && !gl.getExtension('OES_element_index_uint')) gl = null;
+}
+if(!gl){
+  canvas.style.display = 'none';
+  el('hud').style.display = 'none';
+  el('fail').style.display = 'grid';
+  return;
+}
+
+var VS =
+  'attribute vec3 aPos;attribute vec3 aNrm;attribute vec3 aCol;' +
+  'uniform mat3 uRot;uniform vec2 uK;uniform float uCam;uniform vec2 uZ;' +
+  'varying vec3 vN;varying vec3 vC;varying vec3 vP;' +
+  'void main(){' +
+  '  vec3 p=uRot*aPos;vN=uRot*aNrm;vC=aCol;vP=p;' +
+  '  float zv=p.z-uCam;' +
+  '  gl_Position=vec4(p.x*uK.x,p.y*uK.y,uZ.x*zv+uZ.y,-zv);' +
+  '}';
+
+var FS =
+  'precision highp float;' +
+  'uniform vec3 uL;uniform vec3 uF;uniform float uCam;uniform vec3 uFog;' +
+  'varying vec3 vN;varying vec3 vC;varying vec3 vP;' +
+  'void main(){' +
+  '  vec3 n=normalize(vN);' +
+  '  vec3 v=normalize(vec3(0.0,0.0,uCam)-vP);' +
+  '  float wrapd=0.5+0.5*dot(n,uL);' +
+  '  float diff=0.20+1.15*wrapd*wrapd;' +
+  '  float fill=max(dot(n,uF),0.0)*0.30;' +
+  '  float rim=pow(1.0-max(dot(n,v),0.0),3.0)*0.34;' +
+  '  float gloss=clamp(dot(vC,vec3(0.5,0.7,0.25))*3.5,0.0,1.0);' +
+  '  float spec=pow(max(dot(n,normalize(uL+v)),0.0),34.0)*0.34*gloss;' +
+  '  vec3 c=vC*(diff+rim)+vC*vec3(0.55,0.75,1.0)*fill+vec3(0.88,0.96,0.66)*spec;' +
+  '  float f=clamp((uCam-vP.z-2.6)/2.0,0.0,1.0);' +
+  '  gl_FragColor=vec4(mix(c,uFog,f*0.60),1.0);' +
+  '}';
+
+function shader(type, src){
+  var s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+var prog = gl.createProgram();
+gl.attachShader(prog, shader(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, shader(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+gl.useProgram(prog);
+
+var aPos = gl.getAttribLocation(prog, 'aPos');
+var aNrm = gl.getAttribLocation(prog, 'aNrm');
+var aCol = gl.getAttribLocation(prog, 'aCol');
+var uRot = gl.getUniformLocation(prog, 'uRot');
+var uK = gl.getUniformLocation(prog, 'uK');
+var uCam = gl.getUniformLocation(prog, 'uCam');
+var uZ = gl.getUniformLocation(prog, 'uZ');
+var uL = gl.getUniformLocation(prog, 'uL');
+var uF = gl.getUniformLocation(prog, 'uF');
+var uFog = gl.getUniformLocation(prog, 'uFog');
+
+var bPos = gl.createBuffer(), bNrm = gl.createBuffer(), bCol = gl.createBuffer();
+var bIdx = gl.createBuffer();
+[[aPos, bPos], [aNrm, bNrm], [aCol, bCol]].forEach(function(x){
+  gl.bindBuffer(gl.ARRAY_BUFFER, x[1]);
+  gl.enableVertexAttribArray(x[0]);
+  gl.vertexAttribPointer(x[0], 3, gl.FLOAT, false, 0, 0);
+});
+gl.enable(gl.DEPTH_TEST);
+gl.enable(gl.CULL_FACE);
+gl.cullFace(gl.BACK);
+gl.frontFace(gl.CCW);
+gl.clearColor(0, 0, 0, 0);
+
+/* ================= build ================= */
+
+var nIdx = 0, spiral = DEF.spiral, stat = el('stat'), fps = 0, eff = [];
+
+function build(){
+  var t0 = performance.now();
+  cones = []; leaves = 0;
+  eff = plan();
+  grow([0, -P.headRatio * 0.52, 0], [0,1,0], [1,0,0], [0,0,-1], 1, 0, 1, 0, eff, 0);
+
+  var nv = 0, ni = 0, i, sz;
+  for(i = 0; i < cones.length; i++){ sz = coneSize(cones[i]); nv += sz.v; ni += sz.i; }
+  var pos = new Float32Array(nv*3), nml = new Float32Array(nv*3), col = new Float32Array(nv*3);
+  var idx = new Uint32Array(ni);
+  var vo = 0, io = 0;
+  for(i = 0; i < cones.length; i++){
+    emit(cones[i], vo, io, pos, nml, col, idx);
+    sz = coneSize(cones[i]); vo += sz.v; io += sz.i;
+  }
+  nIdx = ni;
+
+  gl.bindBuffer(gl.ARRAY_BUFFER, bPos); gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bNrm); gl.bufferData(gl.ARRAY_BUFFER, nml, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ARRAY_BUFFER, bCol); gl.bufferData(gl.ARRAY_BUFFER, col, gl.STATIC_DRAW);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, bIdx);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
+  cones = [];
+  info();
+}
+
+function info(){
+  stat.textContent = eff.map(function(x){ return x.N; }).join('×') + ' = ' +
+    leaves.toLocaleString('ru') + ' соцветий · ' +
+    Math.round(nIdx / 3000) + 'k граней · ' + fps.toFixed(0) + ' fps';
+}
+
+/* ================= camera & loop ================= */
+
+var yaw = 0.6, pitch = 0.24, zoom = 1, camZ = 3.7, KX = 2.72, KY = 2.28;
+var speed = DEF.speed, lightAz = DEF.light, auto = DEF.auto;
+var W = 0, H = 0;
+
+function resize(){
+  var d = Math.min(2, window.devicePixelRatio || 1);
+  W = Math.round(innerWidth * d); H = Math.round(innerHeight * d);
+  canvas.width = W; canvas.height = H;
+  canvas.style.width = innerWidth + 'px'; canvas.style.height = innerHeight + 'px';
+  gl.viewport(0, 0, W, H);
+}
+
+function draw(){
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  var cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+  // column-major mat3 = Rx(pitch) * Ry(yaw)
+  gl.uniformMatrix3fv(uRot, false, new Float32Array([
+    cy, sp*sy, -cp*sy,
+    0,  cp,     sp,
+    sy, -sp*cy, cp*cy
+  ]));
+  var asp = W / H;                                   // fit the head to the shorter side
+  var k = Math.min(asp > 1 ? KX * asp : KX, asp > 1 ? KY : KY / asp) * zoom;
+  gl.uniform2f(uK, asp > 1 ? k / asp : k, asp > 1 ? k : k * asp);
+  gl.uniform1f(uCam, camZ);
+  var n = 0.2, f = 12;
+  gl.uniform2f(uZ, -(f + n) / (f - n), -2 * f * n / (f - n));
+  var la = lightAz * Math.PI / 180;
+  var L = nrm([Math.sin(la) * 0.72, 0.60, Math.cos(la) * 0.72]);
+  gl.uniform3f(uL, L[0], L[1], L[2]);
+  var F = nrm([-L[0], 0.25, -L[2]]);
+  gl.uniform3f(uF, F[0], F[1], F[2]);
+  gl.uniform3f(uFog, 0.043, 0.078, 0.066);
+  gl.drawElements(gl.TRIANGLES, nIdx, gl.UNSIGNED_INT, 0);
+}
+
+var last = 0, acc = 0, frames = 0;
+function tick(ts){
+  var dt = last ? Math.min(0.05, (ts - last) / 1000) : 0;
+  last = ts;
+  if(auto) yaw += speed * dt;
+  draw();
+  acc += dt; frames++;
+  if(acc > 0.5){ fps = frames / acc; acc = 0; frames = 0; info(); }
+  requestAnimationFrame(tick);
+}
+
+/* ================= input ================= */
+
+var drag = false, px = 0, py = 0, pinch = 0;
+canvas.addEventListener('pointerdown', function(e){
+  drag = true; px = e.clientX; py = e.clientY;
+  canvas.classList.add('drag'); canvas.setPointerCapture(e.pointerId);
+});
+canvas.addEventListener('pointermove', function(e){
+  if(!drag) return;
+  yaw += (e.clientX - px) * 0.0075;
+  pitch = Math.max(-1.35, Math.min(1.35, pitch + (e.clientY - py) * 0.0060));
+  px = e.clientX; py = e.clientY;
+});
+function endDrag(){ drag = false; canvas.classList.remove('drag'); }
+canvas.addEventListener('pointerup', endDrag);
+canvas.addEventListener('pointercancel', endDrag);
+canvas.addEventListener('wheel', function(e){
+  e.preventDefault();
+  zoom = Math.max(0.35, Math.min(6, zoom * Math.pow(0.9985, e.deltaY)));
+}, { passive: false });
+canvas.addEventListener('touchmove', function(e){
+  if(e.touches.length !== 2) return;
+  var d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                     e.touches[0].clientY - e.touches[1].clientY);
+  if(pinch) zoom = Math.max(0.35, Math.min(6, zoom * d / pinch));
+  pinch = d; e.preventDefault();
+}, { passive: false });
+canvas.addEventListener('touchend', function(){ pinch = 0; });
+addEventListener('keydown', function(e){
+  if(e.code === 'Space'){ e.preventDefault(); auto = !auto; el('auto').checked = auto; }
+});
+
+/* ================= controls ================= */
+
+function bind(id, out, fmt, set){
+  var r = el(id);
+  r.addEventListener('input', function(){ set(+r.value); el(out).textContent = fmt(+r.value); });
+}
+bind('n0', 'vN0', String, function(v){ P.n0 = v; build(); });
+bind('n1', 'vN1', String, function(v){ P.n1 = v; build(); });
+bind('spd', 'vS', function(v){ return (v / 100).toFixed(2); }, function(v){ speed = v / 100; });
+bind('lt', 'vL', function(v){ return v + '°'; }, function(v){ lightAz = v; });
+el('depth').addEventListener('click', function(e){
+  var b = e.target.closest('button'); if(!b) return;
+  [].forEach.call(this.children, function(x){ x.classList.toggle('on', x === b); });
+  P.depth = +b.dataset.d; el('vD').textContent = b.dataset.d; build();
+});
+el('auto').addEventListener('change', function(){ auto = this.checked; });
+el('spir').addEventListener('change', function(){ spiral = this.checked; build(); });
+el('hudHead').addEventListener('click', function(){ el('hud').classList.toggle('closed'); });
+el('reset').addEventListener('click', function(){
+  P.n0 = DEF.n0; P.n1 = DEF.n1; P.depth = DEF.depth;
+  speed = DEF.speed; lightAz = DEF.light; auto = DEF.auto; spiral = DEF.spiral;
+  yaw = 0.6; pitch = 0.24; zoom = 1;
+  el('n0').value = P.n0; el('vN0').textContent = P.n0;
+  el('n1').value = P.n1; el('vN1').textContent = P.n1;
+  el('spd').value = speed * 100; el('vS').textContent = speed.toFixed(2);
+  el('lt').value = lightAz; el('vL').textContent = lightAz + '°';
+  el('auto').checked = auto; el('spir').checked = spiral;
+  el('vD').textContent = P.depth;
+  [].forEach.call(el('depth').children, function(x){ x.classList.toggle('on', +x.dataset.d === P.depth); });
+  build();
+});
+el('png').addEventListener('click', function(){
+  draw();
+  canvas.toBlob(function(b){
+    if(!b) return;
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = 'romanesco.png'; a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); }, 1000);
+  });
+});
+
+if(SMALL) el('hud').classList.add('closed');              // keep the model visible on phones
+el('n0').value = P.n0; el('vN0').textContent = P.n0;
+el('n1').value = P.n1; el('vN1').textContent = P.n1;
+
+addEventListener('resize', resize);
+resize();
+build();
+requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>

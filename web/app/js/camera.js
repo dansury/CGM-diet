@@ -6,8 +6,9 @@
  */
 import { getKV, addRecord, getAll } from './db.js';
 import { recognizeMeal, fileToCompressedDataUrl } from './recognize.js';
-import { bumpDictionaryFromMeal, suggest, draftFromEntry } from './dictionary.js';
+import { bumpDictionaryFromMeal, suggest, draftFromEntry, exampleLabels } from './dictionary.js';
 import { el, showToast, formatTime, round1 } from './utils.js';
+import { showThinking } from './thinking.js';
 import { track, getClientId } from './telemetry.js';
 
 let autoOpenedQuickCamera = false;
@@ -33,9 +34,9 @@ async function renderListView(container) {
         <div class="card" style="margin-bottom:16px; display:flex; justify-content:space-between; align-items:center;">
             <div>
                 <div class="muted" style="font-size:13px;">Сегодня</div>
-                <div style="font-size:22px; font-weight:700;">${Math.round(totalKcal)} ккал</div>
+                <div class="display" style="font-size:26px;">${Math.round(totalKcal)} ккал</div>
             </div>
-            <button class="btn btn-primary" id="add-meal-btn">📷 Записать еду</button>
+            <button class="btn btn-primary" id="add-meal-btn">Записать еду</button>
         </div>
     `));
 
@@ -68,9 +69,9 @@ function renderQuickLogRow() {
         <div class="card" style="margin-bottom:16px;">
             <div class="section-title" style="margin-top:0;">Быстрая запись</div>
             <div class="onb-choice-row">
-                <button class="btn btn-secondary" data-quick="glucose">🩸 Сахар</button>
-                <button class="btn btn-secondary" data-quick="weight">⚖️ Вес</button>
-                <button class="btn btn-secondary" data-quick="wellbeing">🙂 Самочувствие</button>
+                <button class="btn btn-secondary" data-quick="glucose">Сахар</button>
+                <button class="btn btn-secondary" data-quick="weight">Вес</button>
+                <button class="btn btn-secondary" data-quick="wellbeing">Самочувствие</button>
             </div>
             <div id="quick-log-body"></div>
         </div>
@@ -128,30 +129,29 @@ function quickWellbeingForm() {
     return wrap;
 }
 
-async function renderCaptureView(container) {
+async function renderCaptureView(container, prefill = '') {
     container.innerHTML = '';
     const wrap = el(`
         <div>
             <button class="btn btn-secondary" id="capture-back">← Назад</button>
             <div class="capture-actions">
-                <div>
-                    <input type="text" class="onb-input" id="capture-quick-input" placeholder="Начните вводить название — «овсянка»…" autocomplete="off">
+                <div id="capture-quick" hidden>
+                    <input type="text" class="onb-input" id="capture-quick-input" autocomplete="off">
                     <div class="dict-suggestions" id="capture-quick-suggestions"></div>
                 </div>
                 <input type="file" accept="image/*" capture="environment" id="capture-camera-input" hidden>
                 <input type="file" accept="image/*" id="capture-upload-input" hidden>
-                <button class="btn btn-primary" id="capture-camera-btn">📷 Сфотографировать</button>
-                <button class="btn btn-secondary" id="capture-upload-btn">🖼 Загрузить фото</button>
-                <textarea class="capture-textarea" id="capture-text" placeholder="Или опишите текстом: «овсянка 200 г с ягодами»"></textarea>
-                <button class="btn btn-primary" id="capture-text-btn">Распознать текст</button>
+                <button class="btn btn-primary" id="capture-camera-btn">Сфотографировать</button>
+                <button class="btn btn-secondary" id="capture-upload-btn">Загрузить фото</button>
+                <textarea class="capture-textarea" id="capture-text" placeholder="Или опишите текстом: «овсянка 200 г с ягодами»">${escapeHtml(prefill)}</textarea>
+                <button class="btn btn-secondary" id="capture-text-btn">Распознать текст</button>
             </div>
-            <div id="capture-preview-area"></div>
         </div>
     `);
     container.appendChild(wrap);
 
     wrap.querySelector('#capture-back').addEventListener('click', () => renderListView(container));
-    wireQuickDictionaryInput(wrap, container);
+    await wireQuickDictionaryInput(wrap, container);
 
     const cameraInput = wrap.querySelector('#capture-camera-input');
     const uploadInput = wrap.querySelector('#capture-upload-input');
@@ -160,15 +160,17 @@ async function renderCaptureView(container) {
 
     const handleFile = async (file) => {
         if (!file) return;
-        const previewArea = wrap.querySelector('#capture-preview-area');
-        previewArea.innerHTML = '<div class="empty-hint">Распознаём…</div>';
+        const text = wrap.querySelector('#capture-text').value.trim();
+        const waiting = showThinking(container);
         try {
             const dataUrl = await fileToCompressedDataUrl(file);
-            const text = wrap.querySelector('#capture-text').value.trim();
             const draft = await recognizeMeal({ photoDataUrl: dataUrl, text }, getClientId());
+            waiting.destroy();
             renderDraftView(container, draft);
         } catch (e) {
-            previewArea.innerHTML = `<div class="empty-hint">Не получилось распознать: ${escapeHtml(e.message)}</div>`;
+            waiting.destroy();
+            showToast('Не получилось распознать: ' + e.message);
+            renderCaptureView(container, text);
         }
     };
     cameraInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
@@ -177,20 +179,33 @@ async function renderCaptureView(container) {
     wrap.querySelector('#capture-text-btn').addEventListener('click', async () => {
         const text = wrap.querySelector('#capture-text').value.trim();
         if (!text) { showToast('Введите описание'); return; }
-        const previewArea = wrap.querySelector('#capture-preview-area');
-        previewArea.innerHTML = '<div class="empty-hint">Распознаём…</div>';
+        const waiting = showThinking(container);
         try {
             const draft = await recognizeMeal({ text }, getClientId());
+            waiting.destroy();
             renderDraftView(container, draft);
         } catch (e) {
-            previewArea.innerHTML = `<div class="empty-hint">Не получилось распознать: ${escapeHtml(e.message)}</div>`;
+            waiting.destroy();
+            showToast('Не получилось распознать: ' + e.message);
+            renderCaptureView(container, text);
         }
     });
 }
 
-function wireQuickDictionaryInput(wrap, container) {
+/**
+ * Quick dictionary input. Promising suggestions to someone whose dictionary is
+ * still empty is a lie, so the field appears only once there is something to
+ * suggest — and the placeholder shows one of the user's own names, not a made-up
+ * «овсянка» (spec/web.md § Словарь, spec/bot.md § Примеры в подсказках).
+ */
+async function wireQuickDictionaryInput(wrap, container) {
+    const examples = await exampleLabels({ limit: 1 });
+    if (examples.length === 0) return;
+    const block = wrap.querySelector('#capture-quick');
     const input = wrap.querySelector('#capture-quick-input');
     const box = wrap.querySelector('#capture-quick-suggestions');
+    input.placeholder = `Начните вводить название — «${examples[0]}»…`;
+    block.hidden = false;
     let debounceTimer = null;
 
     input.addEventListener('input', () => {
@@ -202,7 +217,7 @@ function wireQuickDictionaryInput(wrap, container) {
             for (const entry of matches) {
                 const row = el(`
                     <div class="dict-suggestion">
-                        <span>⭐️ ${escapeHtml(entry.label)}</span>
+                        <span>${escapeHtml(entry.label)}</span>
                         <span class="muted">${entry.hits}×</span>
                     </div>
                 `);
@@ -235,7 +250,7 @@ function renderDraftView(container, draft) {
             <div id="draft-items"></div>
             <div class="draft-total"><span>Итого</span><span id="draft-total-kcal"></span></div>
             <div style="display:flex; gap:12px; margin-top:20px;">
-                <button class="btn btn-primary" id="draft-save" style="flex:1;">✅ Записать</button>
+                <button class="btn btn-primary" id="draft-save" style="flex:1;">Записать</button>
             </div>
         </div>
     `);
@@ -287,7 +302,7 @@ function renderDraftView(container, draft) {
         await addRecord('meals', meal);
         await bumpDictionaryFromMeal(meal);
         track('meal_saved', { itemCount: finalItems.length });
-        showToast('Записано ✅');
+        showToast('Записано');
         location.hash = '#/home';
     });
 }

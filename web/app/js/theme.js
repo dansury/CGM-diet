@@ -16,6 +16,7 @@ export function applyTheme(mode) {
     } else {
         root.removeAttribute('data-theme');
     }
+    if (window.romanescoBg) window.romanescoBg.refresh();
 }
 
 export async function setTheme(mode) {

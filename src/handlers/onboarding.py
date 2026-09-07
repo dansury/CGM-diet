@@ -24,6 +24,7 @@ from src.handlers.features import menu_of
 from src.handlers.states import OnboardingFlow
 from src.keyboards import (
     MENU_ROWS,
+    ONB_NOOP,
     onboarding_meals_picker,
     onboarding_pregnancy_picker,
     onboarding_sex_picker,
@@ -184,6 +185,12 @@ async def on_skip(callback: CallbackQuery, state: FSMContext) -> None:
     await _ask_next(callback.message, state)
 
 
+@router.callback_query(F.data == ONB_NOOP)
+async def on_answered_option(callback: CallbackQuery) -> None:
+    """Отмеченная клавиатура анкеты — только показывает ответ, ничего не делает."""
+    await callback.answer()
+
+
 @router.callback_query(F.data.startswith("onb:sex:"), OnboardingFlow.asking)
 async def on_sex(callback: CallbackQuery, state: FSMContext) -> None:
     sex = callback.data.split(":")[2]
@@ -191,7 +198,7 @@ async def on_sex(callback: CallbackQuery, state: FSMContext) -> None:
         user = await repo.get_or_create_user(session, callback.from_user.id)
         await repo.upsert_body_profile(session, user, sex=sex)
     await callback.answer("Записал")
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.edit_reply_markup(reply_markup=onboarding_sex_picker(current=sex))
     if sex == "f":
         data = await state.get_data()
         queue = list(data.get(QUEUE_KEY) or [])
@@ -207,7 +214,9 @@ async def on_pregnant(callback: CallbackQuery, state: FSMContext) -> None:
         user = await repo.get_or_create_user(session, callback.from_user.id)
         await repo.upsert_body_profile(session, user, pregnant=pregnant)
     await callback.answer("Записал")
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.edit_reply_markup(
+        reply_markup=onboarding_pregnancy_picker(current=pregnant)
+    )
     await _ask_next(callback.message, state)
 
 
@@ -218,7 +227,7 @@ async def on_meals(callback: CallbackQuery, state: FSMContext) -> None:
         user = await repo.get_or_create_user(session, callback.from_user.id)
         user.meals_per_day = count
     await callback.answer("Записал")
-    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.edit_reply_markup(reply_markup=onboarding_meals_picker(current=count))
     await _ask_next(callback.message, state)
 
 

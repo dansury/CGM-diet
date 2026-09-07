@@ -27,7 +27,7 @@
 | [spec/errors.md](spec/errors.md) | отчёты об ошибках: админу подробно, пользователю коротко | `src/errors_report.py`, `src/handlers/errors.py`, `src/logging_setup.py` |
 | [spec/models.md](spec/models.md) | выбор модели владельцем, свободные модели, фолбэк 429 | `src/llm/{model_selection,free_catalog,fallback}.py`, `src/handlers/admin.py` |
 | [spec/clinical.md](spec/clinical.md) | что можно и чего нельзя говорить пользователю | `src/reporting.py` |
-| [spec/web.md](spec/web.md) | лендинг, PWA, админка, деплой на PHP-хостинг простым копированием | `web/*` |
+| [spec/web.md](spec/web.md) | лендинг, PWA, админка, визуальный язык (романеско), деплой на PHP-хостинг простым копированием | `web/*`, `scripts/gen_app_icons.py` |
 
 ## Другие документы
 

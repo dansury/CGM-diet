@@ -1,0 +1,10 @@
+# Deny direct web access to storage and PHP library code — only web/api/*.php,
+# web/admin/*.php, web/index.php and web/app/* are meant to be requested directly.
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(data|lib)/ - [F,L]
+</IfModule>
+
+<FilesMatch "\.(db|db-wal|db-shm|json|log)$">
+    Require all denied
+</FilesMatch>

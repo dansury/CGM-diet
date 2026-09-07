@@ -15,3 +15,11 @@ build/
 dist/
 /charts/
 .DS_Store
+
+# graphify local-only artifacts (cache, manifest, labels) — graph.json and GRAPH_REPORT.md are committed
+graphify-out/cache/
+graphify-out/manifest.json
+graphify-out/.graphify_labels.json
+graphify-out/.graphify_root
+graphify-out/cost.json
+graphify-out/graph.html

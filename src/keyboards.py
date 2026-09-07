@@ -18,6 +18,8 @@ from aiogram.types import (
 from src.analytics.tags import tag_label
 
 CANCEL_DATA = "x:cancel"
+#: «кнопка уже отвечена» — отмеченная клавиатура анкеты ничего не делает
+ONB_NOOP = "onb:noop"
 CANCEL_TEXT = "❌ Отменить"
 
 
@@ -588,39 +590,75 @@ def onboarding_skip() -> InlineKeyboardMarkup:
     )
 
 
-def onboarding_meals_picker() -> InlineKeyboardMarkup:
-    """Сколько раз в день человек обычно ест — вопрос анкеты."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=str(n), callback_data=f"onb:meals:{n}") for n in (2, 3, 4, 5)],
-            [InlineKeyboardButton(text="⏭ Не знаю, посчитай сам", callback_data="onb:skip")],
-        ]
+def picked_label(text: str, *, active: bool) -> str:
+    """Отметка выбранного варианта в одиночном выборе.
+
+    Inline-кнопка сама по себе не «нажатая»: пока клавиатуру не перерисовать,
+    человек не видит, что именно он выбрал (`spec/onboarding.md` § Шаги).
+    """
+    return f"✅ {text}" if active else text
+
+
+def _onboarding_option(text: str, data: str, *, active: bool, answered: bool) -> InlineKeyboardButton:
+    """Кнопка варианта анкеты; в отвеченной клавиатуре она уже не нажимается."""
+    return InlineKeyboardButton(
+        text=picked_label(text, active=active),
+        callback_data=ONB_NOOP if answered else data,
     )
 
 
-def onboarding_sex_picker() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Мужской", callback_data="onb:sex:m"),
-                InlineKeyboardButton(text="Женский", callback_data="onb:sex:f"),
-            ],
-            [InlineKeyboardButton(text="⏭ Пропустить", callback_data="onb:skip")],
-            [cancel_button()],
+def onboarding_meals_picker(*, current: int | None = None) -> InlineKeyboardMarkup:
+    """Сколько раз в день человек обычно ест — вопрос анкеты.
+
+    `current` — уже данный ответ: он отмечается галочкой, а клавиатура
+    перестаёт быть кликабельной, чтобы повторное нажатие не сдвинуло анкету.
+    """
+    from src.analytics.plate import MAX_MEALS_PER_DAY, MIN_MEALS_PER_DAY
+
+    answered = current is not None
+    numbers = list(range(MIN_MEALS_PER_DAY, MAX_MEALS_PER_DAY + 1))
+    rows = [
+        [
+            _onboarding_option(
+                str(n), f"onb:meals:{n}", active=n == current, answered=answered
+            )
+            for n in chunk
         ]
-    )
+        for chunk in (numbers[:4], numbers[4:])
+        if chunk
+    ]
+    if not answered:
+        rows.append([InlineKeyboardButton(text="⏭ Не знаю, посчитай сам", callback_data="onb:skip")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def onboarding_pregnancy_picker() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(text="Да", callback_data="onb:preg:y"),
-                InlineKeyboardButton(text="Нет", callback_data="onb:preg:n"),
-            ],
-            [cancel_button()],
+def onboarding_sex_picker(*, current: str | None = None) -> InlineKeyboardMarkup:
+    """Пол; `current` — уже данный ответ (см. `onboarding_meals_picker`)."""
+    answered = current is not None
+    rows = [
+        [
+            _onboarding_option("Мужской", "onb:sex:m", active=current == "m", answered=answered),
+            _onboarding_option("Женский", "onb:sex:f", active=current == "f", answered=answered),
         ]
-    )
+    ]
+    if not answered:
+        rows.append([InlineKeyboardButton(text="⏭ Пропустить", callback_data="onb:skip")])
+        rows.append([cancel_button()])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def onboarding_pregnancy_picker(*, current: bool | None = None) -> InlineKeyboardMarkup:
+    """Беременность; `current` — уже данный ответ (см. `onboarding_meals_picker`)."""
+    answered = current is not None
+    rows = [
+        [
+            _onboarding_option("Да", "onb:preg:y", active=current is True, answered=answered),
+            _onboarding_option("Нет", "onb:preg:n", active=current is False, answered=answered),
+        ]
+    ]
+    if not answered:
+        rows.append([cancel_button()])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def diabetes_picker() -> InlineKeyboardMarkup:
@@ -774,6 +812,7 @@ __all__ = [
     "MENU_ROWS",
     "KIND_TABS",
     "PIN_BUTTONS_LIMIT",
+    "ONB_NOOP",
     "PIN_LABEL_LIMIT",
     "activity_picker",
     "body_menu",
@@ -802,6 +841,7 @@ __all__ = [
     "onboarding_meals_picker",
     "onboarding_skip",
     "photo_kind",
+    "picked_label",
     "plate_meals_picker",
     "plate_settings",
     "pregnancy_picker",

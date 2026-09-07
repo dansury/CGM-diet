@@ -11,22 +11,55 @@ $pdo = web_db();
 $store = new SettingsStore(WEB_DB_PATH);
 $notice = null;
 
-$LLM_FIELDS = [
-    'LLM_PROVIDER' => 'Провайдер (openrouter | yandex)',
-    'LLM_DEFAULT_MODEL' => 'Модель по умолчанию (short id)',
-    'OPENROUTER_API_KEY' => 'OpenRouter API key',
-    'LLM_VISION_MODEL' => 'Модель для фото (vision)',
-    'YANDEX_API_KEY' => 'Yandex API key',
+// Model / provider settings. Selects are filled from the live catalogue
+// (ModelCatalog), so the operator picks a model instead of typing a slug —
+// same approach as setup.php in site_yacloud_openrouter.
+$LLM_SELECT_KEYS = [
+    'LLM_PROVIDER', 'LLM_PROVIDER_PRIORITY', 'LLM_DEFAULT_MODEL',
+    'LLM_FALLBACK_MODE', 'LLM_VISION_MODEL',
+];
+$LLM_TEXT_FIELDS = [
+    'LLM_FALLBACK_MODELS' => 'Запасные модели (короткие id через запятую, пробуются после выбранной)',
+    'MODEL_CATALOG_TTL_MIN' => 'Срок годности кэша каталога моделей, мин',
     'YANDEX_FOLDER_ID' => 'Yandex folder id',
     'ADMIN_EMAIL' => 'Email администратора (VAPID subject, уведомления)',
+];
+// Keys: an empty field keeps the stored value instead of wiping it.
+$LLM_SECRET_FIELDS = [
+    'OPENROUTER_API_KEY' => 'OpenRouter API key',
+    'YANDEX_API_KEY' => 'Yandex API key',
 ];
 
 if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     $action = $_POST['action'] ?? '';
 
-    if ($action === 'save_llm') {
-        foreach (array_keys($LLM_FIELDS) as $key) {
+    if (isset($_POST['model_catalog'])) {
+        // Keys just typed into the form are saved first — otherwise the
+        // catalogue would be pulled with the previous credentials.
+        foreach (array_keys($LLM_SECRET_FIELDS) as $key) {
+            $value = trim((string) ($_POST[$key] ?? ''));
+            if ($value !== '') $store->setSetting($key, $value);
+        }
+        if ($_POST['model_catalog'] === 'forget') {
+            ModelCatalog::forget($store);
+            $notice = 'Живой каталог забыт — в списках остались вшитые модели';
+        } else {
+            try {
+                $report = ModelCatalog::refresh(require WEB_ROOT . '/lib/vendor/config.php', $store);
+                $notice = 'Каталог обновлён: ' . (int) $report['rows'] . ' моделей'
+                    . ' (OpenRouter: ' . (is_int($report['openrouter']) ? $report['openrouter'] : '⛔ ' . $report['openrouter'])
+                    . ', Yandex: ' . (is_int($report['yandex']) ? $report['yandex'] : '⛔ ' . $report['yandex']) . ')';
+            } catch (Throwable $e) {
+                $notice = 'Каталог моделей не получен: ' . $e->getMessage();
+            }
+        }
+    } elseif ($action === 'save_llm') {
+        foreach (array_merge($LLM_SELECT_KEYS, array_keys($LLM_TEXT_FIELDS)) as $key) {
             if (isset($_POST[$key])) $store->setSetting($key, trim((string) $_POST[$key]));
+        }
+        foreach (array_keys($LLM_SECRET_FIELDS) as $key) {
+            $value = trim((string) ($_POST[$key] ?? ''));
+            if ($value !== '') $store->setSetting($key, $value);
         }
         $notice = 'Сохранено';
     } elseif ($action === 'set_cron_secret') {
@@ -58,8 +91,53 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
     }
 }
 
+// The catalogue refreshes itself when this page is opened and the cache is
+// older than MODEL_CATALOG_TTL_MIN; a network failure only leaves a reason
+// behind, the previous list keeps working.
+ModelCatalog::maybeRefresh(require WEB_ROOT . '/lib/vendor/config.php', $store);
+$cfg = require WEB_ROOT . '/lib/vendor/config.php';
+
 $llmValues = $store->allSettings();
 $webConfig = web_config_all($pdo);
+
+/** Setting → config → '' : what the LLM layer actually uses right now. */
+$eff = static function (string $key) use ($llmValues, $cfg): string {
+    $value = $llmValues[$key] ?? ($cfg[$key] ?? '');
+    return is_scalar($value) ? (string) $value : '';
+};
+
+/** Catalogue rows grouped for <optgroup>, OCR-only models left out. */
+$modelGroups = [];
+foreach ((array) ($cfg['AVAILABLE_MODELS'] ?? []) as $model) {
+    if (empty($model['ocr_only'])) $modelGroups[(string) ($model['group'] ?? 'Модели')][] = $model;
+}
+/** Price hint: RUB per 1k for hardcoded rows, USD per 1M for live ones. */
+$modelPrice = static function (array $m): string {
+    $num = static fn (float $v): string => rtrim(rtrim(number_format($v, 2, '.', ''), '0'), '.');
+    $in = (float) ($m['price_in'] ?? 0);
+    $out = (float) ($m['price_out'] ?? 0);
+    if ($in > 0 || $out > 0) return sprintf(' · ~%s/%s ₽ за 1k', $num($in), $num($out));
+    $usdIn = (float) ($m['price_usd_in'] ?? 0);
+    $usdOut = (float) ($m['price_usd_out'] ?? 0);
+    if ($usdIn > 0 || $usdOut > 0) return sprintf(' · $%s/$%s за 1M', $num($usdIn), $num($usdOut));
+    return !empty($m['free']) ? ' · бесплатно' : '';
+};
+// A value saved earlier can be missing from the catalogue (forgotten cache,
+// model withdrawn). It stays in the list as its own option — otherwise the
+// browser would silently pick the first one and saving would swap the model.
+$modelIds = [];
+$visionIds = [];
+foreach ($modelGroups as $groupRows) {
+    foreach ($groupRows as $m) {
+        $modelIds[] = (string) ($m['id'] ?? '');
+        if (($m['provider'] ?? '') === 'openrouter') $visionIds[] = (string) ($m['full_id'] ?? '');
+    }
+}
+
+$liveRows = ModelCatalog::decode((string) ($cfg['MODEL_CATALOG_MODELS'] ?? ''));
+$liveSynced = (string) ($cfg['MODEL_CATALOG_SYNCED_AT'] ?? '');
+$liveError = (string) ($cfg['MODEL_CATALOG_ERROR'] ?? '');
+$liveTtl = (int) ($cfg['MODEL_CATALOG_TTL_MIN'] ?? ModelCatalog::TTL_MIN);
 
 $sinceWeek = gmdate('Y-m-d\TH:i:s\Z', time() - 7 * 86400);
 
@@ -94,7 +172,7 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
     .card { margin-bottom: 20px; }
     .field { margin-bottom: 10px; }
     .field label { display: block; font-size: 13px; color: var(--fg-muted); margin-bottom: 4px; }
-    .field input { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 14px; }
+    .field input, .field select { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 14px; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     td, th { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
     .notice { background: var(--accent); color: var(--accent-fg); padding: 10px 14px; border-radius: 10px; margin-bottom: 16px; }
@@ -139,13 +217,98 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
     <form method="post" class="card">
         <h2 style="margin-top:0;">Модель / LLM</h2>
         <input type="hidden" name="action" value="save_llm">
-        <?php foreach ($LLM_FIELDS as $key => $label): ?>
+
+        <div class="field">
+            <label>Провайдер по умолчанию</label>
+            <select name="LLM_PROVIDER">
+                <option value="openrouter" <?= $eff('LLM_PROVIDER') === 'openrouter' ? 'selected' : '' ?>>openrouter</option>
+                <option value="yandex" <?= $eff('LLM_PROVIDER') === 'yandex' ? 'selected' : '' ?>>yandex</option>
+            </select>
+        </div>
+        <div class="field">
+            <label>Приоритет провайдеров (второй пробуется, когда первый не ответил)</label>
+            <select name="LLM_PROVIDER_PRIORITY">
+                <option value="openrouter,yandex" <?= $eff('LLM_PROVIDER_PRIORITY') !== 'yandex,openrouter' ? 'selected' : '' ?>>openrouter → yandex</option>
+                <option value="yandex,openrouter" <?= $eff('LLM_PROVIDER_PRIORITY') === 'yandex,openrouter' ? 'selected' : '' ?>>yandex → openrouter</option>
+            </select>
+        </div>
+        <div class="field">
+            <label>Модель по умолчанию — ею же распознаётся фото еды (каталог: вшитый список + то, что отдал провайдер)</label>
+            <select name="LLM_DEFAULT_MODEL">
+                <?php $modelCurrent = $eff('LLM_DEFAULT_MODEL'); ?>
+                <?php if ($modelCurrent !== '' && !in_array($modelCurrent, $modelIds, true)): ?>
+                <option value="<?= htmlspecialchars($modelCurrent) ?>" selected><?= htmlspecialchars($modelCurrent) ?> — нет в каталоге</option>
+                <?php endif; ?>
+                <?php foreach ($modelGroups as $groupName => $groupRows): ?>
+                <optgroup label="<?= htmlspecialchars((string) $groupName) ?>">
+                    <?php foreach ($groupRows as $m): ?>
+                    <option value="<?= htmlspecialchars((string) $m['id']) ?>" <?= $modelCurrent === (string) $m['id'] ? 'selected' : '' ?>>
+                        <?= htmlspecialchars((string) $m['label']) ?> — <?= htmlspecialchars((string) $m['provider']) ?>/<?= htmlspecialchars((string) $m['full_id']) ?><?= htmlspecialchars($modelPrice($m)) ?>
+                    </option>
+                    <?php endforeach; ?>
+                </optgroup>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="field">
+            <label>Vision-модель для PDF/OCR (OpenRouter full_id)</label>
+            <select name="LLM_VISION_MODEL">
+                <?php $visionCurrent = $eff('LLM_VISION_MODEL'); ?>
+                <?php if ($visionCurrent !== '' && !in_array($visionCurrent, $visionIds, true)): ?>
+                <option value="<?= htmlspecialchars($visionCurrent) ?>" selected><?= htmlspecialchars($visionCurrent) ?> — нет в каталоге</option>
+                <?php endif; ?>
+                <?php foreach ($modelGroups as $groupName => $groupRows): ?>
+                    <?php $orRows = array_filter($groupRows, static fn ($m) => ($m['provider'] ?? '') === 'openrouter'); ?>
+                    <?php if (!$orRows) continue; ?>
+                <optgroup label="<?= htmlspecialchars((string) $groupName) ?>">
+                    <?php foreach ($orRows as $m): ?>
+                    <option value="<?= htmlspecialchars((string) $m['full_id']) ?>" <?= $visionCurrent === (string) $m['full_id'] ? 'selected' : '' ?>>
+                        <?= htmlspecialchars((string) $m['label']) ?> — <?= htmlspecialchars((string) $m['full_id']) ?><?= htmlspecialchars($modelPrice($m)) ?>
+                    </option>
+                    <?php endforeach; ?>
+                </optgroup>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="field">
+            <label>Запасная модель: что пробовать после выбранной</label>
+            <select name="LLM_FALLBACK_MODE">
+                <option value="auto" <?= $eff('LLM_FALLBACK_MODE') !== 'manual' ? 'selected' : '' ?>>авто — более новая версия той же модели, затем список</option>
+                <option value="manual" <?= $eff('LLM_FALLBACK_MODE') === 'manual' ? 'selected' : '' ?>>только список ниже</option>
+            </select>
+        </div>
+
+        <p class="muted" style="font-size:13px;">
+            Список тянется прямо у провайдеров (OpenRouter <code>GET /models</code>, Yandex <code>GET /v1/models</code>)
+            и кэшируется в настройках. Обновляется сам при заходе на эту страницу, если кэш старше <?= $liveTtl ?> мин.
+            <?php if ($liveRows): ?>
+            Сейчас живых моделей: <b><?= count($liveRows) ?></b><?= $liveSynced !== '' ? ', обновлено ' . htmlspecialchars($liveSynced) : '' ?>.
+            <?php else: ?>
+            Живого каталога пока нет — в списках только вшитые модели.
+            <?php endif; ?>
+            <?php if ($liveError !== ''): ?>
+            <br>Последняя попытка: <?= htmlspecialchars(mb_substr($liveError, 0, 200)) ?>
+            <?php endif; ?>
+        </p>
+
+        <?php foreach ($LLM_TEXT_FIELDS as $key => $label): ?>
         <div class="field">
             <label><?= htmlspecialchars($label) ?></label>
-            <input type="text" name="<?= $key ?>" value="<?= htmlspecialchars($llmValues[$key] ?? '') ?>">
+            <input type="text" name="<?= $key ?>" value="<?= htmlspecialchars($eff($key)) ?>">
         </div>
         <?php endforeach; ?>
+        <?php foreach ($LLM_SECRET_FIELDS as $key => $label): ?>
+        <div class="field">
+            <label><?= htmlspecialchars($label) ?><?= ($llmValues[$key] ?? '') !== '' ? ' — задан, пустое поле не сотрёт' : '' ?></label>
+            <input type="password" name="<?= $key ?>" autocomplete="new-password" value="">
+        </div>
+        <?php endforeach; ?>
+
         <button class="btn btn-primary" type="submit">Сохранить</button>
+        <button class="btn btn-secondary" type="submit" name="model_catalog" value="refresh" formnovalidate>Обновить каталог моделей</button>
+        <?php if ($liveRows): ?>
+        <button class="btn btn-secondary" type="submit" name="model_catalog" value="forget" formnovalidate>Забыть живой каталог</button>
+        <?php endif; ?>
     </form>
 
     <div class="card">

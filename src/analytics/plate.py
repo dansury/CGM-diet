@@ -57,8 +57,8 @@ SESSION_SAMPLE_LIMIT_MIN = 150
 BURST_GAP_MIN = 10
 
 DEFAULT_MEALS_PER_DAY = 3
-MIN_MEALS_PER_DAY = 2
-MAX_MEALS_PER_DAY = 8
+MIN_MEALS_PER_DAY = 1
+MAX_MEALS_PER_DAY = 7
 #: сколько дней с едой нужно, чтобы оценивать режим по статистике
 MIN_DAYS_FOR_RHYTHM = 5
 #: скользящее окно, по которому меряем фактический режим питания, дней

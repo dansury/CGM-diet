@@ -91,6 +91,12 @@ admin_config     -- таблица settings из vendor/settings_store.php (об
 как в боте; хранится в `profile` (IndexedDB), не отправляется на сервер, пока
 пользователь сам не зарегистрируется (тогда уходит вместе с `backups`).
 
+Одиночный выбор (`пол`, `беременность`, `приёмы пищи`) — `choiceRow(options)`:
+нажатая кнопка получает класс `selected` (стиль `.btn.selected` в
+`app/css/app.css`), остальные его теряют. Приёмов пищи — `MIN_MEALS_PER_DAY=1`
+… `MAX_MEALS_PER_DAY=7`, те же границы, что у бота
+(`src/analytics/plate.py`, `spec/plate.md` § Сколько приёмов пищи в день).
+
 ## Распознавание еды (`js/recognize.js` → `api/recognize.php`)
 
 1. Клиент получает фото (камера/загрузка) или текст, **не сохраняя фото
@@ -112,7 +118,13 @@ admin_config     -- таблица settings из vendor/settings_store.php (об
 Живой автокомплит: после 2 введённых символов — фильтр `dictionary` из
 IndexedDB по `label` (префикс, затем подстрока), ротация та же, что у бота
 (`spec/dictionary.md` § Ротация): `pinned desc, lastUsedAt desc, hits desc`.
-Выбор подсказки заполняет карточку без обращения к модели. У каждой
+Выбор подсказки заполняет карточку без обращения к модели.
+`exampleLabels({kinds:["item","meal"], limit})` — названия для примеров в
+подсказках, аналог `repo.example_labels` бота (`spec/bot.md` § Примеры в
+подсказках): те же виды, пороги и ротация. Поле быстрого ввода на экране
+съёмки показывается **только если список непустой**, и placeholder берёт из
+него имя («Начните вводить название — «сырники»…»): обещать подсказки пустому
+словарю и звать вымышленной «овсянкой» нечестно. У каждой
 подсказки — редактируемое поле веса (граммы), меняющее БЖУК пропорционально
 (масштаб от `grams`, как `nutrition.apply_memory` у бота). Порог показа в
 словаре — тот же `MIN_HITS` (`meal`/`item`: 2, `product`: 1).
@@ -192,12 +204,40 @@ environment>` либо `getUserMedia`, результат конвертируе
 
 Доступна только по пути `/admin`, гейт — пароль (`ADMIN_PASSWORD` из
 `admin_config`/ENV, `password_hash`/`password_verify`, сессия). Разделы:
-переменные (`OPENROUTER_API_KEY`, `LLM_DEFAULT_MODEL`, VAPID-ключи,
-`ADMIN_PASSWORD`, `CRON_SECRET`, …) — форма поверх `SettingsStore`
-(`web/lib/vendor/settings_store.php`, та же таблица `settings`, что у
-`site_yacloud_openrouter`); статистика — счётчики телеметрии (визиты, UTM,
-использование функций, доставленные/кликнутые пуши), список
-зарегистрированных пользователей (без паролей).
+переменные — форма поверх `SettingsStore` (`web/lib/vendor/settings_store.php`,
+та же таблица `settings`, что у `site_yacloud_openrouter`); статистика —
+счётчики телеметрии (визиты, UTM, использование функций,
+доставленные/кликнутые пуши), список зарегистрированных пользователей
+(без паролей).
+
+### Модель / LLM
+
+Слаг модели руками не набирают — выпадающие списки собираются из
+`config.AVAILABLE_MODELS` (вшитый список + живой каталог провайдеров,
+`ModelCatalog`), как в `setup.php` у `site_yacloud_openrouter`:
+
+```
+LLM_PROVIDER            select  openrouter | yandex
+LLM_PROVIDER_PRIORITY   select  openrouter,yandex | yandex,openrouter
+LLM_DEFAULT_MODEL       select  <optgroup group> по id; ею же распознаётся фото
+LLM_VISION_MODEL        select  только openrouter-строки, по full_id; PDF/OCR
+LLM_FALLBACK_MODE       select  auto (новее той же модели) | manual
+LLM_FALLBACK_MODELS     text    короткие id через запятую
+MODEL_CATALOG_TTL_MIN   text    срок годности кэша каталога, мин
+OPENROUTER_API_KEY      password  пустое поле не стирает сохранённый ключ
+YANDEX_API_KEY          password  то же
+```
+
+Каждый вариант подписан ценой: вшитые строки — ₽ за 1k, живые — $ за 1M
+(так их отдаёт провайдер, курс не выдумывается). Сохранённое значение,
+которого нет в каталоге, остаётся в списке отдельной строкой «нет в каталоге»
+— иначе браузер выбрал бы первую и сохранение молча сменило бы модель.
+
+Каталог обновляется сам при заходе на страницу, если кэш старше
+`MODEL_CATALOG_TTL_MIN` (`ModelCatalog::maybeRefresh`); кнопки «Обновить
+каталог моделей» / «Забыть живой каталог» (`POST model_catalog=refresh|forget`)
+делают это вручную. Сеть недоступна — страница не ломается: остаётся прежний
+кэш, причина показана под списками.
 
 ## Паритет tg/web
 

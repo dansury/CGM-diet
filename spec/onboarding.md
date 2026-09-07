@@ -30,7 +30,8 @@ STEPS = focus, age, height, weight, sex, conditions, meals, goal
 onb:skip              # пропустить текущий шаг
 onb:sex:<m|f>
 onb:preg:<y|n>
-onb:meals:<2|3|4|5>   # сколько раз в день человек ест -> users.meals_per_day
+onb:meals:<1..7>      # сколько раз в день человек ест -> users.meals_per_day
+onb:noop              # кнопка уже отвеченной клавиатуры — ничего не делает
 gl:pick:<key>         # цель отмечена/снята (множественный выбор)
 gl:other              # «Свой вариант» -> GoalsFlow.note
 gl:done               # сохранить выбор и идти дальше
@@ -72,7 +73,7 @@ gl:done               # сохранить выбор и идти дальше
 | `sex` | кнопки `onb:sex:<m|f>` | `body_profile.sex`; `f` → доп. вопрос `pregnant` |
 | `pregnant` | кнопки `onb:preg:<y|n>` | `body_profile.pregnant` |
 | `conditions` | свободный текст | `body_profile.conditions` (`body.normalize_conditions`: «нет»/пусто → `None`) |
-| `meals` | кнопки `onb:meals:<2..5>` или число 2–8 текстом; пропуск = по статистике | `users.meals_per_day` — та же настройка, что и `/set meals` (`spec/plate.md` § Сколько приёмов пищи в день) |
+| `meals` | кнопки `onb:meals:<1..7>` или число 1–7 текстом; пропуск = по статистике | `users.meals_per_day` — та же настройка, что и `/set meals` (`spec/plate.md` § Сколько приёмов пищи в день) |
 | `goal` | число (целевой вес) | `body.offer_goal` — та же цепочка `bd:rate:*` / `_save_goal`, что и в `/body`; сама завершает анкету |
 
 `goal` в очереди остаётся, только если `goals.wants_weight_goal(focus)` —
@@ -88,9 +89,20 @@ gl:done               # сохранить выбор и идти дальше
 
 ```
 onboarding_skip()               # «⏭ Пропустить» + общий крестик
-onboarding_sex_picker()         # мужской/женский + пропустить + крестик
-onboarding_pregnancy_picker()   # да/нет + крестик
-onboarding_meals_picker()       # 2/3/4/5 + «не знаю, посчитай сам» (= onb:skip)
+onboarding_sex_picker(current=None)       # мужской/женский + пропустить + крестик
+onboarding_pregnancy_picker(current=None) # да/нет + крестик
+onboarding_meals_picker(current=None)     # 1..7 (рядами 4+3)
+                                          # + «не знаю, посчитай сам» (= onb:skip)
+picked_label(text, active) -> str         # «✅ <text>» для выбранного варианта
+```
+
+`current` — уже данный ответ. После нажатия клавиатура не убирается, а
+перерисовывается с `current`: выбранный вариант получает ✅, «Пропустить» и
+крестик уходят, все кнопки переводятся на `onb:noop` (обработчик только
+закрывает «часики»). Иначе человек не видит, что именно он выбрал, а повторное
+нажатие сдвигало бы анкету на шаг вперёд второй раз.
+
+```
 focus_picker(selected, skippable?)  # цели: ☑️/▫️ + «Свой вариант» + «Готово»
                                     # + «Пропустить» (анкета) либо крестик (/body)
 ```

@@ -18,6 +18,10 @@ const GOALS = [
     ['sport', 'Улучшить результаты в спорте'],
 ];
 
+// Meals per day — same bounds as the bot (src/analytics/plate.py).
+export const MIN_MEALS_PER_DAY = 1;
+export const MAX_MEALS_PER_DAY = 7;
+
 const DIABETES = [
     ['t1', 'Диабет 1 типа'],
     ['t2', 'Диабет 2 типа'],
@@ -109,38 +113,32 @@ async function stepWeight(container, profile) {
     await stepNumber(container, profile, 'weightKg', 'Сколько вы весите, кг?', 25, 400);
 }
 
+/** Single-choice row: exactly one button stays highlighted (.selected). */
+function choiceRow(options) {
+    const body = el('<div class="onb-choice-row"></div>');
+    const state = { picked: null };
+    for (const [value, label] of options) {
+        const btn = el(`<button type="button" class="btn btn-secondary">${label}</button>`);
+        btn.addEventListener('click', () => {
+            state.picked = value;
+            body.querySelectorAll('button').forEach((x) => x.classList.remove('selected'));
+            btn.classList.add('selected');
+        });
+        body.appendChild(btn);
+    }
+    return { body, getValue: () => state.picked };
+}
+
 async function stepSex(container, profile) {
-    const body = el(`
-        <div class="onb-choice-row">
-            <button type="button" class="btn btn-secondary" data-v="m">Мужской</button>
-            <button type="button" class="btn btn-secondary" data-v="f">Женский</button>
-        </div>
-    `);
-    let picked = null;
-    body.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
-        picked = b.dataset.v;
-        body.querySelectorAll('button').forEach((x) => x.classList.remove('selected'));
-        b.classList.add('selected');
-    }));
-    const value = await waitForStep(container, 'Ваш пол', body, { getValue: () => picked });
+    const { body, getValue } = choiceRow([['m', 'Мужской'], ['f', 'Женский']]);
+    const value = await waitForStep(container, 'Ваш пол', body, { getValue });
     profile.sex = value;
     track('onboarding_step', { step: 'sex', skipped: value === null });
 }
 
 async function stepPregnant(container, profile) {
-    const body = el(`
-        <div class="onb-choice-row">
-            <button type="button" class="btn btn-secondary" data-v="y">Да</button>
-            <button type="button" class="btn btn-secondary" data-v="n">Нет</button>
-        </div>
-    `);
-    let picked = null;
-    body.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => {
-        picked = b.dataset.v;
-        body.querySelectorAll('button').forEach((x) => x.classList.remove('selected'));
-        b.classList.add('selected');
-    }));
-    const value = await waitForStep(container, 'Вы беременны?', body, { getValue: () => picked });
+    const { body, getValue } = choiceRow([['y', 'Да'], ['n', 'Нет']]);
+    const value = await waitForStep(container, 'Вы беременны?', body, { getValue });
     profile.pregnant = value === 'y';
     track('onboarding_step', { step: 'pregnant', skipped: value === null });
 }
@@ -158,18 +156,10 @@ async function stepConditions(container, profile) {
 }
 
 async function stepMeals(container, profile) {
-    const body = el('<div class="onb-choice-row"></div>');
-    let picked = null;
-    for (const n of [2, 3, 4, 5]) {
-        const btn = el(`<button type="button" class="btn btn-secondary" data-v="${n}">${n}</button>`);
-        btn.addEventListener('click', () => {
-            picked = n;
-            body.querySelectorAll('button').forEach((x) => x.classList.remove('selected'));
-            btn.classList.add('selected');
-        });
-        body.appendChild(btn);
-    }
-    const value = await waitForStep(container, 'Сколько раз в день вы обычно едите?', body, { getValue: () => picked });
+    const counts = [];
+    for (let n = MIN_MEALS_PER_DAY; n <= MAX_MEALS_PER_DAY; n++) counts.push([n, String(n)]);
+    const { body, getValue } = choiceRow(counts);
+    const value = await waitForStep(container, 'Сколько раз в день вы обычно едите?', body, { getValue });
     profile.mealsPerDay = value;
     track('onboarding_step', { step: 'meals', skipped: value === null });
 }

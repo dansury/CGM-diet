@@ -140,6 +140,9 @@ nav.tabbar button.active::before {
 .onb-goal-btn:hover { border-color: var(--accent); }
 .onb-goal-btn.selected { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 .onb-choice-row { display: flex; gap: var(--s2); flex-wrap: wrap; }
+/* Picked .btn — single-choice rows (пол, беременность, приёмы пищи) and the
+   dictionary tabs. Without this .selected styled only the pill goals. */
+.btn.selected { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
 /* ---------- capture ---------- */
 

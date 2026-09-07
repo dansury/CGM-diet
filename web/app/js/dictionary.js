@@ -69,6 +69,21 @@ export async function suggest(prefix, { kinds = ['meal', 'item', 'product'], lim
     return [...startsWith.sort(rotationSort), ...contains.sort(rotationSort)].slice(0, limit);
 }
 
+/**
+ * Names for hint examples — the bot's `repo.example_labels` (spec/bot.md
+ * § Примеры в подсказках): same kinds, same thresholds, same rotation.
+ * Empty list means the dictionary has nothing to offer yet, and the hint
+ * that promises suggestions must not be shown at all.
+ */
+export async function exampleLabels({ kinds = ['item', 'meal'], limit = 5 } = {}) {
+    const all = await getAll('dictionary', { sortBy: 'id', desc: false });
+    return all
+        .filter((e) => kinds.includes(e.kind) && (e.pinned || (e.hits || 0) >= (MIN_HITS[e.kind] || 1)))
+        .sort(rotationSort)
+        .slice(0, limit)
+        .map((e) => e.label);
+}
+
 export async function pinEntry(id) {
     const all = await getAll('dictionary', { sortBy: 'id', desc: false });
     const entry = all.find((e) => e.id === id);

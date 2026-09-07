@@ -96,6 +96,7 @@ feat:ok:<key>|no:<key>|show:<key>|close
 bd:menu|profile|weight|goal|chart|close | bd:field:<name> | bd:sex:<m|f>
 bd:act:<level> | bd:rate:<кг/нед ×100> | bd:save|bd:drop | bd:preg:<y|n>
 onb:skip | onb:sex:<m|f> | onb:preg:<y|n>   # анкета при первом запуске
+onb:meals:<1..7> | onb:noop                 # приёмы пищи; отвеченная клавиатура
 gl:pick:<key> | gl:other | gl:done          # цели — `spec/onboarding.md`
 wo:ok|edit|time|hr|drop | wo:dur:<мин|other> | wo:int:<low|moderate|high>
 wo:sweat:<yes|light|no>

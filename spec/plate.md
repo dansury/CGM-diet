@@ -41,7 +41,7 @@ count_meals_today(history, day_start, window_min)->int   # приёмов пищ
 ```
 
 Константы: `DEFAULT_SESSION_MIN=60`, `DEFAULT_MEALS_PER_DAY=3`,
-`MIN/MAX_MEALS_PER_DAY=2/8`, `MIN_DAYS_FOR_RHYTHM=5`, `RHYTHM_WINDOW_DAYS=5`,
+`MIN/MAX_MEALS_PER_DAY=1/7`, `MIN_DAYS_FOR_RHYTHM=5`, `RHYTHM_WINDOW_DAYS=5`,
 `BURST_GAP_MIN=10`, `DEFAULT_MEAL_MASS_G=500`, `FALLBACK_PORTION_G=100`,
 `MIN_GAP_G=30`, `CORE_CATEGORIES=(veg, fruit, grain, protein, refined)`,
 `MEAL_MIN_CORE_G=200`, `BALANCED_SCORE=80`.

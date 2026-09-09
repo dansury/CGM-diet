@@ -381,6 +381,18 @@ final class LLM {
         ];
     }
 
+    /**
+     * gpt://<folder>/<full_id>/<version> — the address every Yandex model takes,
+     * gpt-oss included: the version segment is how the provider resolves the
+     * model. `full_id` is stored without it, so «latest» is added here unless the
+     * operator typed his own version («yandexgpt/rc», «yandexgpt/deprecated»).
+     */
+    private static function yandexModelUri(string $folder, string $fullId): string {
+        $fullId = trim($fullId, " /");
+        if (!preg_match('~/(latest|rc|deprecated)$~', $fullId)) $fullId .= '/latest';
+        return 'gpt://' . $folder . '/' . $fullId;
+    }
+
     /** Build a configured cURL handle for the active provider/model (no curl_exec). */
     private static function buildCurl(array $modelRow, array $messages, float $temp, bool $jsonMode, array $extra) {
         $cfg = self::cfg();
@@ -391,7 +403,7 @@ final class LLM {
             if ($folder === '' || empty($cfg['YANDEX_API_KEY'])) {
                 throw new RuntimeException('Yandex LLM not configured (YANDEX_API_KEY / YANDEX_FOLDER_ID empty)');
             }
-            $modelStr = 'gpt://' . $folder . '/' . $modelRow['full_id'] . '/latest';
+            $modelStr = self::yandexModelUri($folder, (string) $modelRow['full_id']);
             $headers = [
                 'Authorization: Api-Key ' . $cfg['YANDEX_API_KEY'],
                 'x-folder-id: ' . $folder,
@@ -565,7 +577,7 @@ final class LLM {
             if ($folder === '' || empty($cfg['YANDEX_API_KEY'])) {
                 throw new RuntimeException('Yandex LLM not configured (YANDEX_API_KEY / YANDEX_FOLDER_ID empty)');
             }
-            $modelStr = 'gpt://' . $folder . '/' . $modelRow['full_id'] . '/latest';
+            $modelStr = self::yandexModelUri($folder, (string) $modelRow['full_id']);
             $headers = [
                 'Authorization: Api-Key ' . $cfg['YANDEX_API_KEY'],
                 'x-folder-id: ' . $folder,

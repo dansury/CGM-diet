@@ -18,7 +18,7 @@ Last synced from `site_yacloud_openrouter` commit: (see the CGM-diet commit
 that introduced `web/` for the paired site_yacloud_openrouter commit hash —
 this file is updated on every re-sync).
 
-Sync commit: 6548c9a (`site_yacloud_openrouter`, branch
+Sync commit: 32614c3 (`site_yacloud_openrouter`, branch
 `claude/cgm-yandex-api-logging-tg0mip`) — the whole candidate chain in every
 LLM failure (`lastTrace` / `traceText`), endpoint + model string in the HTTP
 error, blind per-provider fallbacks skipped when the provider's live catalogue

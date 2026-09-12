@@ -49,6 +49,15 @@ try {
     $status = 'error';
     $result = null;
     $errorMessage = $e->getMessage();
+    // Everything the admin log needs to explain the failure on its own: what
+    // was sent, which candidates were tried and how the layer was configured.
+    DiagLog::error('recognize', 'Распознавание не удалось: ' . $errorMessage, [
+        'input'      => $photoDataUrl !== null ? 'фото + текст (' . mb_strlen($text) . ' симв.)' : 'только текст (' . mb_strlen($text) . ' симв.)',
+        'photo_kb'   => $photoDataUrl !== null ? (int) (strlen($photoDataUrl) * 3 / 4 / 1024) : 0,
+        'client'     => $clientId,
+        'attempts'   => LLM::lastTrace(),
+        'config'     => LLM::configSummary(),
+    ]);
 }
 $latencyMs = (int) ((microtime(true) - $t0) * 1000);
 
@@ -67,6 +76,7 @@ try {
 }
 
 if ($status === 'error') {
+    // The user gets the short reason; the whole candidate chain is in the log.
     json_error('recognition failed: ' . ($errorMessage ?? 'unknown error'), 502);
 }
 

@@ -12,13 +12,18 @@ re-copied here verbatim. Do not edit these files directly in `CGM-diet` —
 edit upstream and re-sync.
 
 Vendored files: `llm.php`, `config.php`, `settings_store.php`,
-`model_catalog.php`.
+`model_catalog.php`, `diag_log.php`.
 
 Last synced from `site_yacloud_openrouter` commit: (see the CGM-diet commit
 that introduced `web/` for the paired site_yacloud_openrouter commit hash —
 this file is updated on every re-sync).
 
-Sync commit: 5f277e5 (`site_yacloud_openrouter` `main`) — pulls in the
-`yandexModelUri()` fix: the `/latest` version suffix is now added only when
-the operator's `full_id` doesn't already end in `/latest`, `/rc` or
-`/deprecated`, instead of being appended unconditionally.
+Sync commit: 6548c9a (`site_yacloud_openrouter`, branch
+`claude/cgm-yandex-api-logging-tg0mip`) — the whole candidate chain in every
+LLM failure (`lastTrace` / `traceText`), endpoint + model string in the HTTP
+error, blind per-provider fallbacks skipped when the provider's live catalogue
+does not list them, `vision` flags on catalogue rows with `LLM_VISION_MODEL`
+accepting `"<provider>:<slug>"` (Yandex multimodal models included),
+`LLM::probe()` self-test, and the new `diag_log.php`. It also carries the
+earlier local-only `yandexModelUri()` / `visionJson()` work back upstream,
+where it belonged from the start.

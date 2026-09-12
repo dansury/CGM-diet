@@ -6,6 +6,9 @@ venv/
 .env.*
 !.env.example
 data/
+# persistent web data dir: lives next to the deploy root so a redeploy
+# cannot wipe API keys and model settings (web/api/_bootstrap.php)
+cgm-diet-data/
 *.db
 *.sqlite3
 .pytest_cache/

@@ -5,7 +5,8 @@
 Источники: `web/index.php` (лендинг) → `web/app/` (сам PWA) → `web/admin/`
 (закрытая админка) → `web/api/*.php` (бэкенд) → `web/lib/` (общий код).
 
-LLM-слой (`llm.php`, `config.php`, `settings_store.php`, `model_catalog.php`)
+LLM-слой (`llm.php`, `config.php`, `settings_store.php`, `model_catalog.php`,
+`diag_log.php`)
 **не форкается**: канонический источник — репозиторий `site_yacloud_openrouter`
 (его `spec.md` § Provenance). `web/lib/vendor/` — зеркало этих файлов на момент
 последней синхронизации (см. `web/lib/vendor/VENDORED_FROM.md`); правки идут
@@ -34,9 +35,11 @@ web/
   lib/
     db.php                  PDO SQLite, схема + миграции (CREATE TABLE IF NOT EXISTS)
     webpush.php             VAPID JWT (ES256) + шифрование aes128gcm (RFC 8291/8292)
-    vendor/                 зеркало site_yacloud_openrouter (llm.php, config.php, …)
+    vendor/                 зеркало site_yacloud_openrouter (llm.php, config.php,
+                            model_catalog.php, settings_store.php, diag_log.php)
   .htaccess                 запрет доступа к data/ и lib/
-  data/                     app.db (SQLite), гитигнор
+  data/                     legacy-расположение app.db; используется, только если
+                            каталог рядом с корнем деплоя недоступен на запись
   README.md                 инструкция по деплою
 ```
 
@@ -67,6 +70,23 @@ settings     theme(auto|light|dark) quickCamera:bool remindersEnabled:bool
 «Очистить мои данные» (`settings.js`) — `indexedDB.deleteDatabase` + очистка
 `localStorage`, необратимо, без подтверждения сервером.
 
+### Где лежит база (`web/api/_bootstrap.php`)
+
+Деплой перезаливает содержимое `web/`, поэтому база внутри него уносит с собой
+ключи и порядок моделей. Путь выбирается в этом порядке:
+
+1. `WEB_DB_PATH` — полный путь к файлу (ENV, для существующих установок);
+2. `WEB_DATA_DIR` — каталог (ENV);
+3. `<родитель корня деплоя>/cgm-diet-data` — создаётся сам, если родитель
+   доступен на запись; **основной путь**, переживает заливку;
+4. `web/data` — последняя надежда.
+
+`WEB_DATA_PERSISTENT` — константа «база вне каталога деплоя»; админка на ней
+показывает либо «настройки переживут обновление», либо предупреждение и что
+сделать. При первом запросе после обновления, если по новому пути базы ещё нет,
+а `web/data/app.db` существует, он копируется — установка с уже сохранёнными
+ключами не начинает с нуля.
+
 ### На сервере (SQLite, `web/lib/db.php`)
 
 ```
@@ -77,6 +97,8 @@ telemetry_events id client_id user_id? kind payload(JSON) utm_source utm_medium
 push_subscriptions id client_id user_id? endpoint p256dh auth reminders_enabled
                  created_at
 admin_config     -- таблица settings из vendor/settings_store.php (общая с site_yacloud)
+diag_log         id ts level(error|warn|info) channel message context(JSON)
+diag_state       key value                    -- code_stamp, deployed_at
 ```
 
 Телеметрия собирается со **всех** пользователей независимо от регистрации:
@@ -110,7 +132,10 @@ admin_config     -- таблица settings из vendor/settings_store.php (об
    либо `LLM::chatJson(system, userText, …)` (только текст) —
    `web/lib/vendor/llm.php`. Промпт просит те же поля, что и бот
    (`spec/ingest.md` § food_photo): название блюда, позиции, вес, БЖУК,
-   уверенность.
+   уверенность. Фото идёт в `LLM_VISION_MODEL` (если задана), дальше — по
+   цепочке только из моделей со зрением; текстовые модели попыток не тратят.
+   Сбой пишется в лог целиком: вход, каждый кандидат с ответом провайдера и
+   снимок конфигурации (§ Лог); пользователю уходит короткая причина.
 3. Ответ уходит клиенту и **не пишется на сервере** — ни фото, ни JSON;
    единственный серверный след — телеметрия `kind=meal_recognized` без
    данных о составе (только факт и задержка). Сохранение — на клиенте
@@ -282,21 +307,28 @@ environment>` либо `getUserMedia`, результат конвертируе
 
 ### Модель / LLM
 
-Слаг модели руками не набирают — выпадающие списки собираются из
-`config.AVAILABLE_MODELS` (вшитый список + живой каталог провайдеров,
-`ModelCatalog`), как в `setup.php` у `site_yacloud_openrouter`:
+Слаг модели руками не набирают нигде — **все** модельные поля выпадающие,
+собираются из `config.AVAILABLE_MODELS` (вшитый список + живой каталог
+провайдеров, `ModelCatalog`), как в `setup.php` у `site_yacloud_openrouter`:
 
 ```
-LLM_PROVIDER            select  openrouter | yandex
-LLM_PROVIDER_PRIORITY   select  openrouter,yandex | yandex,openrouter
-LLM_DEFAULT_MODEL       select  <optgroup group> по id; ею же распознаётся фото
-LLM_VISION_MODEL        select  только openrouter-строки, по full_id; PDF/OCR
-LLM_FALLBACK_MODE       select  auto (новее той же модели) | manual
-LLM_FALLBACK_MODELS     text    короткие id через запятую
-MODEL_CATALOG_TTL_MIN   text    срок годности кэша каталога, мин
-OPENROUTER_API_KEY      password  пустое поле не стирает сохранённый ключ
-YANDEX_API_KEY          password  то же
+LLM_PROVIDER              select  openrouter | yandex
+LLM_PROVIDER_PRIORITY     select  openrouter,yandex | yandex,openrouter
+LLM_DEFAULT_MODEL         select  по короткому id; текст и всё, для чего не выбрана vision
+LLM_VISION_MODEL          select  только строки vision=true, значение «провайдер:слаг»;
+                                  фото еды, этикетки, страницы PDF — у обоих провайдеров
+LLM_FALLBACK_MODE         select  auto (новее той же модели) | manual
+LLM_FALLBACK_MODEL_{1,2,3} select  три слота → CSV в LLM_FALLBACK_MODELS
+LLM_FALLBACK_MODEL        select  последняя попытка на OpenRouter (по full_id)
+YANDEX_FALLBACK_MODEL     select  последняя попытка на Yandex (по full_id)
+MODEL_CATALOG_TTL_MIN     text    срок годности кэша каталога, мин
+YANDEX_FOLDER_ID          text
+OPENROUTER_API_KEY        password  пустое поле не стирает; подпись и placeholder —
+YANDEX_API_KEY            password  первые и последние 4 знака (`DiagLog::maskKey`)
 ```
+
+Поля-селекты пишутся и пустыми (иначе «— не задана —» не смогла бы снять
+значение); секреты — только непустыми.
 
 Каждый вариант подписан ценой: вшитые строки — ₽ за 1k, живые — $ за 1M
 (так их отдаёт провайдер, курс не выдумывается). Сохранённое значение,
@@ -308,6 +340,45 @@ YANDEX_API_KEY          password  то же
 каталог моделей» / «Забыть живой каталог» (`POST model_catalog=refresh|forget`)
 делают это вручную. Сеть недоступна — страница не ломается: остаётся прежний
 кэш, причина показана под списками.
+
+### Проверка провайдеров
+
+`POST action=llm_probe` → `LLM::probe()` (`site_yacloud_openrouter`,
+`/spec/llm.md` §3): по одному короткому запросу на каждую настроенную «ногу»
+(модель по умолчанию, vision-модель, запасные каждого провайдера), результат
+строками ✅/⛔ с ответом провайдера. Неверный ключ, чужая папка и модель, не
+включённая в каталоге облака, называются здесь, а не через часы в виде
+«не получилось распознать».
+
+### Лог
+
+`diag_log.php` (`/spec/diag_log.md` в `site_yacloud_openrouter`) — таблицы
+`diag_log` / `diag_state` в той же базе. Пишут: каждый вызов модели
+(`LLM::init($cfg, DiagLog::store())`), падение распознавания
+(`api/recognize.php` — вход, вся цепочка кандидатов, конфиг), проверка
+провайдеров, действия админки, PHP-warning'и и непойманные исключения
+(обработчики в `_bootstrap.php`).
+
+Админка показывает два поля только для чтения — «только ошибки» и «полный
+лог» — каждое с кнопкой копирования в буфер, плюс «Очистить лог». Текст
+начинается с шапки (`DiagLog::asText`): хост, PHP, путь к базе и переживает
+ли она деплой, отпечаток кода и дата заливки, замаскированные ключи,
+`LLM::configSummary()`. Поэтому скопированный лог понятен тому, кто видит его
+первый раз и не имеет доступа к панели.
+
+**Очищается при редеплое**: `DiagLog::init` сверяет отпечаток кода
+(`DiagLog::codeStamp` по размеру и mtime файлов) с сохранённым; расхождение —
+лог стирается, пишется строка о редеплое. Настройки при этом не трогаются,
+они живут в `settings` (см. § Где лежит база).
+
+Ключи и пароли регистрируются через `DiagLog::addSecret` сразу после
+инициализации, в тексте от них остаются только первые и последние 4 знака.
+
+`[WEB-ONLY: у Telegram-бота нет ни веб-панели, ни провайдера Yandex —
+`src/llm/` ходит только в OpenRouter, ключи приходят из ENV, а настройки
+модели владелец меняет командой в чате (`spec/models.md`). Переносить в бота
+нечего: там нет ни редеплоя, стирающего настройки, ни страницы, где показать
+лог. Ошибки бота уходят админу сообщением — `spec/errors.md`.]`
 
 ## `romanesco.html` — 3D-визуализация капусты романеско [WEB-ONLY: холст WebGL, в чате бота показать нечего]
 

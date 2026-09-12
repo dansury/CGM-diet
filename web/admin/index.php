@@ -16,10 +16,11 @@ $notice = null;
 // same approach as setup.php in site_yacloud_openrouter.
 $LLM_SELECT_KEYS = [
     'LLM_PROVIDER', 'LLM_PROVIDER_PRIORITY', 'LLM_DEFAULT_MODEL',
-    'LLM_FALLBACK_MODE', 'LLM_VISION_MODEL',
+    'LLM_FALLBACK_MODE',
 ];
+// Written even when empty: «— не задана —» has to be able to clear the value.
+$LLM_CLEARABLE_KEYS = ['LLM_VISION_MODEL', 'LLM_FALLBACK_MODEL', 'YANDEX_FALLBACK_MODEL'];
 $LLM_TEXT_FIELDS = [
-    'LLM_FALLBACK_MODELS' => 'Запасные модели (короткие id через запятую, пробуются после выбранной)',
     'MODEL_CATALOG_TTL_MIN' => 'Срок годности кэша каталога моделей, мин',
     'YANDEX_FOLDER_ID' => 'Yandex folder id',
     'ADMIN_EMAIL' => 'Email администратора (VAPID subject, уведомления)',
@@ -54,14 +55,38 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             }
         }
     } elseif ($action === 'save_llm') {
-        foreach (array_merge($LLM_SELECT_KEYS, array_keys($LLM_TEXT_FIELDS)) as $key) {
+        foreach (array_merge($LLM_SELECT_KEYS, $LLM_CLEARABLE_KEYS, array_keys($LLM_TEXT_FIELDS)) as $key) {
             if (isset($_POST[$key])) $store->setSetting($key, trim((string) $_POST[$key]));
+        }
+        // Backup models: three ordered dropdowns → one comma-separated setting.
+        if (isset($_POST['LLM_FALLBACK_MODEL_1'])) {
+            $picked = [];
+            for ($i = 1; $i <= 3; $i++) {
+                $v = trim((string) ($_POST['LLM_FALLBACK_MODEL_' . $i] ?? ''));
+                if ($v !== '' && !in_array($v, $picked, true)) $picked[] = $v;
+            }
+            $store->setSetting('LLM_FALLBACK_MODELS', implode(',', $picked));
         }
         foreach (array_keys($LLM_SECRET_FIELDS) as $key) {
             $value = trim((string) ($_POST[$key] ?? ''));
             if ($value !== '') $store->setSetting($key, $value);
         }
+        DiagLog::info('admin', 'Настройки модели сохранены');
         $notice = 'Сохранено';
+    } elseif ($action === 'llm_probe') {
+        // One real completion per configured leg — a wrong key or a model the
+        // cloud folder does not serve is named here instead of surfacing hours
+        // later as «не получилось распознать».
+        LLM::init(require WEB_ROOT . '/lib/vendor/config.php', DiagLog::store());
+        $lines = [];
+        foreach (LLM::probe() as $leg) {
+            $lines[] = ($leg['ok'] ? '✅ ' : '⛔ ') . $leg['leg'] . ' — ' . $leg['model'] . ': ' . $leg['text'];
+        }
+        $notice = $lines ? implode("\n", $lines) : 'Проверять нечего: ни один провайдер не настроен';
+    } elseif ($action === 'diag_clear') {
+        DiagLog::clear();
+        DiagLog::info('admin', 'Лог очищен вручную из админки');
+        $notice = 'Лог очищен';
     } elseif ($action === 'set_cron_secret') {
         web_config_set($pdo, 'CRON_SECRET', web_random_token(24));
         $notice = 'Новый cron-ключ сгенерирован';
@@ -122,22 +147,80 @@ $modelPrice = static function (array $m): string {
     if ($usdIn > 0 || $usdOut > 0) return sprintf(' · $%s/$%s за 1M', $num($usdIn), $num($usdOut));
     return !empty($m['free']) ? ' · бесплатно' : '';
 };
-// A value saved earlier can be missing from the catalogue (forgotten cache,
-// model withdrawn). It stays in the list as its own option — otherwise the
-// browser would silently pick the first one and saving would swap the model.
-$modelIds = [];
-$visionIds = [];
-foreach ($modelGroups as $groupRows) {
-    foreach ($groupRows as $m) {
-        $modelIds[] = (string) ($m['id'] ?? '');
-        if (($m['provider'] ?? '') === 'openrouter') $visionIds[] = (string) ($m['full_id'] ?? '');
+/**
+ * One model <select> over the catalogue. $value says what a row is worth as a
+ * stored setting — a short id for LLM_DEFAULT_MODEL, "provider:slug" wherever
+ * the provider must travel with the slug.
+ *
+ * A value saved earlier can be missing from the catalogue (forgotten cache,
+ * model withdrawn). It stays in the list as its own option — otherwise the
+ * browser would silently pick the first one and saving would swap the model.
+ */
+$modelSelect = static function (string $name, string $current, callable $value, ?callable $filter = null, string $empty = '') use ($modelGroups, $modelPrice): string {
+    $esc = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
+    $html = '<select name="' . $esc($name) . '">';
+    if ($empty !== '') {
+        $html .= '<option value=""' . ($current === '' ? ' selected' : '') . '>' . $esc($empty) . '</option>';
     }
+    $known = false;
+    $body = '';
+    foreach ($modelGroups as $groupName => $groupRows) {
+        $rows = $filter === null ? $groupRows : array_values(array_filter($groupRows, $filter));
+        if (!$rows) continue;
+        $body .= '<optgroup label="' . $esc((string) $groupName) . '">';
+        foreach ($rows as $m) {
+            $val = (string) $value($m);
+            if ($val === $current) $known = true;
+            $body .= '<option value="' . $esc($val) . '"' . ($val === $current ? ' selected' : '') . '>'
+                . $esc((string) $m['label']) . ' — ' . $esc((string) $m['provider']) . '/' . $esc((string) $m['full_id'])
+                . $esc($modelPrice($m)) . '</option>';
+        }
+        $body .= '</optgroup>';
+    }
+    if ($current !== '' && !$known) {
+        $html .= '<option value="' . $esc($current) . '" selected>' . $esc($current) . ' — нет в каталоге</option>';
+    }
+    return $html . $body . '</select>';
+};
+$byShortId = static fn (array $m): string => (string) $m['id'];
+$byProviderSlug = static fn (array $m): string => (string) $m['provider'] . ':' . (string) $m['full_id'];
+$bySlug = static fn (array $m): string => (string) $m['full_id'];
+$onlyVision = static fn (array $m): bool => !empty($m['vision']);
+$fallbackPicked = array_values(array_filter(array_map('trim', explode(',', $eff('LLM_FALLBACK_MODELS')))));
+// A vision model stored as a bare slug (the config default) is displayed as the
+// provider-qualified option it resolves to, not as «нет в каталоге».
+$visionCurrent = $eff('LLM_VISION_MODEL');
+if ($visionCurrent !== '' && strpos($visionCurrent, ':') === false) {
+    $visionRow = LLM::resolveModelSpec($visionCurrent);
+    if ($visionRow !== null) $visionCurrent = $visionRow['provider'] . ':' . $visionRow['full_id'];
 }
 
 $liveRows = ModelCatalog::decode((string) ($cfg['MODEL_CATALOG_MODELS'] ?? ''));
 $liveSynced = (string) ($cfg['MODEL_CATALOG_SYNCED_AT'] ?? '');
 $liveError = (string) ($cfg['MODEL_CATALOG_ERROR'] ?? '');
 $liveTtl = (int) ($cfg['MODEL_CATALOG_TTL_MIN'] ?? ModelCatalog::TTL_MIN);
+
+// ── Diagnostics + log ────────────────────────────────────────────────────
+// The header makes a copied log self-contained: whoever reads it needs no
+// access to this page to know which code, provider, models and keys were live.
+$diagCounts = DiagLog::counts();
+$diagHeader = [
+    'приложение' => 'CGM-diet web (' . ($_SERVER['HTTP_HOST'] ?? 'хост неизвестен') . ')',
+    'php'        => PHP_VERSION . ' на ' . PHP_OS,
+    'база'       => WEB_DB_PATH . (WEB_DATA_PERSISTENT
+        ? ' (вне каталога деплоя — настройки переживают обновление)'
+        : ' (ВНУТРИ каталога деплоя — настройки сотрутся при следующей заливке)'),
+    'код'        => (string) (DiagLog::state('code_stamp') ?? '—')
+        . ', задеплоен ' . (string) (DiagLog::state('deployed_at') ?? '—'),
+    'ключи'      => 'OpenRouter: ' . ($eff('OPENROUTER_API_KEY') !== '' ? DiagLog::maskKey($eff('OPENROUTER_API_KEY')) : 'НЕ ЗАДАН')
+        . '; Yandex: ' . ($eff('YANDEX_API_KEY') !== '' ? DiagLog::maskKey($eff('YANDEX_API_KEY')) : 'НЕ ЗАДАН')
+        . '; folder: ' . ($eff('YANDEX_FOLDER_ID') !== '' ? $eff('YANDEX_FOLDER_ID') : 'НЕ ЗАДАН'),
+];
+foreach (LLM::configSummary() as $k => $v) {
+    $diagHeader['llm.' . $k] = is_scalar($v) ? (string) $v : (string) json_encode($v, JSON_UNESCAPED_UNICODE);
+}
+$diagFull = DiagLog::asText(DiagLog::tail(400, false), $diagHeader, 'CGM-diet — полный лог');
+$diagErrors = DiagLog::asText(DiagLog::tail(400, true), $diagHeader, 'CGM-diet — только ошибки');
 
 $sinceWeek = gmdate('Y-m-d\TH:i:s\Z', time() - 7 * 86400);
 
@@ -172,7 +255,9 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
     .card { margin-bottom: 20px; }
     .field { margin-bottom: 10px; }
     .field label { display: block; font-size: 13px; color: var(--fg-muted); margin-bottom: 4px; }
-    .field input, .field select { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 14px; }
+    .field input, .field select, .field textarea { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 14px; }
+    .field select + select { margin-top: 6px; }
+    .field textarea { font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     td, th { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
     .notice { background: var(--accent); color: var(--accent-fg); padding: 10px 14px; border-radius: 10px; margin-bottom: 16px; }
@@ -190,7 +275,7 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
         <a href="logout.php" class="btn btn-secondary">Выйти</a>
     </div>
 
-    <?php if ($notice): ?><div class="notice"><?= htmlspecialchars($notice) ?></div><?php endif; ?>
+    <?php if ($notice): ?><div class="notice"><?= nl2br(htmlspecialchars($notice)) ?></div><?php endif; ?>
 
     <div class="card">
         <h2 style="margin-top:0;">Статистика</h2>
@@ -233,42 +318,12 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
             </select>
         </div>
         <div class="field">
-            <label>Модель по умолчанию — ею же распознаётся фото еды (каталог: вшитый список + то, что отдал провайдер)</label>
-            <select name="LLM_DEFAULT_MODEL">
-                <?php $modelCurrent = $eff('LLM_DEFAULT_MODEL'); ?>
-                <?php if ($modelCurrent !== '' && !in_array($modelCurrent, $modelIds, true)): ?>
-                <option value="<?= htmlspecialchars($modelCurrent) ?>" selected><?= htmlspecialchars($modelCurrent) ?> — нет в каталоге</option>
-                <?php endif; ?>
-                <?php foreach ($modelGroups as $groupName => $groupRows): ?>
-                <optgroup label="<?= htmlspecialchars((string) $groupName) ?>">
-                    <?php foreach ($groupRows as $m): ?>
-                    <option value="<?= htmlspecialchars((string) $m['id']) ?>" <?= $modelCurrent === (string) $m['id'] ? 'selected' : '' ?>>
-                        <?= htmlspecialchars((string) $m['label']) ?> — <?= htmlspecialchars((string) $m['provider']) ?>/<?= htmlspecialchars((string) $m['full_id']) ?><?= htmlspecialchars($modelPrice($m)) ?>
-                    </option>
-                    <?php endforeach; ?>
-                </optgroup>
-                <?php endforeach; ?>
-            </select>
+            <label>Модель по умолчанию — текст и всё, для чего не выбрана vision-модель</label>
+            <?= $modelSelect('LLM_DEFAULT_MODEL', $eff('LLM_DEFAULT_MODEL'), $byShortId) ?>
         </div>
         <div class="field">
-            <label>Vision-модель для PDF/OCR (OpenRouter full_id)</label>
-            <select name="LLM_VISION_MODEL">
-                <?php $visionCurrent = $eff('LLM_VISION_MODEL'); ?>
-                <?php if ($visionCurrent !== '' && !in_array($visionCurrent, $visionIds, true)): ?>
-                <option value="<?= htmlspecialchars($visionCurrent) ?>" selected><?= htmlspecialchars($visionCurrent) ?> — нет в каталоге</option>
-                <?php endif; ?>
-                <?php foreach ($modelGroups as $groupName => $groupRows): ?>
-                    <?php $orRows = array_filter($groupRows, static fn ($m) => ($m['provider'] ?? '') === 'openrouter'); ?>
-                    <?php if (!$orRows) continue; ?>
-                <optgroup label="<?= htmlspecialchars((string) $groupName) ?>">
-                    <?php foreach ($orRows as $m): ?>
-                    <option value="<?= htmlspecialchars((string) $m['full_id']) ?>" <?= $visionCurrent === (string) $m['full_id'] ? 'selected' : '' ?>>
-                        <?= htmlspecialchars((string) $m['label']) ?> — <?= htmlspecialchars((string) $m['full_id']) ?><?= htmlspecialchars($modelPrice($m)) ?>
-                    </option>
-                    <?php endforeach; ?>
-                </optgroup>
-                <?php endforeach; ?>
-            </select>
+            <label>Vision-модель — фото еды, этикетки, страницы PDF (модели со зрением у обоих провайдеров)</label>
+            <?= $modelSelect('LLM_VISION_MODEL', $visionCurrent, $byProviderSlug, $onlyVision, '— не задана (фото пойдёт в модель по умолчанию) —') ?>
         </div>
         <div class="field">
             <label>Запасная модель: что пробовать после выбранной</label>
@@ -276,6 +331,21 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
                 <option value="auto" <?= $eff('LLM_FALLBACK_MODE') !== 'manual' ? 'selected' : '' ?>>авто — более новая версия той же модели, затем список</option>
                 <option value="manual" <?= $eff('LLM_FALLBACK_MODE') === 'manual' ? 'selected' : '' ?>>только список ниже</option>
             </select>
+        </div>
+        <div class="field">
+            <label>Запасные модели — из каталога, пробуются в этом порядке после выбранной</label>
+            <?php for ($i = 1; $i <= 3; $i++): ?>
+            <?= $modelSelect('LLM_FALLBACK_MODEL_' . $i, (string) ($fallbackPicked[$i - 1] ?? ''), $byShortId, null, '№' . $i . ' — не задана') ?>
+            <?php endfor; ?>
+        </div>
+        <div class="field">
+            <label>Последняя попытка на OpenRouter</label>
+            <?= $modelSelect('LLM_FALLBACK_MODEL', $eff('LLM_FALLBACK_MODEL'), $bySlug, static fn (array $m): bool => ($m['provider'] ?? '') === 'openrouter', '— не задана —') ?>
+        </div>
+        <div class="field">
+            <label>Последняя попытка на Yandex (full_id без gpt://)</label>
+            <?= $modelSelect('YANDEX_FALLBACK_MODEL', $eff('YANDEX_FALLBACK_MODEL'), $bySlug, static fn (array $m): bool => ($m['provider'] ?? '') === 'yandex', '— не задана —') ?>
+            <p class="muted" style="font-size:13px;">Модель, которой нет в живом каталоге провайдера, в запасные не подставляется: слепой запрос к ней отвечает <code>Failed to get model</code> и прячет настоящую причину сбоя.</p>
         </div>
 
         <p class="muted" style="font-size:13px;">
@@ -298,9 +368,12 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
         </div>
         <?php endforeach; ?>
         <?php foreach ($LLM_SECRET_FIELDS as $key => $label): ?>
+        <?php $savedKey = (string) ($llmValues[$key] ?? ($cfg[$key] ?? '')); ?>
         <div class="field">
-            <label><?= htmlspecialchars($label) ?><?= ($llmValues[$key] ?? '') !== '' ? ' — задан, пустое поле не сотрёт' : '' ?></label>
-            <input type="password" name="<?= $key ?>" autocomplete="new-password" value="">
+            <!-- First and last 4 characters only: enough to tell WHICH key is
+                 saved without exposing it. Empty field keeps the stored one. -->
+            <label><?= htmlspecialchars($label) ?> — <?= $savedKey !== '' ? 'сейчас ' . htmlspecialchars(DiagLog::maskKey($savedKey)) . ', пустое поле не сотрёт' : 'не задан' ?></label>
+            <input type="password" name="<?= $key ?>" autocomplete="new-password" value="" placeholder="<?= $savedKey !== '' ? htmlspecialchars(DiagLog::maskKey($savedKey)) : 'вставьте ключ' ?>">
         </div>
         <?php endforeach; ?>
 
@@ -311,6 +384,14 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
         <?php endif; ?>
     </form>
 
+    <form method="post" class="card">
+        <h2 style="margin-top:0;">Проверка провайдеров</h2>
+        <input type="hidden" name="action" value="llm_probe">
+        <p class="muted">Один короткий запрос к каждой настроенной модели: сразу видно, что отвечает провайдер —
+            неверный ключ, чужая папка, модель не включена в каталоге облака. Результат уходит и в лог.</p>
+        <button class="btn btn-secondary" type="submit">Проверить модели и ключи</button>
+    </form>
+
     <div class="card">
         <h2 style="margin-top:0;">Push-уведомления</h2>
         <p class="muted">VAPID-ключ: <code><?= htmlspecialchars($webConfig['VAPID_PUBLIC_KEY'] ?? '— ещё не сгенерирован —') ?></code></p>
@@ -319,6 +400,43 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
         <form method="post" style="display:inline;"><input type="hidden" name="action" value="regen_vapid"><button class="btn btn-secondary" type="submit">Перегенерировать VAPID</button></form>
         <form method="post" style="display:inline;"><input type="hidden" name="action" value="send_reminder_now"><button class="btn btn-primary" type="submit">Отправить напоминание сейчас</button></form>
     </div>
+
+    <div class="card">
+        <h2 style="margin-top:0;">Лог</h2>
+        <p class="muted">
+            Записей: <b><?= (int) $diagCounts['total'] ?></b>, из них ошибок и предупреждений:
+            <b><?= (int) $diagCounts['errors'] ?></b>. Лог лежит в той же базе и
+            <b>очищается сам при обновлении кода</b> — здесь всегда только текущий деплой.
+            Ключи и пароли в тексте замаскированы, лог можно пересылать как есть.
+        </p>
+        <p class="muted">База: <code><?= htmlspecialchars(WEB_DB_PATH) ?></code> —
+            <?= WEB_DATA_PERSISTENT
+                ? 'вне каталога деплоя, настройки переживут обновление.'
+                : '<b>внутри каталога деплоя: настройки сотрутся при следующей заливке.</b> Создайте каталог <code>cgm-diet-data</code> рядом с корнем сайта (или задайте <code>WEB_DATA_DIR</code>) и повторите — база переедет сама.' ?>
+        </p>
+        <p>
+            <button class="btn btn-secondary" type="button" onclick="diagCopy('diag-errors', this)">Скопировать только ошибки</button>
+            <button class="btn btn-secondary" type="button" onclick="diagCopy('diag-full', this)">Скопировать полный лог</button>
+        </p>
+        <div class="field">
+            <label>Только ошибки</label>
+            <textarea id="diag-errors" readonly rows="10"><?= htmlspecialchars($diagErrors) ?></textarea>
+        </div>
+        <div class="field">
+            <label>Полный лог</label>
+            <textarea id="diag-full" readonly rows="16"><?= htmlspecialchars($diagFull) ?></textarea>
+        </div>
+        <form method="post"><input type="hidden" name="action" value="diag_clear"><button class="btn btn-secondary" type="submit">Очистить лог</button></form>
+    </div>
+    <script>
+    function diagCopy(id, btn) {
+        var el = document.getElementById(id);
+        var done = function () { var t = btn.textContent; btn.textContent = 'Скопировано'; setTimeout(function () { btn.textContent = t; }, 1500); };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(el.value).then(done, function () { el.select(); document.execCommand('copy'); done(); });
+        } else { el.select(); document.execCommand('copy'); done(); }
+    }
+    </script>
 
     <form method="post" class="card">
         <h2 style="margin-top:0;">Пароль администратора</h2>

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.analytics.activity import ActivityBucket
 from src.analytics.labs import LabValue
 from src.analytics.meds import MedicationLike
+from src.analytics.notify import Pref, Template, parse_times
 from src.analytics.plate import PlateItem, PlateMeal
 from src.analytics.sleep import DayIntake, SleepInterval
 from src.analytics.symptoms import CheckinLike
@@ -36,6 +37,9 @@ from src.db.models import (
     MediaFile,
     Medication,
     MessageLog,
+    NotificationPref,
+    NotificationSend,
+    NotificationTemplate,
     NutritionMemory,
     PresencePing,
     Product,
@@ -1746,6 +1750,188 @@ async def users_due_for_hint(
     return list(await session.scalars(stmt))
 
 
+# ------------------------------------------------------------------ notifications
+
+#: what a fresh install starts with — ordinary rows the owner edits or deletes
+SEED_NOTIFICATIONS: tuple[dict[str, Any], ...] = (
+    {
+        "code": "meal",
+        "title": "Пора записать еду",
+        "body": "Пришлите фото тарелки или ответьте названием блюда — запись займёт секунду.",
+        "action": "camera",
+        "mode": "fixed",
+        "times": "08:30,13:30,19:00",
+        "signal": "meal",
+        "sort": 10,
+    },
+    {
+        "code": "cgm",
+        "title": "Скриншот датчика",
+        "body": "Пришлите скриншот CGM — по нему статистика свяжет еду и сахар.",
+        "action": "camera",
+        "mode": "fixed",
+        "times": "10:00,22:00",
+        "signal": "glucose",
+        "sort": 20,
+    },
+)
+
+
+async def seed_notifications(session: AsyncSession) -> None:
+    """Two notifications on an empty table, so a fresh install is not silent."""
+    existing = await session.scalar(select(func.count(NotificationTemplate.id)))
+    if existing:
+        return
+    for row in SEED_NOTIFICATIONS:
+        session.add(NotificationTemplate(**row))
+    await session.flush()
+
+
+async def list_notification_templates(
+    session: AsyncSession, *, only_enabled: bool = False
+) -> list[NotificationTemplate]:
+    stmt = select(NotificationTemplate)
+    if only_enabled:
+        stmt = stmt.where(NotificationTemplate.enabled.is_(True))
+    return list(await session.scalars(stmt.order_by(NotificationTemplate.sort, NotificationTemplate.id)))
+
+
+async def get_notification_template(session: AsyncSession, code: str) -> NotificationTemplate | None:
+    return await session.scalar(
+        select(NotificationTemplate).where(NotificationTemplate.code == code)
+    )
+
+
+async def upsert_notification_template(
+    session: AsyncSession, code: str, **fields: Any
+) -> NotificationTemplate:
+    row = await get_notification_template(session, code)
+    if row is None:
+        row = NotificationTemplate(code=code, title=fields.get("title") or "Напоминание")
+        session.add(row)
+    for key, value in fields.items():
+        if value is not None and hasattr(row, key):
+            setattr(row, key, value)
+    await session.flush()
+    return row
+
+
+async def delete_notification_template(session: AsyncSession, code: str) -> None:
+    """Removing a notification removes what people set about it, too."""
+    await session.execute(delete(NotificationTemplate).where(NotificationTemplate.code == code))
+    await session.execute(delete(NotificationPref).where(NotificationPref.code == code))
+    await session.flush()
+
+
+async def notification_prefs(session: AsyncSession, user: User) -> dict[str, NotificationPref]:
+    rows = await session.scalars(select(NotificationPref).where(NotificationPref.user_id == user.id))
+    return {row.code: row for row in rows}
+
+
+async def set_notification_pref(
+    session: AsyncSession, user: User, code: str, *, mode: str, times: str = ""
+) -> NotificationPref:
+    row = await session.scalar(
+        select(NotificationPref).where(
+            NotificationPref.user_id == user.id, NotificationPref.code == code
+        )
+    )
+    if row is None:
+        row = NotificationPref(user_id=user.id, code=code)
+        session.add(row)
+    row.mode = mode
+    row.times = times
+    await session.flush()
+    return row
+
+
+def template_of(row: NotificationTemplate) -> Template:
+    """ORM row -> the plain dataclass `src/analytics/notify.py` works with."""
+    return Template(
+        code=row.code,
+        title=row.title,
+        body=row.body,
+        action=row.action,
+        mode=row.mode,
+        times=parse_times(row.times),
+        signal=tuple(s for s in (row.signal or "").split(",") if s),
+        lead_min=row.lead_min,
+        enabled=bool(row.enabled),
+        sort=row.sort,
+    )
+
+
+def pref_of(row: NotificationPref | None) -> Pref | None:
+    if row is None:
+        return None
+    return Pref(code=row.code, mode=row.mode, times=parse_times(row.times))
+
+
+async def notification_signal_times(
+    session: AsyncSession, user: User, signals: Iterable[str], *, since: datetime
+) -> list[datetime]:
+    """When this person actually recorded things of these kinds, in **their**
+    local time — the raw material of the «smart» slot (`spec/notifications.md`).
+
+    `since` may come in any zone; the comparison itself happens in UTC, where
+    the columns live (`CLAUDE.md` #7: naive → aware stops at this layer).
+    """
+    edge = _aware(since).astimezone(UTC)
+    columns = {
+        "meal": (Meal, Meal.eaten_at),
+        "glucose": (GlucoseReading, GlucoseReading.measured_at),
+        "activity": (Workout, Workout.started_at),
+        "weight": (Weight, Weight.measured_at),
+        "wellbeing": (WellbeingCheckin, WellbeingCheckin.at),
+    }
+    zone = _zone(user)
+    out: list[datetime] = []
+    for signal in signals:
+        pair = columns.get(signal)
+        if pair is None:
+            continue
+        model, column = pair
+        rows = await session.scalars(
+            select(column).where(model.user_id == user.id, column >= edge)
+        )
+        out.extend(_aware(value).astimezone(zone) for value in rows if value is not None)
+    return out
+
+
+async def claim_notification_slot(
+    session: AsyncSession, user: User, *, code: str, slot: str, sent_on: str
+) -> bool:
+    """Reserve (user, notification, slot, local day). False = already sent.
+
+    The row lands before the message goes out: a network failure must not turn
+    into a second notification on the next tick.
+    """
+    taken = await session.scalar(
+        select(func.count(NotificationSend.id)).where(
+            NotificationSend.user_id == user.id,
+            NotificationSend.code == code,
+            NotificationSend.slot == slot,
+            NotificationSend.sent_on == sent_on,
+        )
+    )
+    if taken:
+        return False
+    session.add(
+        NotificationSend(user_id=user.id, code=code, slot=slot, sent_on=sent_on)
+    )
+    await session.flush()
+    return True
+
+
+async def users_with_notifications(session: AsyncSession) -> list[User]:
+    """Everyone who could receive a notification: onboarded and not blocked."""
+    return list(
+        await session.scalars(
+            select(User).where(User.onboarded.is_(True), User.blocked_at.is_(None))
+        )
+    )
+
+
 # ------------------------------------------------------------------ erasure
 
 async def delete_user_data(session: AsyncSession, user: User, *, drop_user: bool = False) -> None:
@@ -1776,6 +1962,8 @@ async def delete_user_data(session: AsyncSession, user: User, *, drop_user: bool
         Correction,
         DictionaryEntry,
         NutritionMemory,
+        NotificationPref,
+        NotificationSend,
     ):
         if model is CheckinSymptom:
             checkin_ids = select(WellbeingCheckin.id).where(WellbeingCheckin.user_id == user.id)
@@ -1912,4 +2100,16 @@ __all__ = [
     "users_watching_presence",
     "upsert_symptom",
     "delete_user_data",
+    "claim_notification_slot",
+    "delete_notification_template",
+    "get_notification_template",
+    "list_notification_templates",
+    "notification_prefs",
+    "notification_signal_times",
+    "pref_of",
+    "seed_notifications",
+    "set_notification_pref",
+    "template_of",
+    "upsert_notification_template",
+    "users_with_notifications",
 ]

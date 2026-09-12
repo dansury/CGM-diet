@@ -9,9 +9,9 @@
 1. **Фото упаковки** — `classify_photo` возвращает `medication` →
    `recognize_medication(images)` → `MedicationDraft` → карточка `med:*`.
 2. **Текст** — `parse_text` (`ingest/text_parse.py`) как и раньше: «выпил метформин 850».
-3. **Личный словарь** — кнопка `dict:use:<id>` пишет дозу «сейчас» одним нажатием.
+3. **«Мои блюда»** — кнопка `dict:use:<id>` пишет дозу «сейчас» одним нажатием.
 
-Подтверждённое лекарство всегда попадает в личный словарь (`spec/dictionary.md`),
+Подтверждённое лекарство всегда попадает в «мои блюда» (`spec/dictionary.md`),
 `kind="medication"`, с первого раза.
 
 ## Черновик (`src/vision/schemas.py`)

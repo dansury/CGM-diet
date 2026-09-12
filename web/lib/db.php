@@ -6,10 +6,13 @@
  * config stays in that shared shape; CGM-diet-specific config (admin
  * password, VAPID keys, cron secret) lives in `web_config` here so the
  * vendored files never need CGM-diet-specific keys.
- * spec: spec/web.md § Хранение.
+ * spec: spec/web.md § Хранение. Notification tables live in
+ * lib/notifications.php (spec/notifications.md) and are created from here.
  */
 
 declare(strict_types=1);
+
+require_once __DIR__ . '/notifications.php';
 
 function web_db_connect(string $dbPath): PDO {
     $dir = dirname($dbPath);
@@ -63,10 +66,24 @@ function web_db_connect(string $dbPath): PDO {
             p256dh TEXT NOT NULL,
             auth TEXT NOT NULL,
             reminders_enabled INTEGER NOT NULL DEFAULT 1,
+            tz_offset INTEGER,
             created_at TEXT NOT NULL
         )'
     );
+    // Installs created before notifications existed miss this column; the
+    // schema above only covers a fresh database.
+    web_add_column($pdo, 'push_subscriptions', 'tz_offset', 'INTEGER');
+    notify_migrate($pdo);
     return $pdo;
+}
+
+/** ALTER TABLE ADD COLUMN, skipped when the column is already there. */
+function web_add_column(PDO $pdo, string $table, string $column, string $type): void {
+    $cols = $pdo->query('PRAGMA table_info(' . $table . ')')->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    foreach ($cols as $col) {
+        if (($col['name'] ?? '') === $column) return;
+    }
+    $pdo->exec('ALTER TABLE ' . $table . ' ADD COLUMN ' . $column . ' ' . $type);
 }
 
 function web_config_get(PDO $pdo, string $key, ?string $default = null): ?string {

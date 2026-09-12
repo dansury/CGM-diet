@@ -19,6 +19,8 @@ def build_router() -> Router:
         intake,
         labs,
         meds,
+        notify,
+        notify_admin,
         onboarding,
         plate,
         reports,
@@ -31,6 +33,7 @@ def build_router() -> Router:
     root = Router(name="root")
     root.include_router(admin.router)  # owner-only, filtered; falls through otherwise
     root.include_router(admin_panel.router)  # owner panel: /users, /bot_settings
+    root.include_router(notify_admin.router)  # owner: тексты и время уведомлений
     root.include_router(common.router)
     root.include_router(onboarding.router)
     root.include_router(reports.router)
@@ -43,6 +46,7 @@ def build_router() -> Router:
     root.include_router(wellbeing.router)
     root.include_router(body.router)
     root.include_router(workout.router)
+    root.include_router(notify.router)  # /notify и кнопки под уведомлением
     root.include_router(dictionary.router)
     root.include_router(meds.router)
     root.include_router(confirm.router)

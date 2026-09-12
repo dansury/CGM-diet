@@ -1,9 +1,10 @@
 /**
  * push.js — subscribe/unsubscribe to Web Push via the service worker.
- * spec: spec/web.md § Push-уведомления.
+ * spec: spec/web.md § Push-уведомления, spec/notifications.md.
  */
 import { API_BASE } from './config.js';
 import { track } from './telemetry.js';
+import { tzOffsetMinutes } from './notify.js';
 
 function urlBase64ToUint8Array(base64String) {
     const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -33,7 +34,9 @@ export async function subscribePush(clientId) {
     await fetch(API_BASE + 'push_subscribe.php', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientId, subscription: sub.toJSON() }),
+        // The dispatcher schedules in the person's own local time
+        // (spec/notifications.md § Отправка).
+        body: JSON.stringify({ clientId, tzOffset: tzOffsetMinutes(), subscription: sub.toJSON() }),
     });
     track('push_subscribed');
     return sub;

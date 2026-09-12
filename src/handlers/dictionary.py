@@ -29,7 +29,7 @@ SUGGEST_LIMIT = 6
 MIN_PREFIX = 2
 
 EMPTY_TEXT = (
-    "⭐️ <b>Личный словарь</b>\n\n"
+    "⭐️ <b>Мои блюда</b>\n\n"
     "Пока пусто. Блюдо и его составляющие попадают сюда, когда встречаются "
     "<b>во второй раз</b>, а упаковка, лекарство и симптом — сразу после "
     "первой записи.\n"
@@ -44,7 +44,7 @@ def _rows(entries: list) -> list[tuple[int, str, str]]:
     return [(entry.id, entry.kind, entry.label) for entry in entries]
 
 
-@router.message(F.text == "⭐️ Мой словарь")
+@router.message(F.text == "⭐️ Мои блюда")
 @router.message(Command("my"))
 async def show_dictionary(message: Message) -> None:
     await mark_used(message.chat.id, "dictionary")
@@ -63,7 +63,7 @@ async def _render(message: Message, *, kind: str, mode: str, offset: int, edit: 
         text = f"{EMPTY_TEXT}\n\nРаздел «{title}» пока пуст."
     else:
         text = (
-            "⭐️ <b>Личный словарь</b> · "
+            "⭐️ <b>Мои блюда</b> · "
             + KIND_TITLES.get(kind, kind)
             + "\nСверху — то, что вы записывали последним.\n\n"
             + (
@@ -96,7 +96,7 @@ async def on_mode(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "dict:close")
 async def on_close(callback: CallbackQuery) -> None:
     await callback.answer()
-    await callback.message.edit_text("Словарь закрыт. Открыть снова — /my")
+    await callback.message.edit_text("Список закрыт. Открыть снова — /my")
 
 
 @router.callback_query(F.data.startswith("dict:rm:"))
@@ -116,7 +116,7 @@ async def on_remove(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("dict:pin:"))
 async def on_pin(callback: CallbackQuery) -> None:
-    """«⭐️ → в словарь» под записанным приёмом пищи: сразу, без второго раза.
+    """«⭐️ → в мои блюда» под записанным приёмом пищи: сразу, без второго раза.
 
     Нажатая кнопка исчезает, остальные позиции того же приёма остаются: их
     можно добавить так же, по одной (`spec/dictionary.md`).
@@ -130,7 +130,7 @@ async def on_pin(callback: CallbackQuery) -> None:
             return
         label = entry.label
         await repo.pin_dictionary(session, entry)
-    await callback.answer(f"В словаре: {label}")
+    await callback.answer(f"В моих блюдах: {label}")
     try:
         markup = getattr(callback.message, "reply_markup", None)
         rest = [

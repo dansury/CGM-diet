@@ -95,6 +95,7 @@ def test_router_tree_builds():
     assert [r.name for r in router.sub_routers] == [
         "admin",
         "admin_panel",
+        "notify_admin",
         "common",
         "onboarding",
         "reports",
@@ -107,6 +108,7 @@ def test_router_tree_builds():
         "wellbeing",
         "body",
         "workout",
+        "notify",
         "dictionary",
         "meds",
         "confirm",

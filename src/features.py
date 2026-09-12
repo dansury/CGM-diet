@@ -122,10 +122,10 @@ FEATURES: tuple[Feature, ...] = (
     ),
     Feature(
         key="dictionary",
-        title="Личный словарь",
+        title="Мои блюда",
         blurb="Всё, что вы записываете повторно, становится кнопкой в одно нажатие.",
         command="/my",
-        menu_button="⭐️ Мой словарь",
+        menu_button="⭐️ Мои блюда",
         counter="dictionary",
     ),
     Feature(

@@ -23,10 +23,11 @@
 | [spec/sleep.md](spec/sleep.md) | сон: ночи из Health Connect и по появлениям в чате, режим, связь с калориями и сахаром | `src/analytics/sleep.py`, `src/handlers/{sleep,presence}.py` |
 | [spec/health_sync.md](spec/health_sync.md) | Samsung Health / Health Connect, HTTP-релей, вебхук, инструкция и приложение-мост | `src/health/*`, `src/web/app.py`, `apps/health-bridge/` |
 | [spec/meds.md](spec/meds.md) | лекарства: фото, журнал, справочник побочек | `src/meds/*`, `src/analytics/meds.py`, `src/handlers/meds.py` |
-| [spec/dictionary.md](spec/dictionary.md) | личный словарь, подсказки по первым буквам, память БЖУ | `src/handlers/dictionary.py`, `src/db/repo.py` |
+| [spec/dictionary.md](spec/dictionary.md) | «мои блюда», подсказки по первым буквам, память БЖУ | `src/handlers/dictionary.py`, `src/db/repo.py` |
 | [spec/errors.md](spec/errors.md) | отчёты об ошибках: админу подробно, пользователю коротко | `src/errors_report.py`, `src/handlers/errors.py`, `src/logging_setup.py` |
 | [spec/models.md](spec/models.md) | выбор модели владельцем, свободные модели, фолбэк 429 | `src/llm/{model_selection,free_catalog,fallback}.py`, `src/handlers/admin.py` |
 | [spec/clinical.md](spec/clinical.md) | что можно и чего нельзя говорить пользователю | `src/reporting.py` |
+| [spec/notifications.md](spec/notifications.md) | напоминания: шаблоны админа, личные настройки, «умное» время, ответ фото/текстом | `src/analytics/notify.py`, `src/handlers/{notify,notify_admin}.py`, `src/scheduler.py`, `web/lib/notifications.php`, `web/app/js/notify.js` |
 | [spec/web.md](spec/web.md) | лендинг, PWA, админка, визуальный язык (романеско), деплой на PHP-хостинг простым копированием | `web/*`, `scripts/gen_app_icons.py` |
 
 ## Другие документы

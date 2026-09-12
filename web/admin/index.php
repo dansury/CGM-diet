@@ -1,7 +1,7 @@
 <?php
 /**
- * web/admin/index.php — config variables + usage statistics.
- * spec: spec/web.md § Админка.
+ * web/admin/index.php — config variables, notifications, usage statistics.
+ * spec: spec/web.md § Админка, spec/notifications.md § Админка.
  */
 declare(strict_types=1);
 require __DIR__ . '/lib.php';
@@ -95,6 +95,34 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         web_config_set($pdo, 'VAPID_PUBLIC_KEY', $keys['public']);
         web_config_set($pdo, 'VAPID_PRIVATE_KEY_PEM', $keys['private_pem']);
         $notice = 'VAPID-ключи перегенерированы — старые подписки на push перестанут работать';
+    } elseif ($action === 'save_notification') {
+        notify_save_template($pdo, [
+            'code' => (string) ($_POST['code'] ?? ''),
+            'title' => (string) ($_POST['title'] ?? ''),
+            'body' => (string) ($_POST['body'] ?? ''),
+            'action' => (string) ($_POST['notify_action'] ?? 'camera'),
+            'mode' => (string) ($_POST['mode'] ?? 'fixed'),
+            'times' => (string) ($_POST['times'] ?? ''),
+            'signal' => implode(',', array_map('strval', (array) ($_POST['signal'] ?? []))),
+            'lead_min' => (int) ($_POST['lead_min'] ?? 15),
+            'enabled' => isset($_POST['enabled']) ? 1 : 0,
+            'sort' => (int) ($_POST['sort'] ?? 0),
+        ]);
+        $notice = notify_slug((string) ($_POST['code'] ?? '')) === ''
+            ? 'Код уведомления пустой или из одних небуквенных знаков — не сохранено'
+            : 'Уведомление сохранено';
+    } elseif ($action === 'delete_notification') {
+        notify_delete_template($pdo, notify_slug((string) ($_POST['code'] ?? '')));
+        $notice = 'Уведомление удалено вместе с настройками пользователей';
+    } elseif ($action === 'send_notification_now') {
+        $result = notify_send_now($pdo, notify_slug((string) ($_POST['code'] ?? '')));
+        $notice = isset($result['error'])
+            ? 'Ошибка: ' . $result['error']
+            : "Отправлено: {$result['sent']}, отписалось: {$result['gone']}, ошибок: {$result['failed']} (всего {$result['total']})";
+    } elseif ($action === 'dispatch_now') {
+        $result = notify_dispatch($pdo);
+        $notice = "Тик расписания: отправлено {$result['sent']}, пропущено (уже было сегодня) {$result['skipped']},"
+            . " ошибок {$result['failed']}, подписок {$result['subscriptions']}";
     } elseif ($action === 'send_reminder_now') {
         try {
             $result = webpush_send_reminders($pdo, 'Пора измерить сахар', 'Загляните в приложение и отметьте показатель.');
@@ -237,6 +265,13 @@ $utmRows = $pdo->query(
 $kindRows = $pdo->query(
     "SELECT kind, COUNT(*) AS n FROM telemetry_events GROUP BY kind ORDER BY n DESC"
 )->fetchAll(PDO::FETCH_ASSOC);
+
+$notifyTemplates = notify_templates($pdo);
+$notifySent = $pdo->query(
+    "SELECT code, COUNT(*) AS n FROM notification_sends GROUP BY code ORDER BY n DESC"
+)->fetchAll(PDO::FETCH_ASSOC);
+$notifySentByCode = [];
+foreach ($notifySent as $row) $notifySentByCode[$row['code']] = (int) $row['n'];
 
 $usersCount = (int) $pdo->query('SELECT COUNT(*) FROM users')->fetchColumn();
 $pushSubsCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions')->fetchColumn();
@@ -393,12 +428,111 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
     </form>
 
     <div class="card">
+        <h2 style="margin-top:0;">Уведомления</h2>
+        <p class="muted">Текст, время и действие задаются здесь — это <b>исходная</b> настройка для всех.
+            Каждый человек может в приложении поставить своё время, включить «умное»
+            (оно считается по его собственным записям на устройстве) или выключить уведомление совсем;
+            его выбор перекрывает эту страницу. Снятая галочка «Включено» выключает уведомление у всех.</p>
+        <?php foreach ($notifyTemplates as $t): ?>
+        <form method="post" style="border-top:1px solid var(--border); padding-top:12px; margin-top:12px;">
+            <input type="hidden" name="action" value="save_notification">
+            <input type="hidden" name="code" value="<?= htmlspecialchars($t['code']) ?>">
+            <div class="field">
+                <label>Код <code><?= htmlspecialchars($t['code']) ?></code> · отправлено по расписанию: <?= (int) ($notifySentByCode[$t['code']] ?? 0) ?></label>
+                <input type="text" name="title" value="<?= htmlspecialchars($t['title']) ?>" placeholder="Заголовок">
+            </div>
+            <div class="field">
+                <label>Текст уведомления</label>
+                <textarea name="body" rows="2" style="white-space:pre-wrap; font:inherit;"><?= htmlspecialchars($t['body']) ?></textarea>
+            </div>
+            <div class="field">
+                <label>Время (через запятую, местное время человека)</label>
+                <input type="text" name="times" value="<?= htmlspecialchars($t['times']) ?>" placeholder="08:30, 13:30, 19:00">
+            </div>
+            <div class="field">
+                <label>Режим по умолчанию</label>
+                <select name="mode">
+                    <?php foreach (['fixed' => 'по времени выше', 'smart' => 'умное — по записям человека', 'off' => 'не слать по умолчанию'] as $m => $mLabel): ?>
+                    <option value="<?= $m ?>" <?= ($t['mode'] === $m) ? 'selected' : '' ?>><?= $mLabel ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="field">
+                <label>Что открывается по нажатию</label>
+                <select name="notify_action">
+                    <?php foreach (['camera' => 'камера', 'text' => 'ответ текстом', 'open' => 'просто приложение'] as $a => $aLabel): ?>
+                    <option value="<?= $a ?>" <?= ($t['action'] === $a) ? 'selected' : '' ?>><?= $aLabel ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div class="field">
+                <label>Записи, по которым считается «умное» время</label>
+                <?php $signals = explode(',', (string) $t['signal']); ?>
+                <?php foreach (NOTIFY_SIGNALS as $sig): ?>
+                <label style="display:inline-block; margin-right:12px; font-size:14px;">
+                    <input type="checkbox" name="signal[]" value="<?= $sig ?>" style="width:auto;" <?= in_array($sig, $signals, true) ? 'checked' : '' ?>>
+                    <?= htmlspecialchars(['meal' => 'еда', 'glucose' => 'сахар/CGM', 'activity' => 'нагрузка', 'weight' => 'вес', 'wellbeing' => 'самочувствие'][$sig]) ?>
+                </label>
+                <?php endforeach; ?>
+            </div>
+            <div class="field">
+                <label>За сколько минут до привычного момента писать (для «умного»)</label>
+                <input type="number" name="lead_min" min="0" max="180" value="<?= (int) $t['lead_min'] ?>">
+            </div>
+            <div class="field">
+                <label>Порядок в списке</label>
+                <input type="number" name="sort" value="<?= (int) $t['sort'] ?>">
+            </div>
+            <label style="font-size:14px;"><input type="checkbox" name="enabled" style="width:auto;" <?= !empty($t['enabled']) ? 'checked' : '' ?>> Включено</label>
+            <p style="margin-top:10px;">
+                <button class="btn btn-primary" type="submit">Сохранить</button>
+                <button class="btn btn-secondary" type="submit" name="action" value="send_notification_now" formnovalidate>Отправить сейчас</button>
+                <button class="btn btn-secondary" type="submit" name="action" value="delete_notification" formnovalidate
+                        onclick="return confirm('Удалить уведомление и настройки людей по нему?')">Удалить</button>
+            </p>
+        </form>
+        <?php endforeach; ?>
+
+        <form method="post" style="border-top:1px solid var(--border); padding-top:12px; margin-top:12px;">
+            <h3 style="font-size:15px;">Новое уведомление</h3>
+            <input type="hidden" name="action" value="save_notification">
+            <div class="field"><label>Код (латиницей, попадает в ссылку)</label><input type="text" name="code" placeholder="water"></div>
+            <div class="field"><label>Заголовок</label><input type="text" name="title" placeholder="Пора записать воду"></div>
+            <div class="field"><label>Текст</label><textarea name="body" rows="2" style="white-space:pre-wrap; font:inherit;"></textarea></div>
+            <div class="field"><label>Время</label><input type="text" name="times" placeholder="11:00, 16:00"></div>
+            <div class="field">
+                <label>Режим</label>
+                <select name="mode"><option value="fixed">по времени выше</option><option value="smart">умное</option><option value="off">не слать по умолчанию</option></select>
+            </div>
+            <div class="field">
+                <label>По нажатию</label>
+                <select name="notify_action"><option value="camera">камера</option><option value="text">ответ текстом</option><option value="open">просто приложение</option></select>
+            </div>
+            <div class="field">
+                <label>Записи для «умного» времени</label>
+                <?php foreach (NOTIFY_SIGNALS as $sig): ?>
+                <label style="display:inline-block; margin-right:12px; font-size:14px;">
+                    <input type="checkbox" name="signal[]" value="<?= $sig ?>" style="width:auto;">
+                    <?= htmlspecialchars(['meal' => 'еда', 'glucose' => 'сахар/CGM', 'activity' => 'нагрузка', 'weight' => 'вес', 'wellbeing' => 'самочувствие'][$sig]) ?>
+                </label>
+                <?php endforeach; ?>
+            </div>
+            <div class="field"><label>Упреждение, мин</label><input type="number" name="lead_min" min="0" max="180" value="15"></div>
+            <label style="font-size:14px;"><input type="checkbox" name="enabled" style="width:auto;" checked> Включено</label>
+            <p style="margin-top:10px;"><button class="btn btn-primary" type="submit">Добавить</button></p>
+        </form>
+    </div>
+
+    <div class="card">
         <h2 style="margin-top:0;">Push-уведомления</h2>
         <p class="muted">VAPID-ключ: <code><?= htmlspecialchars($webConfig['VAPID_PUBLIC_KEY'] ?? '— ещё не сгенерирован —') ?></code></p>
         <p class="muted">Cron-ключ (для <code>/api/push_send.php?key=...</code>): <code><?= htmlspecialchars($webConfig['CRON_SECRET'] ?? '— не задан —') ?></code></p>
         <form method="post" style="display:inline;"><input type="hidden" name="action" value="set_cron_secret"><button class="btn btn-secondary" type="submit">Сгенерировать cron-ключ</button></form>
         <form method="post" style="display:inline;"><input type="hidden" name="action" value="regen_vapid"><button class="btn btn-secondary" type="submit">Перегенерировать VAPID</button></form>
-        <form method="post" style="display:inline;"><input type="hidden" name="action" value="send_reminder_now"><button class="btn btn-primary" type="submit">Отправить напоминание сейчас</button></form>
+        <form method="post" style="display:inline;"><input type="hidden" name="action" value="dispatch_now"><button class="btn btn-primary" type="submit">Прогнать расписание сейчас</button></form>
+        <form method="post" style="display:inline;"><input type="hidden" name="action" value="send_reminder_now"><button class="btn btn-secondary" type="submit">Тестовое напоминание всем</button></form>
+        <p class="muted">Cron хостинга должен дёргать <code>/api/push_send.php?key=…</code> каждые 5–15 минут:
+            расписание считается в местном времени каждого человека, повтор в тот же слот отсекается.</p>
     </div>
 
     <div class="card">

@@ -26,18 +26,23 @@ web/
     index.html manifest.webmanifest sw.js
     css/app.css
     js/ app.js theme.js db.js onboarding.js camera.js recognize.js thinking.js
-       dictionary.js charts.js settings.js telemetry.js push.js sync.js
+       dictionary.js charts.js settings.js telemetry.js push.js sync.js notify.js
   admin/                    закрыто паролем, доступно только по /admin
     index.php login.php logout.php lib.php
   api/                      JSON-эндпоинты, без сессий кроме sync/register
     _bootstrap.php recognize.php telemetry.php register.php login.php sync.php
     push_subscribe.php push_unsubscribe.php push_send.php vapid_public_key.php
+    notify_config.php
   lib/
     db.php                  PDO SQLite, схема + миграции (CREATE TABLE IF NOT EXISTS)
     webpush.php             VAPID JWT (ES256) + шифрование aes128gcm (RFC 8291/8292)
+    notifications.php       шаблоны уведомлений, личные настройки, тик расписания
+                            (`spec/notifications.md`)
     vendor/                 зеркало site_yacloud_openrouter (llm.php, config.php,
                             model_catalog.php, settings_store.php, diag_log.php)
-  .htaccess                 запрет доступа к data/ и lib/
+  .htaccess                 запрет доступа к data/, lib/ и tests/
+  tests/notifications.php   `php web/tests/notifications.php` — расписание и учёт
+                            отправок; каталог закрыт `.htaccess`, как `lib/`
   data/                     legacy-расположение app.db; используется, только если
                             каталог рядом с корнем деплоя недоступен на запись
   README.md                 инструкция по деплою
@@ -56,10 +61,13 @@ glucose      id ts mmol source(manual)
 weight       id ts kg
 wellbeing    id ts score(1..5) symptoms:[str] note
 dictionary   id kind(meal|item|product) label grams? macros? hits lastUsedAt pinned
+             -- в интерфейсе называется «мои блюда» (`spec/dictionary.md`)
 profile      onboarded:bool focus[] age heightCm sex conditions mealsPerDay
              goalWeightKg diabetes glucoseMethods
 settings     theme(auto|light|dark) quickCamera:bool remindersEnabled:bool
              clientId(uuid) syncToken?
+notifications -- слепок списка уведомлений и личных режимов, чтобы экран
+             настроек открывался без сети (`spec/notifications.md`)
 ```
 
 Никогда не хранится: сама фотография еды (принцип конституции III/IV
@@ -95,7 +103,10 @@ backups          user_id payload(JSON) updated_at            -- полный с�
 telemetry_events id client_id user_id? kind payload(JSON) utm_source utm_medium
                  utm_campaign utm_term utm_content ts
 push_subscriptions id client_id user_id? endpoint p256dh auth reminders_enabled
-                 created_at
+                 tz_offset created_at
+notification_templates  -- уведомления, которые завёл админ (`spec/notifications.md`)
+notification_prefs      -- личные настройки по client_id
+notification_sends      -- занятые слоты: UNIQUE(client_id, code, slot, sent_on)
 admin_config     -- таблица settings из vendor/settings_store.php (общая с site_yacloud)
 diag_log         id ts level(error|warn|info) channel message context(JSON)
 diag_state       key value                    -- code_stamp, deployed_at
@@ -143,7 +154,7 @@ diag_state       key value                    -- code_stamp, deployed_at
 4. Подтверждение — как у бота (принцип IV): карточка с разбором, вес и БЖУК
    редактируются перед сохранением, а не после.
 
-## Словарь (`js/dictionary.js`)
+## «Мои блюда» (`js/dictionary.js`)
 
 Живой автокомплит: после 2 введённых символов — фильтр `dictionary` из
 IndexedDB по `label` (префикс, затем подстрока), ротация та же, что у бота
@@ -156,11 +167,14 @@ IndexedDB по `label` (префикс, затем подстрока), рота
 него имя («Начните вводить название — «сырники»…»): обещать подсказки пустому
 словарю и звать вымышленной «овсянкой» нечестно. У каждой
 подсказки — редактируемое поле веса (граммы), меняющее БЖУК пропорционально
-(масштаб от `grams`, как `nutrition.apply_memory` у бота). Порог показа в
-словаре — тот же `MIN_HITS` (`meal`/`item`: 2, `product`: 1).
+(масштаб от `grams`, как `nutrition.apply_memory` у бота). Порог показа —
+тот же `MIN_HITS` (`meal`/`item`: 2, `product`: 1).
+
+Ответ текстом на уведомление сперва ищется здесь и только потом уходит в
+модель — `matchDish(text)`, `spec/notifications.md` § Ответ текстом.
 
 `[WEB-ONLY GAP: medication/symptom]` — виды `medication` и `symptom`
-(`spec/dictionary.md`) в web-словаре пока не реализованы: у бота нет
+(`spec/dictionary.md`) в «моих блюдах» web пока не реализованы: у бота нет
 аналога веб-сценария «лекарство/симптом одним тапом» без остального UI
 (`/meds`, `WellbeingFlow`), которого в web MVP ещё нет вовсе. Задача на
 реализацию — `TODO.md` T071.
@@ -177,27 +191,31 @@ IndexedDB по `label` (префикс, затем подстрока), рота
 
 ## Push-уведомления (`js/push.js`, `sw.js`, `api/push_*.php`, `lib/webpush.php`)
 
-Включаются тумблером в настройках «Напоминания о регулярности» (аналог
-`users.glucose_prompt_enabled` у бота, `spec/onboarding.md` § Предложение
-присылать замеры) — по умолчанию выключены. Включение → `Notification.
-requestPermission()` → `serviceWorker.pushManager.subscribe({applicationServerKey:
-VAPID_PUBLIC})` → `POST /api/push_subscribe.php`.
+Включаются тумблером «Присылать уведомления» в настройках — по умолчанию
+выключены. Включение → `Notification.requestPermission()` →
+`serviceWorker.pushManager.subscribe({applicationServerKey: VAPID_PUBLIC})` →
+`POST /api/push_subscribe.php` (вместе с `tzOffset` — расписание считается в
+местном времени человека).
 
 `lib/webpush.php` — VAPID (RFC 8292, JWT ES256 через `openssl_sign`) +
 шифрование пейлоада `aes128gcm` (RFC 8291, ECDH P-256 + HKDF-SHA256 +
 AES-128-GCM через `openssl_pkey_derive`/`hash_hkdf`/`openssl_encrypt`, PHP ≥
-8.1). VAPID-ключи генерируются один раз и хранятся в `admin_config`
-(admin-панель может перегенерировать).
+8.1). VAPID-ключи генерируются один раз (`webpush_vapid`) и хранятся в
+`admin_config`; админка умеет их перегенерировать.
 
-`push_send.php?key=<CRON_SECRET>` — рассылает напоминания подписчикам с
-`reminders_enabled=1` (по расписанию — cron хостинга, дергающий этот URL;
-общего воркера на shared-хостинге нет) и кнопка «отправить сейчас» в
-админке.
+`push_send.php?key=<CRON_SECRET>` — один тик расписания
+(`notify_dispatch`, `spec/notifications.md` § Отправка); cron хостинга дёргает
+его раз в 5–15 минут. `&code=<уведомление>` шлёт одно уведомление всем сразу —
+это кнопка «Отправить сейчас» в админке.
+
+Что именно приходит, во сколько и что открывается по нажатию — целиком в
+`spec/notifications.md`: здесь только транспорт.
 
 **[BLOCKED: сквозная проверка push нужна на реальном браузере/устройстве —
 в среде сборки нет push-сервиса для end-to-end теста]**, как и мост Samsung
 Health (`DEV_PLAN.md` фаза 9): код собран и соответствует спецификации,
-`php -l` зелёный, живой пуш не прогонялся.
+`php -l` зелёный, `php web/tests/notifications.php` зелёный, живой пуш не
+прогонялся.
 
 ## Регистрация и синхронизация (`js/sync.js`, `api/register.php`, `api/sync.php`)
 
@@ -299,7 +317,9 @@ environment>` либо `getUserMedia`, результат конвертируе
 
 Доступна только по пути `/admin`, гейт — пароль (`ADMIN_PASSWORD` из
 `admin_config`/ENV, `password_hash`/`password_verify`, сессия). Разделы:
-переменные — форма поверх `SettingsStore` (`web/lib/vendor/settings_store.php`,
+уведомления — тексты, время, режим и действие каждого напоминания
+(`spec/notifications.md` § Админка), «Отправить сейчас» и «Прогнать расписание
+сейчас»; переменные — форма поверх `SettingsStore` (`web/lib/vendor/settings_store.php`,
 та же таблица `settings`, что у `site_yacloud_openrouter`); статистика —
 счётчики телеметрии (визиты, UTM, использование функций,
 доставленные/кликнутые пуши), список зарегистрированных пользователей

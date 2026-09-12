@@ -6,14 +6,29 @@
  */
 import { getKV, addRecord, getAll } from './db.js';
 import { recognizeMeal, fileToCompressedDataUrl } from './recognize.js';
-import { bumpDictionaryFromMeal, suggest, draftFromEntry, exampleLabels } from './dictionary.js';
+import { bumpDictionaryFromMeal, suggest, draftFromEntry, exampleLabels, matchDish } from './dictionary.js';
 import { el, showToast, formatTime, round1 } from './utils.js';
 import { showThinking } from './thinking.js';
 import { track, getClientId } from './telemetry.js';
 
 let autoOpenedQuickCamera = false;
+/** What a tapped notification asked for, consumed by the next home render. */
+let pendingIntent = null;
+
+/**
+ * A notification was tapped: `act` is 'camera' or 'text', `reply` is what the
+ * person typed into the notification itself, if the browser allowed it.
+ * spec: spec/notifications.md § Нажатие на уведомление.
+ */
+export function setNotificationIntent(intent) {
+    pendingIntent = intent && intent.act ? intent : null;
+}
 
 export async function renderHomeView(container) {
+    const intent = pendingIntent;
+    pendingIntent = null;
+    if (intent) return runNotificationIntent(container, intent);
+
     const settings = await getKV('settings', {});
     if (settings.quickCamera && !autoOpenedQuickCamera) {
         autoOpenedQuickCamera = true;
@@ -21,6 +36,57 @@ export async function renderHomeView(container) {
         return renderCaptureView(container);
     }
     return renderListView(container);
+}
+
+/**
+ * The camera opens straight away; a typed answer is looked up in «мои блюда»
+ * first and only goes to the model when nothing there fits.
+ */
+async function runNotificationIntent(container, intent) {
+    const reply = (intent.reply || '').trim();
+    if (intent.act === 'text' && reply) {
+        const match = await matchDish(reply);
+        if (match.entry) {
+            track('dictionary_used', { kind: match.entry.kind, from: 'notification' });
+            container.innerHTML = '';
+            return renderDraftView(container, draftFromEntry(match.entry, match.grams));
+        }
+        if (match.candidates) {
+            return renderMatchChoiceView(container, reply, match);
+        }
+        return renderCaptureView(container, reply);
+    }
+    if (intent.act === 'text') return renderCaptureView(container, '');
+    track('camera_opened', { from: 'notification' });
+    return renderCaptureView(container, '', { openCamera: true });
+}
+
+/** Two entries fit the answer equally well — that is a question, not a guess. */
+function renderMatchChoiceView(container, reply, match) {
+    container.innerHTML = '';
+    const wrap = el(`
+        <div>
+            <h2 style="margin:8px 0 4px;">Что именно?</h2>
+            <div class="muted" style="margin-bottom:12px;">Вы ответили «${escapeHtml(reply)}» — в моих блюдах это может быть несколько записей.</div>
+            <div class="list" id="match-list"></div>
+            <button class="btn btn-secondary" id="match-other" style="width:100%; margin-top:12px;">Ничего из этого — распознать текст</button>
+        </div>
+    `);
+    container.appendChild(wrap);
+    const list = wrap.querySelector('#match-list');
+    for (const entry of match.candidates) {
+        const row = el(`
+            <div class="card list-item">
+                <div><div class="name">${escapeHtml(entry.label)}</div><div class="meta">записано ${entry.hits} раз</div></div>
+            </div>
+        `);
+        row.addEventListener('click', () => {
+            track('dictionary_used', { kind: entry.kind, from: 'notification' });
+            renderDraftView(container, draftFromEntry(entry, match.grams));
+        });
+        list.appendChild(row);
+    }
+    wrap.querySelector('#match-other').addEventListener('click', () => renderCaptureView(container, reply));
 }
 
 async function renderListView(container) {
@@ -129,7 +195,7 @@ function quickWellbeingForm() {
     return wrap;
 }
 
-async function renderCaptureView(container, prefill = '') {
+async function renderCaptureView(container, prefill = '', { openCamera = false } = {}) {
     container.innerHTML = '';
     const wrap = el(`
         <div>
@@ -175,6 +241,10 @@ async function renderCaptureView(container, prefill = '') {
     };
     cameraInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
     uploadInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+    // Straight from a notification: try to open the camera without the extra
+    // tap. Browsers that demand a gesture simply ignore it and the button is
+    // already on screen.
+    if (openCamera) setTimeout(() => cameraInput.click(), 0);
 
     wrap.querySelector('#capture-text-btn').addEventListener('click', async () => {
         const text = wrap.querySelector('#capture-text').value.trim();

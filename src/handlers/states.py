@@ -65,15 +65,27 @@ class SettingsFlow(StatesGroup):
     editing = State()
 
 
+class NotifyFlow(StatesGroup):
+    awaiting_time = State()     # «своё время» одного напоминания — ключ `ntf_code`
+
+
+class NotifyAdminFlow(StatesGroup):
+    editing = State()           # что правим — ключи `ntfa_code`, `ntfa_field`
+    creating = State()          # новое уведомление: код, затем заголовок и текст
+
+
 __all__ = [
     "BodyFlow",
     "GlucoseFlow",
     "LabFlow",
     "MealFlow",
     "MedicationFlow",
+    "NotifyAdminFlow",
+    "NotifyFlow",
     "OnboardingFlow",
     "ProductFlow",
     "SettingsFlow",
     "WellbeingFlow",
     "WorkoutFlow",
 ]
+

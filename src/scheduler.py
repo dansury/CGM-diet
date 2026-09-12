@@ -1,6 +1,7 @@
 """Фоновые напоминания: «пора взвеситься» (`spec/body.md`), еженедельный
-рассказ об одной неиспользованной возможности (`spec/features.md`) и
-«бот вас не видит» для наблюдения за сном (`spec/sleep.md`).
+рассказ об одной неиспользованной возможности (`spec/features.md`),
+«бот вас не видит» для наблюдения за сном (`spec/sleep.md`) и уведомления по
+расписанию — общие настройки владельца поверх личных (`spec/notifications.md`).
 
 Отдельная задача asyncio, а не cron: бот и так живёт процессом (polling или
 uvicorn), и одна корутина с часовым тиком дешевле любой внешней обвязки.
@@ -15,15 +16,18 @@ from datetime import UTC, datetime
 
 from aiogram import Bot
 
+from src.analytics import notify as notify_math
 from src.db import repo
 from src.handlers.deps import session_scope, to_local
-from src.keyboards import weight_prompt
+from src.keyboards import notification_actions, weight_prompt
 from src.logging_setup import get_logger
-from src.reporting import WEIGHT_PROMPT
+from src.reporting import WEIGHT_PROMPT, format_notification
 
 log = get_logger("scheduler")
 
 TICK_SECONDS = 3600
+#: уведомления по расписанию тикают чаще: слот живёт 30 минут
+NOTIFY_TICK_SECONDS = 300
 #: в какие часы локального времени пользователя уместно писать
 QUIET_START = 9
 QUIET_END = 20
@@ -31,11 +35,14 @@ QUIET_END = 20
 _task: asyncio.Task | None = None
 _hints_task: asyncio.Task | None = None
 _presence_task: asyncio.Task | None = None
+_notify_task: asyncio.Task | None = None
 
 
-def start_scheduler(bot: Bot, *, interval_s: int = TICK_SECONDS) -> asyncio.Task | None:
+def start_scheduler(
+    bot: Bot, *, interval_s: int = TICK_SECONDS, notify_interval_s: int = NOTIFY_TICK_SECONDS
+) -> asyncio.Task | None:
     """Поднять фоновые циклы. Повторный вызов не плодит вторую задачу."""
-    global _task, _hints_task, _presence_task
+    global _task, _hints_task, _presence_task, _notify_task
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -45,6 +52,8 @@ def start_scheduler(bot: Bot, *, interval_s: int = TICK_SECONDS) -> asyncio.Task
         _hints_task = loop.create_task(feature_hint_loop(bot, interval_s=interval_s))
     if _presence_task is None or _presence_task.done():
         _presence_task = loop.create_task(presence_reminder_loop(bot, interval_s=interval_s))
+    if _notify_task is None or _notify_task.done():
+        _notify_task = loop.create_task(notification_loop(bot, interval_s=notify_interval_s))
     if _task is not None and not _task.done():
         return _task
     _task = loop.create_task(weight_reminder_loop(bot, interval_s=interval_s))
@@ -52,8 +61,8 @@ def start_scheduler(bot: Bot, *, interval_s: int = TICK_SECONDS) -> asyncio.Task
 
 
 async def stop_scheduler() -> None:
-    global _task, _hints_task, _presence_task
-    for task in (_task, _hints_task, _presence_task):
+    global _task, _hints_task, _presence_task, _notify_task
+    for task in (_task, _hints_task, _presence_task, _notify_task):
         if task is None:
             continue
         task.cancel()
@@ -66,6 +75,7 @@ async def stop_scheduler() -> None:
     _task = None
     _hints_task = None
     _presence_task = None
+    _notify_task = None
 
 
 async def weight_reminder_loop(bot: Bot, *, interval_s: int = TICK_SECONDS) -> None:
@@ -186,11 +196,80 @@ async def run_presence_reminders(bot: Bot, *, now: datetime | None = None) -> in
     return sent
 
 
+async def notification_loop(bot: Bot, *, interval_s: int = NOTIFY_TICK_SECONDS) -> None:
+    while True:
+        try:
+            await run_notifications(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("notification tick failed")
+        await asyncio.sleep(interval_s)
+
+
+async def run_notifications(bot: Bot, *, now: datetime | None = None) -> int:
+    """Один тик расписания уведомлений. Возвращает число отправленных.
+
+    Настройка владельца — исходная, личная перекрывает её, «умное» считается
+    по записям самого человека (`spec/notifications.md`). Отметка о слоте
+    ставится **до** отправки: оборванная сеть не должна превращаться во второе
+    уведомление на следующем тике. Тихие часы здесь не действуют — время у
+    каждого уведомления своё, и назначил его человек или владелец.
+    """
+    from src.handlers.notify import smart_for
+
+    moment = now or datetime.now(UTC)
+    #: (tg_id, код, действие, текст) — собирается в сессии, шлётся после неё
+    outbox: list[tuple[int, str, str, str]] = []
+    async with session_scope() as session:
+        templates = await repo.list_notification_templates(session, only_enabled=True)
+        if not templates:
+            return 0
+        for user in await repo.users_with_notifications(session):
+            local = to_local(moment, user)
+            prefs = await repo.notification_prefs(session, user)
+            for row in templates:
+                template = repo.template_of(row)
+                pref = repo.pref_of(prefs.get(row.code))
+                wants_smart = (pref.mode if pref else template.mode) == "smart"
+                smart = await smart_for(session, user, template) if wants_smart else ()
+                schedule = notify_math.resolve(template, pref, smart=smart)
+                for slot in notify_math.due_slots(schedule, local_now=local):
+                    claimed = await repo.claim_notification_slot(
+                        session,
+                        user,
+                        code=template.code,
+                        slot=slot,
+                        sent_on=local.strftime("%Y-%m-%d"),
+                    )
+                    if claimed:
+                        outbox.append((
+                            user.tg_id,
+                            template.code,
+                            template.action,
+                            format_notification(template.title, template.body),
+                        ))
+
+    sent = 0
+    for tg_id, code, action, text in outbox:
+        try:
+            await bot.send_message(tg_id, text, reply_markup=notification_actions(code, action))
+            sent += 1
+        except Exception:
+            # Заблокированный чат — обычное дело; отметку не откатываем,
+            # иначе бот будет долбиться в него каждые пять минут.
+            log.warning("notification %s not delivered to %s", code, tg_id, exc_info=True)
+    return sent
+
+
 __all__ = [
     "QUIET_END",
     "QUIET_START",
     "TICK_SECONDS",
+    "NOTIFY_TICK_SECONDS",
     "feature_hint_loop",
+    "notification_loop",
+    "run_notifications",
     "presence_reminder_loop",
     "run_feature_hints",
     "run_presence_reminders",

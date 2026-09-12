@@ -1,10 +1,10 @@
 /**
- * dictionary.js — personal dictionary: live autocomplete as you type, editable
- * weight, one-tap re-entry without calling the model. Mirrors the bot's
- * dictionary (spec/dictionary.md) — same MIN_HITS thresholds and rotation
- * order, kept in IndexedDB instead of SQLite. Kinds supported in the web MVP:
- * meal, item, product (medication/symptom glossary stays tg-only for now —
- * see spec/web.md § Паритет tg/web and TODO.md).
+ * dictionary.js — «мои блюда»: live autocomplete as you type, editable weight,
+ * one-tap re-entry without calling the model. Mirrors the bot's list
+ * (spec/dictionary.md) — same MIN_HITS thresholds and rotation order, kept in
+ * IndexedDB instead of SQLite. Kinds supported in the web MVP: meal, item,
+ * product (medication/symptom glossary stays tg-only for now — see
+ * spec/web.md § Паритет tg/web and TODO.md).
  */
 import { getAll, addRecord, putRecord, deleteRecord } from './db.js';
 import { el, showToast } from './utils.js';
@@ -93,25 +93,84 @@ export async function pinEntry(id) {
     await putRecord('dictionary', entry);
 }
 
-/** Build a ready-to-edit meal draft from a dictionary entry — no model call. */
-export function draftFromEntry(entry) {
+/**
+ * Build a ready-to-edit meal draft from an entry — no model call. `grams`
+ * rescales a single-item entry to the weight the person named («сырники 150»),
+ * exactly as the bot's `nutrition.apply_memory` does.
+ */
+export function draftFromEntry(entry, grams = null) {
     if (entry.kind === 'meal') {
         return {
             title: entry.label,
             items: entry.payload.items.map((it) => ({ name: it.name, grams: it.grams, kcal: it.kcal, protein_g: it.protein, fat_g: it.fat, carbs_g: it.carbs })),
             confidence: 1,
-            notes: 'Из словаря',
+            notes: 'Из моих блюд',
             __source: 'dictionary',
         };
     }
     const p = entry.payload;
+    const weight = Number.isFinite(grams) && grams > 0 ? grams : p.grams;
     return {
         title: entry.label,
-        items: [{ name: entry.label, grams: p.grams, kcal: p.kcalPerG * p.grams, protein_g: p.proteinPerG * p.grams, fat_g: p.fatPerG * p.grams, carbs_g: p.carbsPerG * p.grams }],
+        items: [{ name: entry.label, grams: weight, kcal: p.kcalPerG * weight, protein_g: p.proteinPerG * weight, fat_g: p.fatPerG * weight, carbs_g: p.carbsPerG * weight }],
         confidence: 1,
-        notes: 'Из словаря',
+        notes: 'Из моих блюд',
         __source: 'dictionary',
     };
+}
+
+/**
+ * A free-text answer («сырники 150 г») against «мои блюда», before any model
+ * is called (spec/notifications.md § Ответ текстом). Exact name first, then a
+ * unique prefix, then a unique substring, then a unique two-word overlap.
+ * Two candidates are not a guess: the caller shows both and lets the person
+ * pick. -> {entry, grams} | {candidates, grams} | {grams} when nothing matched.
+ */
+export async function matchDish(text) {
+    const grams = parseGrams(text);
+    const norm = keyNorm(stripWeight(text));
+    if (!norm) return { grams };
+    const all = await getAll('dictionary', { sortBy: 'id', desc: false });
+    const eligible = all
+        .filter((e) => e.kind !== 'symptom' && (e.pinned || (e.hits || 0) >= (MIN_HITS[e.kind] || 1)))
+        .sort(rotationSort);
+
+    const exact = eligible.filter((e) => e.keyNorm === norm);
+    if (exact.length) return { entry: exact[0], grams };
+
+    const words = norm.split(' ').filter((w) => w.length > 2);
+    const tiers = [
+        eligible.filter((e) => e.keyNorm.startsWith(norm) || norm.startsWith(e.keyNorm)),
+        eligible.filter((e) => e.keyNorm.includes(norm) || norm.includes(e.keyNorm)),
+        words.length >= 2
+            ? eligible.filter((e) => words.filter((w) => e.keyNorm.includes(w)).length >= 2)
+            : [],
+    ];
+    for (const tier of tiers) {
+        if (tier.length === 1) return { entry: tier[0], grams };
+        if (tier.length > 1) return { candidates: tier.slice(0, 6), grams };
+    }
+    return { grams };
+}
+
+// Not \b after the unit: Cyrillic is outside \w in JS, so «150 г» would never
+// match a word boundary at all — hence the explicit lookahead.
+const WEIGHT_RE = '(\\d+(?:[.,]\\d+)?)\\s*(?:граммов|грамма|граммы|грамм|гр|г|g)(?![а-яёa-z])';
+const UNIT_RE = '(\\d+(?:[.,]\\d+)?)\\s*(?:граммов|грамма|граммы|грамм|гр|г|g|мл|ml|шт)(?![а-яёa-z])';
+
+/** «сырники 150 г» -> 150. No number — null, and the stored portion stands. */
+export function parseGrams(text) {
+    const m = String(text || '').match(new RegExp(WEIGHT_RE, 'i'))
+        || String(text || '').match(/(\d{2,4})\s*$/);
+    if (!m) return null;
+    const value = parseFloat(m[1].replace(',', '.'));
+    return Number.isFinite(value) && value > 0 && value <= 5000 ? value : null;
+}
+
+function stripWeight(text) {
+    return String(text || '')
+        .replace(new RegExp(UNIT_RE, 'gi'), ' ')
+        .replace(/\d+(?:[.,]\d+)?/g, ' ');
 }
 
 export async function renderDictionaryView(container) {
@@ -144,7 +203,7 @@ export async function renderDictionaryView(container) {
             `);
             item.querySelector('[data-del]').addEventListener('click', async () => {
                 await deleteRecord('dictionary', row.id);
-                showToast('Удалено из словаря');
+                showToast('Убрано из моих блюд');
                 showKind(kind);
             });
             listEl.appendChild(item);

@@ -7,12 +7,14 @@
 `build_bot(settings)` — `ParseMode.HTML` по умолчанию.
 `build_dispatcher()` — сначала `user_tracking.register(dp)` (outer-middleware на
 `message`/`callback_query` + роутер `my_chat_member`), затем `build_router()`.
-`COMMANDS` — 20 команд (`/workouts` в меню не выносится), регистрируются в меню Telegram при старте.
+`COMMANDS` — 22 команды (`/workouts` и `/notify_admin` в меню не выносятся),
+регистрируются в меню Telegram при старте.
 `prepare_runtime(bot, settings)` до первого апдейта (и в polling, и в webhook):
 `wire_error_reporter` → `load_active_models` → каталог свободных моделей →
 `scheduler.start(bot)` (напоминание о взвешивании — `spec/body.md`; недельная
 подсказка о возможностях — `spec/features.md`; «бот вас не видит» для
-наблюдения за сном — `spec/sleep.md`).
+наблюдения за сном — `spec/sleep.md`; уведомления по расписанию, тик 300 с —
+`spec/notifications.md`).
 Каждый шаг деградирует молча — ни один не мешает боту стартовать.
 
 ## Команды
@@ -20,7 +22,9 @@
 | Команда | Что делает | Файл |
 |---|---|---|
 | `/start` | регистрация, согласие, анкета о теле при первом запуске | `handlers/common.py`, `handlers/onboarding.py` |
-| `/my` | личный словарь всех сущностей: запись одной кнопкой | `handlers/dictionary.py` |
+| `/my` | «мои блюда» — все повторяющиеся сущности: запись одной кнопкой | `handlers/dictionary.py` |
+| `/notify` | напоминания: время и вид каждого, «умное» время | `handlers/notify.py` |
+| `/notify_admin` | владельцу: тексты, время и режим напоминаний для всех | `handlers/notify_admin.py` |
 | `/meds` | журнал лекарств + справка по побочкам | `handlers/meds.py` |
 | `/help` | подробная справка | `handlers/common.py` |
 | `/menu` | вернуть клавиатуру | `handlers/common.py` |
@@ -49,7 +53,7 @@
 
 Reply-меню (`MENU_ROWS`): `🍽 Записать еду`, `🩸 Записать сахар`,
 `🛒 Проверить продукт`, `🙂 Самочувствие`, `🏃 Тренировка`, `⚖️ Вес и цель`,
-`📊 Статистика`, `📈 График`, `⭐️ Мой словарь`, `💊 Лекарства`.
+`📊 Статистика`, `📈 График`, `⭐️ Мои блюда`, `💊 Лекарства`.
 `main_menu(hidden?)` убирает кнопки возможностей, от которых пользователь
 отказался (`spec/features.md`); клавиатуру собирает `features.menu_of(chat_id)`.
 

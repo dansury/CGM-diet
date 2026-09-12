@@ -42,7 +42,7 @@ MENU_ROWS: tuple[tuple[str, ...], ...] = (
     ("🛒 Проверить продукт", "🙂 Самочувствие"),
     ("🏃 Тренировка", "⚖️ Вес и цель"),
     ("📊 Статистика", "📈 График"),
-    ("⭐️ Мой словарь", "💊 Лекарства"),
+    ("⭐️ Мои блюда", "💊 Лекарства"),
 )
 
 
@@ -222,7 +222,7 @@ KIND_ICONS = {
     "symptom": "🙂",
 }
 
-#: разделы словаря в том порядке, в каком они листаются в `/my`.
+#: разделы «моих блюд» в том порядке, в каком они листаются в `/my`.
 KIND_TABS: tuple[tuple[str, str], ...] = (
     ("meal", "🍽 Блюда"),
     ("item", "🥄 Продукты"),
@@ -256,7 +256,7 @@ def dictionary_suggestions(entries: list[tuple[int, str, str]]) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-#: сколько кнопок «в словарь» вешаем под записанным приёмом пищи
+#: сколько кнопок «в мои блюда» вешаем под записанным приёмом пищи
 PIN_BUTTONS_LIMIT = 6
 #: длина названия на такой кнопке — дальше обрезаем
 PIN_LABEL_LIMIT = 32
@@ -265,7 +265,7 @@ PIN_LABEL_LIMIT = 32
 def dictionary_pins(
     entries: list[tuple[int, str, str]], *, glucose: bool = False
 ) -> InlineKeyboardMarkup | None:
-    """«⭐️ в словарь» на каждую позицию только что записанного приёма пищи.
+    """«⭐️ в мои блюда» на каждую позицию только что записанного приёма пищи.
 
     `entries` — (id, kind, label). Ждать второго раза необязательно: человек
     сам говорит, что хочет повторять это одной кнопкой
@@ -274,7 +274,7 @@ def dictionary_pins(
     rows = [
         [
             InlineKeyboardButton(
-                text=f"⭐️ {label[:PIN_LABEL_LIMIT]} → в словарь"[:64],
+                text=f"⭐️ {label[:PIN_LABEL_LIMIT]} → в мои блюда"[:64],
                 callback_data=f"dict:pin:{entry_id}",
             )
         ]
@@ -290,7 +290,7 @@ def dictionary_pins(
 def dictionary_page(
     entries: list[tuple[int, str, str]], *, kind: str, mode: str = "use", offset: int = 0
 ) -> InlineKeyboardMarkup:
-    """`mode`: `use` — записать одним нажатием, `del` — убрать из словаря."""
+    """`mode`: `use` — записать одним нажатием, `del` — убрать из списка."""
     prefix = "dict:rm" if mode == "del" else "dict:use"
     rows = [
         [
@@ -805,6 +805,104 @@ def tag_button_label(tag: str) -> str:
     return tag_label(tag)
 
 
+#: подписи режимов в списке уведомлений (`spec/notifications.md`)
+NOTIFY_MODE_LABELS: dict[str, str] = {
+    "default": "Как у всех",
+    "fixed": "Своё время",
+    "smart": "Умное",
+    "off": "Выключить",
+}
+
+
+def notification_list(rows: list[tuple[str, str, str]]) -> InlineKeyboardMarkup:
+    """Список уведомлений: `rows` — (code, title, короткая строка о режиме)."""
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                text=f"{title} · {summary}"[:64], callback_data=f"ntf:open:{code}"
+            )
+        ]
+        for code, title, summary in rows
+    ]
+    keyboard.append([InlineKeyboardButton(text="Закрыть", callback_data="ntf:close")])
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def notification_modes(code: str, current: str) -> InlineKeyboardMarkup:
+    """Четыре режима одного уведомления; выбранный помечен галочкой."""
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=("✓ " if mode == current else "") + label,
+                callback_data=f"ntf:mode:{code}:{mode}",
+            )
+        ]
+        for mode, label in NOTIFY_MODE_LABELS.items()
+    ]
+    rows.append([InlineKeyboardButton(text="← К списку", callback_data="ntf:list")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def notification_actions(code: str, action: str) -> InlineKeyboardMarkup:
+    """Кнопки под самим уведомлением: ответить фото или текстом.
+
+    У бота нет доступа к камере устройства — «📷» открывает подсказку прислать
+    фото, дальше работает обычный приём фото (`spec/notifications.md`).
+    """
+    rows = [
+        [
+            InlineKeyboardButton(text="📷 Прислать фото", callback_data=f"ntf:cam:{code}"),
+            InlineKeyboardButton(text="✍️ Ответить текстом", callback_data=f"ntf:txt:{code}"),
+        ]
+    ]
+    if action != "open":
+        rows.append(
+            [InlineKeyboardButton(text="Не сейчас", callback_data="ntf:dismiss")]
+        )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def notification_admin_list(rows: list[tuple[str, str, bool]]) -> InlineKeyboardMarkup:
+    """Список уведомлений владельцу: (code, title, включено)."""
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                text=f"{'🔔' if enabled else '🔕'} {title}"[:64],
+                callback_data=f"ntfa:open:{code}",
+            )
+        ]
+        for code, title, enabled in rows
+    ]
+    keyboard.append(
+        [InlineKeyboardButton(text="➕ Новое уведомление", callback_data="ntfa:new")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
+
+
+def notification_admin_card(code: str, enabled: bool) -> InlineKeyboardMarkup:
+    """Правка одного уведомления владельцем."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Заголовок", callback_data=f"ntfa:set:{code}:title"),
+                InlineKeyboardButton(text="Текст", callback_data=f"ntfa:set:{code}:body"),
+            ],
+            [
+                InlineKeyboardButton(text="Время", callback_data=f"ntfa:set:{code}:times"),
+                InlineKeyboardButton(text="Режим", callback_data=f"ntfa:set:{code}:mode"),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔕 Выключить у всех" if enabled else "🔔 Включить",
+                    callback_data=f"ntfa:toggle:{code}",
+                ),
+                InlineKeyboardButton(text="🗑 Удалить", callback_data=f"ntfa:del:{code}"),
+            ],
+            [InlineKeyboardButton(text="← К списку", callback_data="ntfa:list")],
+        ]
+    )
+
+
 __all__ = [
     "CANCEL_DATA",
     "CANCEL_TEXT",
@@ -852,6 +950,12 @@ __all__ = [
     "stats_windows",
     "symptom_picker",
     "tag_button_label",
+    "notification_actions",
+    "notification_admin_card",
+    "notification_admin_list",
+    "notification_list",
+    "notification_modes",
+    "NOTIFY_MODE_LABELS",
     "weight_prompt",
     "wellbeing_score",
     "workout_duration",

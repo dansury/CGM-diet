@@ -133,7 +133,7 @@
     </div>
     <div class="feature reveal">
       <svg class="feature__mark" width="26" height="26" aria-hidden="true"><use href="#mark"/></svg>
-      <div><h3>Свой словарь</h3><p>То, что вы едите регулярно, добавляется в один тап — фотографировать заново не нужно.</p></div>
+      <div><h3>Мои блюда</h3><p>То, что вы едите регулярно, добавляется в один тап — фотографировать заново не нужно.</p></div>
     </div>
     <div class="feature reveal">
       <svg class="feature__mark" width="26" height="26" aria-hidden="true"><use href="#mark"/></svg>

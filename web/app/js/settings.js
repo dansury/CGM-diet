@@ -1,11 +1,13 @@
 /**
- * settings.js — theme override, quick camera, reminders (push), account
- * (register/login/backup), clear my data. spec: spec/web.md.
+ * settings.js — theme override, quick camera, notifications (push + per
+ * notification schedule), account (register/login/backup), clear my data.
+ * spec: spec/web.md, spec/notifications.md.
  */
 import { getKV, setKV, clearAll } from './db.js';
 import { setTheme } from './theme.js';
 import { subscribePush, unsubscribePush, isPushSubscribed, isPushSupported } from './push.js';
 import { register, login, pushBackup, pullBackup, isRegistered } from './sync.js';
+import { loadNotifications, saveNotifications, effectiveTimes, computeSmart, parseTimes } from './notify.js';
 import { el, showToast } from './utils.js';
 import { track, getClientId } from './telemetry.js';
 
@@ -24,6 +26,9 @@ function switchRow(label, checked, onChange) {
 }
 
 export async function renderSettingsView(container) {
+    // The screen re-renders itself after a push subscription changes; without
+    // this it would stack a second copy on top of the first.
+    container.innerHTML = '';
     const settings = await getKV('settings', {});
     const wrap = el('<div></div>');
 
@@ -55,22 +60,23 @@ export async function renderSettingsView(container) {
     }));
     wrap.appendChild(captureCard);
 
-    wrap.appendChild(el('<div class="section-title">Напоминания</div>'));
+    wrap.appendChild(el('<div class="section-title">Уведомления</div>'));
     const remindersCard = el('<div class="card"></div>');
     const pushSupported = isPushSupported();
     const subscribed = pushSupported && await isPushSubscribed();
     const remindersRow = switchRow(
-        pushSupported ? 'Напоминать измерить сахар после еды' : 'Push-уведомления не поддерживаются этим браузером',
+        pushSupported ? 'Присылать уведомления' : 'Push-уведомления не поддерживаются этим браузером',
         subscribed,
         async (checked) => {
             try {
                 if (checked) {
                     await subscribePush(getClientId());
-                    showToast('Напоминания включены');
+                    showToast('Уведомления включены');
                 } else {
                     await unsubscribePush();
-                    showToast('Напоминания выключены');
+                    showToast('Уведомления выключены');
                 }
+                renderSettingsView(container);
             } catch (e) {
                 showToast(e.message);
                 renderSettingsView(container);
@@ -80,6 +86,7 @@ export async function renderSettingsView(container) {
     if (!pushSupported) remindersRow.querySelector('input').disabled = true;
     remindersCard.appendChild(remindersRow);
     wrap.appendChild(remindersCard);
+    if (pushSupported) wrap.appendChild(await renderNotificationList());
 
     wrap.appendChild(el('<div class="section-title">Аккаунт</div>'));
     const accountCard = el('<div class="card"></div>');
@@ -130,4 +137,99 @@ export async function renderSettingsView(container) {
     wrap.appendChild(dangerCard);
 
     container.appendChild(wrap);
+}
+
+const MODE_LABELS = {
+    default: 'Как у всех',
+    fixed: 'Своё время',
+    smart: 'Умное',
+    off: 'Выключить',
+};
+
+/**
+ * One card per notification the admin created. The admin's setting is what a
+ * card starts from («как у всех»); anything the person picks here wins over it,
+ * and «умное» reads the time out of their own records
+ * (spec/notifications.md § Настройка пользователя).
+ */
+async function renderNotificationList() {
+    const box = el('<div></div>');
+    const list = await loadNotifications(getClientId());
+    if (!list.length) {
+        box.appendChild(el('<div class="empty-hint">Уведомлений пока нет — их создаёт администратор.</div>'));
+        return box;
+    }
+    for (const item of list) box.appendChild(notificationCard(item, list));
+    return box;
+}
+
+function notificationCard(item, list) {
+    const card = el(`
+        <div class="card" style="margin-bottom:12px;">
+            <div class="name">${escapeHtml(item.title)}</div>
+            <div class="muted" style="font-size:13px; margin:4px 0 10px;">${escapeHtml(item.body)}</div>
+            <div class="onb-choice-row" data-modes></div>
+            <div data-times style="margin-top:10px;"></div>
+            <div class="muted" style="font-size:13px; margin-top:8px;" data-effective></div>
+        </div>
+    `);
+    const modesRow = card.querySelector('[data-modes]');
+    const timesBox = card.querySelector('[data-times]');
+    const effective = card.querySelector('[data-effective]');
+
+    const persist = async () => {
+        await saveNotifications(getClientId(), list);
+        paint();
+    };
+
+    function paint() {
+        modesRow.querySelectorAll('button').forEach((b) => b.classList.toggle('selected', b.dataset.mode === item.mode));
+        timesBox.innerHTML = '';
+        if (item.mode === 'fixed') timesBox.appendChild(timesEditor(item, persist));
+        const times = effectiveTimes(item);
+        if (item.mode === 'off') {
+            effective.textContent = 'Выключено.';
+        } else if (item.mode === 'smart') {
+            effective.textContent = (item.smartTimes && item.smartTimes.length)
+                ? 'Умное время по вашим записям: ' + item.smartTimes.join(', ')
+                : 'Записей пока мало — пока работает общее время: ' + (times.join(', ') || 'не задано');
+        } else {
+            effective.textContent = times.length ? 'Придёт в ' + times.join(', ') : 'Время не задано.';
+        }
+    }
+
+    for (const mode of Object.keys(MODE_LABELS)) {
+        const btn = el(`<button class="btn btn-secondary" data-mode="${mode}">${MODE_LABELS[mode]}</button>`);
+        btn.addEventListener('click', async () => {
+            item.mode = mode;
+            if (mode === 'fixed' && !item.times.length) item.times = [...item.adminTimes];
+            if (mode === 'smart') item.smartTimes = await computeSmart(item);
+            await persist();
+        });
+        modesRow.appendChild(btn);
+    }
+    paint();
+    return card;
+}
+
+function timesEditor(item, persist) {
+    const row = el(`
+        <div style="display:flex; gap:8px;">
+            <input type="text" class="onb-input" inputmode="numeric" placeholder="08:30, 13:30, 19:00" value="${escapeHtml(item.times.join(', '))}">
+            <button class="btn btn-primary">Ок</button>
+        </div>
+    `);
+    const input = row.querySelector('input');
+    row.querySelector('button').addEventListener('click', async () => {
+        const times = parseTimes(input.value);
+        if (!times.length) { showToast('Впишите время, например 08:30'); return; }
+        item.times = times;
+        await persist();
+        showToast('Сохранено');
+    });
+    return row;
+}
+
+function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }

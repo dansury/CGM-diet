@@ -67,6 +67,7 @@ $GLOBALS['web_cfg'] = require WEB_ROOT . '/lib/vendor/config.php';
 DiagLog::init(WEB_DB_PATH, DiagLog::codeStamp([
     WEB_ROOT . '/lib/vendor/llm.php', WEB_ROOT . '/lib/vendor/config.php',
     WEB_ROOT . '/lib/vendor/model_catalog.php', WEB_ROOT . '/lib/db.php',
+    WEB_ROOT . '/lib/notifications.php',
     WEB_ROOT . '/api/recognize.php', WEB_ROOT . '/admin/index.php',
     WEB_ROOT . '/app/js/app.js',
 ]));

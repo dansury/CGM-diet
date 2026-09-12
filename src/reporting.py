@@ -312,7 +312,7 @@ def format_meal_draft(
 
 SUGAR_AFTER_MEAL_HINT = "Через час-полтора пришлите сахар — и приём попадёт в статистику."
 DICTIONARY_SHORTCUT_HINT = (
-    "⭐️ Это блюдо теперь в личном словаре — в следующий раз хватит одной кнопки (/my)."
+    "⭐️ Это блюдо теперь в «моих блюдах» — в следующий раз хватит одной кнопки (/my)."
 )
 
 
@@ -743,7 +743,7 @@ def format_medications(rows: list[tuple[datetime, str, str | None]], *, days: in
     if not rows:
         return (
             "💊 <b>Лекарства</b>\n\nПока пусто. Сфотографируйте упаковку или напишите "
-            "«выпил метформин 850» — запись попадёт в дневник и в личный словарь."
+            "«выпил метформин 850» — запись попадёт в дневник и в «мои блюда»."
         )
     lines = [f"💊 <b>Лекарства за {days} дн.</b>", ""]
     for at, name, dose in rows[-30:]:
@@ -1304,6 +1304,76 @@ def format_workouts(rows: list[tuple[datetime, str, float | None, float | None]]
     return "\n".join(lines)
 
 
+# ------------------------------------------------------------ уведомления
+
+NOTIFY_INTRO = (
+    "🔔 <b>Напоминания</b>\n\n"
+    "Время и вид каждого напоминания настраивается отдельно. По умолчанию "
+    "работает общая настройка; «умное» подбирает время по вашим же записям — "
+    "по тому, когда вы обычно записываете еду, сахар или нагрузку.\n"
+    "Нажмите на напоминание, чтобы изменить."
+)
+NOTIFY_EMPTY = "🔔 Напоминаний пока нет."
+NOTIFY_REPLY_HINT = (
+    "Пришлите фото или напишите текстом, что записать. "
+    "Если такое уже есть в «моих блюдах» — предложу его сразу, без распознавания."
+)
+NOTIFY_PHOTO_HINT = "Жду фото — тарелку или экран датчика."
+NOTIFY_SAVED = "Готово, напоминание настроено."
+NOTIFY_TIME_ASK = (
+    "Во сколько напоминать? Можно несколько через запятую: <code>08:30, 13:30, 19:00</code>"
+)
+NOTIFY_TIME_BAD = "Не разобрал время. Пример: <code>08:30, 19:00</code>"
+NOTIFY_SMART_THIN = (
+    "Записей пока мало — пока работает общее время. Как накопятся, "
+    "напоминание само сдвинется к вашему привычному часу."
+)
+
+
+def format_notification(title: str, body: str) -> str:
+    """Само напоминание: заголовок и текст, которые задал владелец."""
+    text = f"🔔 <b>{title}</b>"
+    if body:
+        text += f"\n\n{body}"
+    return text
+
+
+def notification_summary(mode: str, times: tuple[str, ...] | list[str]) -> str:
+    """Короткая строка для списка: что и когда придёт."""
+    if mode == "off":
+        return "выключено"
+    when = ", ".join(times) if times else "время не задано"
+    if mode == "smart":
+        return f"умное · {when}"
+    return when
+
+
+def format_notification_card(
+    title: str,
+    body: str,
+    *,
+    mode: str,
+    times: tuple[str, ...] | list[str],
+    admin_times: tuple[str, ...] | list[str],
+) -> str:
+    """Карточка настройки одного напоминания."""
+    lines = [f"🔔 <b>{title}</b>"]
+    if body:
+        lines.append(body)
+    lines.append("")
+    if mode == "off":
+        lines.append("Сейчас: выключено.")
+    elif mode == "smart":
+        lines.append(
+            "Сейчас: умное время — " + (", ".join(times) if times else "ещё считается")
+        )
+    elif mode == "fixed":
+        lines.append("Сейчас: своё время — " + (", ".join(times) or "не задано"))
+    else:
+        lines.append("Сейчас: как у всех — " + (", ".join(admin_times) or "не задано"))
+    return "\n".join(lines)
+
+
 __all__ = [
     "BODY_DISCLAIMER",
     "CONFIDENCE_LABEL",
@@ -1359,6 +1429,9 @@ __all__ = [
     "format_recommendations",
     "format_remembered_label",
     "format_remembered_macros",
+    "format_notification",
+    "format_notification_card",
+    "notification_summary",
     "format_sleep",
     "format_sleep_short",
     "format_stats",

@@ -136,13 +136,10 @@ function webpush_encrypt(string $payload, string $p256dhB64, string $authB64): a
 }
 
 /**
- * Send the reminder to every subscriber with reminders_enabled=1, generating
- * VAPID keys on first use. Shared by api/push_send.php (cron) and the admin
- * panel's "send now" button — one code path, one place to fix.
- * Returns ['sent'=>int,'gone'=>int,'failed'=>int,'total'=>int] or throws if
- * VAPID keys are missing and cannot be generated.
+ * VAPID keypair for this install, generated on first use. One place so cron,
+ * the admin panel and lib/notifications.php all sign with the same key.
  */
-function webpush_send_reminders(PDO $pdo, string $title, string $body): array {
+function webpush_vapid(PDO $pdo): array {
     $vapidPublic = web_config_get($pdo, 'VAPID_PUBLIC_KEY');
     $vapidPrivate = web_config_get($pdo, 'VAPID_PRIVATE_KEY_PEM');
     if (!$vapidPublic || !$vapidPrivate) {
@@ -152,12 +149,20 @@ function webpush_send_reminders(PDO $pdo, string $title, string $body): array {
         $vapidPublic = $keys['public'];
         $vapidPrivate = $keys['private_pem'];
     }
-
-    $vapid = [
+    return [
         'public' => $vapidPublic,
         'private_pem' => $vapidPrivate,
         'subject' => 'mailto:' . (web_config_get($pdo, 'ADMIN_EMAIL') ?: 'admin@example.com'),
     ];
+}
+
+/**
+ * Send one reminder to every subscriber with reminders_enabled=1 — the legacy
+ * scheduleless path, kept for the admin panel's «send now».
+ * Returns ['sent'=>int,'gone'=>int,'failed'=>int,'total'=>int].
+ */
+function webpush_send_reminders(PDO $pdo, string $title, string $body): array {
+    $vapid = webpush_vapid($pdo);
     $payload = json_encode(['title' => $title, 'body' => $body], JSON_UNESCAPED_UNICODE);
 
     $subs = $pdo->query('SELECT * FROM push_subscriptions WHERE reminders_enabled = 1')->fetchAll(PDO::FETCH_ASSOC);

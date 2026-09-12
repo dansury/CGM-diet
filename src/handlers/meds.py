@@ -90,7 +90,7 @@ async def med_ok(callback: CallbackQuery, state: FSMContext) -> None:
     )
     await callback.message.edit_text(
         f"✅ Записан приём: <b>{row.name}</b> в {taken_local:%H:%M}.\n"
-        f"Он теперь в личном словаре — в следующий раз хватит одной кнопки (/my).\n{tail}"
+        f"Он теперь в «моих блюдах» — в следующий раз хватит одной кнопки (/my).\n{tail}"
     )
 
 

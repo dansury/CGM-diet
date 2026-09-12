@@ -60,8 +60,8 @@ def test_the_shortcut_line_appears_only_when_the_dish_landed_in_the_dictionary()
     with_shortcut = format_meal_saved(
         _drumstick(), title="Куриная голень", eaten_at=EATEN, shortcut=True
     )
-    assert "личном словаре" not in without
-    assert "личном словаре" in with_shortcut
+    assert "моих блюдах" not in without
+    assert "моих блюдах" in with_shortcut
 
 
 def test_the_day_summary_says_how_many_meals_there_were():

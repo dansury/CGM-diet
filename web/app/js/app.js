@@ -5,14 +5,14 @@
 import { initTheme } from './theme.js';
 import { initTelemetry, track } from './telemetry.js';
 import { needsOnboarding, runOnboarding } from './onboarding.js';
-import { renderHomeView } from './camera.js';
+import { renderHomeView, setNotificationIntent } from './camera.js';
 import { renderDictionaryView } from './dictionary.js';
 import { renderChartsView } from './charts.js';
 import { renderSettingsView } from './settings.js';
 
 const ROUTES = {
     home: { title: 'Дневник', render: renderHomeView },
-    dictionary: { title: 'Словарь', render: renderDictionaryView },
+    dictionary: { title: 'Мои блюда', render: renderDictionaryView },
     charts: { title: 'Графики', render: renderChartsView },
     settings: { title: 'Настройки', render: renderSettingsView },
 };
@@ -50,7 +50,16 @@ function registerServiceWorker() {
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js').catch(() => {});
         navigator.serviceWorker.addEventListener('message', (event) => {
-            if (event.data && event.data.type === 'push_clicked') track('push_clicked');
+            const data = event.data || {};
+            if (data.type !== 'push_clicked') return;
+            track('push_clicked', { code: data.code || '' });
+            // The app was already open — the tap still has to land on the
+            // camera or on the answer (spec/notifications.md).
+            if (data.act) {
+                setNotificationIntent({ act: data.act, code: data.code, reply: data.reply });
+                if (location.hash === '#/home') renderRoute();
+                else location.hash = '#/home';
+            }
         });
     }
 }
@@ -71,7 +80,14 @@ async function boot() {
     setupRouter();
 
     const params = new URLSearchParams(location.search);
-    if (params.get('pushclick') === '1') track('push_clicked');
+    if (params.get('pushclick') === '1') {
+        track('push_clicked', { code: params.get('n') || '' });
+        setNotificationIntent({
+            act: params.get('act') || 'camera',
+            code: params.get('n') || '',
+            reply: params.get('reply') || '',
+        });
+    }
 
     if (await needsOnboarding()) {
         const view = document.getElementById('view');

@@ -24,7 +24,7 @@ log = get_logger("bot")
 
 COMMANDS = [
     BotCommand(command="start", description="Начало и инструкция"),
-    BotCommand(command="my", description="Личный словарь — запись одной кнопкой"),
+    BotCommand(command="my", description="Мои блюда — запись одной кнопкой"),
     BotCommand(command="meds", description="Лекарства: журнал и справка"),
     BotCommand(command="today", description="Записи за сегодня"),
     BotCommand(command="stats", description="Статистика по продуктам"),
@@ -41,6 +41,7 @@ COMMANDS = [
     BotCommand(command="export", description="Выгрузить данные (CSV)"),
     BotCommand(command="delete", description="Удалить все данные"),
     BotCommand(command="cancel", description="Отменить текущий ввод"),
+    BotCommand(command="notify", description="Напоминания: время и вид"),
     BotCommand(command="settings", description="Настройки"),
     BotCommand(command="hidden", description="Скрытые возможности"),
     BotCommand(command="help", description="Справка"),

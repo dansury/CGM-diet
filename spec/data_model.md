@@ -66,6 +66,13 @@ food_stats         id user_id key_type(item|tag|product) key window n
 corrections        id user_id entity_type entity_id field old_value new_value created_at
 feature_flags      id user_id feature status(new|shown|accepted|declined) shown
                    last_shown_at? used_at?   -- uq(user_id,feature)
+notification_templates id code title body action(camera|text|open) mode(fixed|smart|off)
+                   times signal lead_min enabled sort updated_at
+                   -- уведомления владельца, `spec/notifications.md`
+notification_prefs id user_id code mode(default|fixed|smart|off) times updated_at
+                   -- uq(user_id, code)
+notification_sends id user_id code slot sent_on ts
+                   -- uq(user_id, code, slot, sent_on): один слот в локальный день
 ```
 
 Индексы: `body_goals(user_id, is_active)`, `workouts(user_id, started_at)`,
@@ -74,7 +81,8 @@ feature_flags      id user_id feature status(new|shown|accepted|declined) shown
 `meals(user_id, eaten_at)`, `glucose_readings(user_id, measured_at)`,
 `wellbeing_checkins(user_id, at)`, `activity_samples(user_id, start_at)`,
 `presence_pings(user_id, at)`, `message_log(user_id, id)`,
-`meal_items(name_norm)`, `products(user_id, name_norm)`.
+`meal_items(name_norm)`, `products(user_id, name_norm)`,
+`notification_prefs(user_id)`, `notification_sends(user_id)`.
 
 ## Репозиторий (`src/db/repo.py`)
 
@@ -87,6 +95,17 @@ list_users(session, limit=50) -> [User]      # по created_at убыв.
 count_users(session) -> (всего, заблокировавших)
 user_activity(session) -> {user_id: (приёмов пищи, замеров сахара, последняя запись?)}
 save_media(session, user, kind, tg_file_id?, ...) -> MediaFile
+seed_notifications(session)                     # два уведомления на пустой таблице
+list_notification_templates(session, only_enabled=False) -> [NotificationTemplate]
+get_notification_template(session, code) -> NotificationTemplate?
+upsert_notification_template(session, code, **fields) -> NotificationTemplate
+delete_notification_template(session, code)     # вместе с настройками людей
+notification_prefs(session, user) -> {code: NotificationPref}
+set_notification_pref(session, user, code, mode, times="") -> NotificationPref
+notification_signal_times(session, user, signals, since) -> [datetime]  # локальные
+claim_notification_slot(session, user, code, slot, sent_on) -> bool     # False = уже было
+users_with_notifications(session) -> [User]     # onboarded и не заблокировавшие
+template_of(row) -> analytics.notify.Template · pref_of(row) -> Pref?
 save_meal(session, user, draft, eaten_at, media_id?, confirmed=True, product_id?) -> Meal
 load_meals(session, user, since?) -> list[Meal]
 load_meal_likes(session, user, since?) -> list[MealLike]        # для analytics
@@ -148,7 +167,7 @@ delete_user_data(session, user, drop_user=False)
 раздражительность, приливы, слабость, тошнота).
 
 `delete_user_data` чистит и `user_dictionary`, и `user_nutrition`, и
-`message_log` (переписка — такие же данные пользователя, как и дневник);
+`notification_prefs`/`notification_sends`, и `message_log` (переписка — такие же данные пользователя, как и дневник);
 `settings_kv` к пользователю не относится и переживает `/delete`. `feature_flags` — тоже
 настройка, а не запись дневника: скрытое меню переживает `/delete`.
 

@@ -654,6 +654,74 @@ class Correction(Base, TimestampMixin):
     new_value: Mapped[str | None] = mapped_column(Text)
 
 
+class NotificationTemplate(Base, TimestampMixin):
+    """One notification as the owner wrote it — the default for everyone.
+
+    Text, times and what a tap opens live here; a person's own choice lives in
+    `NotificationPref` and wins over this row wherever it is set. `enabled=0`
+    is the owner removing the notification: nobody gets it, whatever they set.
+    See `spec/notifications.md`.
+    """
+
+    __tablename__ = "notification_templates"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(128), nullable=False)
+    body: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    action: Mapped[str] = mapped_column(String(16), default="camera", nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), default="fixed", nullable=False)
+    times: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    signal: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    lead_min: Mapped[int] = mapped_column(Integer, default=15, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    sort: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class NotificationPref(Base, TimestampMixin):
+    """What one person changed about one notification (`spec/notifications.md`)."""
+
+    __tablename__ = "notification_prefs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "code", name="uq_notify_pref_user_code"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    code: Mapped[str] = mapped_column(String(32), nullable=False)
+    # default|fixed|smart|off
+    mode: Mapped[str] = mapped_column(String(16), default="default", nullable=False)
+    times: Mapped[str] = mapped_column(String(128), default="", nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
+class NotificationSend(Base):
+    """One delivered slot. The row goes in **before** the message is sent, so a
+    network failure cannot turn into a second notification on the next tick;
+    the unique key is what makes «once per slot per local day» true."""
+
+    __tablename__ = "notification_sends"
+    __table_args__ = (
+        UniqueConstraint("user_id", "code", "slot", "sent_on", name="uq_notify_send_slot"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    code: Mapped[str] = mapped_column(String(32), nullable=False)
+    slot: Mapped[str] = mapped_column(String(8), nullable=False)
+    sent_on: Mapped[str] = mapped_column(String(10), nullable=False)   # local date
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+
 __all__ = [
     "ActivitySample",
     "AnalysisResult",
@@ -669,6 +737,9 @@ __all__ = [
     "MealItem",
     "MediaFile",
     "Medication",
+    "NotificationPref",
+    "NotificationSend",
+    "NotificationTemplate",
     "Product",
     "ProductPhoto",
     "Symptom",

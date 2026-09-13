@@ -461,6 +461,10 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
             <?php endif; ?>
             <?php if ($liveError !== ''): ?>
             <br>Последняя попытка: <?= htmlspecialchars(mb_substr($liveError, 0, 200)) ?>
+            <?php $catalogHint = model_catalog_hint($liveError); ?>
+            <?php if ($catalogHint !== ''): ?>
+            <br><b><?= htmlspecialchars($catalogHint) ?></b>
+            <?php endif; ?>
             <?php endif; ?>
         </p>
 

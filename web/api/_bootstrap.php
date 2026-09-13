@@ -58,6 +58,7 @@ require_once WEB_ROOT . '/lib/vendor/settings_store.php';
 require_once WEB_ROOT . '/lib/vendor/model_catalog.php';
 require_once WEB_ROOT . '/lib/vendor/diag_log.php';
 require_once WEB_ROOT . '/lib/vendor/llm.php';
+require_once WEB_ROOT . '/lib/vendor/auto_pull.php';
 
 $GLOBALS['web_pdo'] = web_db_connect(WEB_DB_PATH);
 $GLOBALS['web_cfg'] = require WEB_ROOT . '/lib/vendor/config.php';
@@ -75,6 +76,14 @@ foreach (['OPENROUTER_API_KEY', 'YANDEX_API_KEY'] as $secretKey) {
     DiagLog::addSecret((string) ($GLOBALS['web_cfg'][$secretKey] ?? ''));
 }
 LLM::init($GLOBALS['web_cfg'], DiagLog::store());
+
+// Автообновление кода на время активной разработки (галочка в /admin). Пока она
+// стоит, каждый запрос тихо спрашивает у GitHub head отслеживаемой pull.php
+// ссылки: тот же коммит — ничего не происходит и ничего не печатается, новый —
+// pull.php выкладывает его, и страница открывается заново уже на новом коде.
+// Креды — из pull-config.php в корне сайта. Состояние лежит в каталоге данных,
+// который деплой не перезаписывает (WEB_DATA_DIR).
+AutoPull::run(AutoPull::options($GLOBALS['web_cfg'], ['state_dir' => WEB_DATA_DIR]));
 
 // PHP notices/warnings and uncaught throwables are invisible on shared hosting
 // otherwise: display_errors is off and the host's error_log is unreachable.

@@ -50,6 +50,7 @@ PHP ≥ 8.1 (нужен `openssl_pkey_derive` для web push), расширен
 ```
 php -l $(find web -name '*.php')     # синтаксис
 php web/tests/notifications.php      # расписание уведомлений и учёт отправок
+php web/tests/auto_pull.php          # проверка обновлений: конфиг, корень, подпись
 ```
 
 ## Обновление LLM-инфраструктуры

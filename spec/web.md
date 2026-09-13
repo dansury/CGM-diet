@@ -39,10 +39,13 @@ web/
     notifications.php       шаблоны уведомлений, личные настройки, тик расписания
                             (`spec/notifications.md`)
     vendor/                 зеркало site_yacloud_openrouter (llm.php, config.php,
-                            model_catalog.php, settings_store.php, diag_log.php)
+                            model_catalog.php, settings_store.php, diag_log.php,
+                            auto_pull.php)
   .htaccess                 запрет доступа к data/, lib/ и tests/
   tests/notifications.php   `php web/tests/notifications.php` — расписание и учёт
                             отправок; каталог закрыт `.htaccess`, как `lib/`
+  tests/auto_pull.php       `php web/tests/auto_pull.php` — что решает проверка
+                            обновлений до сети (конфиг, корень, пауза, подпись)
   data/                     legacy-расположение app.db; используется, только если
                             каталог рядом с корнем деплоя недоступен на запись
   README.md                 инструкция по деплою
@@ -214,7 +217,8 @@ AES-128-GCM через `openssl_pkey_derive`/`hash_hkdf`/`openssl_encrypt`, PHP 
 **[BLOCKED: сквозная проверка push нужна на реальном браузере/устройстве —
 в среде сборки нет push-сервиса для end-to-end теста]**, как и мост Samsung
 Health (`DEV_PLAN.md` фаза 9): код собран и соответствует спецификации,
-`php -l` зелёный, `php web/tests/notifications.php` зелёный, живой пуш не
+`php -l` зелёный, `php web/tests/notifications.php` и `php web/tests/auto_pull.php`
+зелёные, живой пуш не
 прогонялся.
 
 ## Регистрация и синхронизация (`js/sync.js`, `api/register.php`, `api/sync.php`)
@@ -324,6 +328,35 @@ environment>` либо `getUserMedia`, результат конвертируе
 счётчики телеметрии (визиты, UTM, использование функций,
 доставленные/кликнутые пуши), список зарегистрированных пользователей
 (без паролей).
+
+### Автообновление кода [WEB-ONLY: у бота нет деплоя через `pull.php` — контейнер обновляется `git pull` и перезапуском]
+
+Галочка «Проверять обновления при каждом запуске сервиса» (`web/lib/vendor/auto_pull.php`,
+вендорится из `site_yacloud_openrouter`, спека там — `/spec/auto_pull.md`). Пока она стоит,
+**каждое** обращение к `web/api/_bootstrap.php` (страницы админки, вызовы `api/*`) тихо
+спрашивает у GitHub head ссылки, которую отслеживает `pull.php`:
+
+- тот же коммит — не происходит ничего и ничего не печатается;
+- новый — `pull.php` вызывается по HTTP и выкладывает его, после чего браузер получает
+  `302` на тот же URL и открывает страницу уже на новом коде (запросы `api/*` и XHR
+  редиректа не получают — им отвечают данными).
+
+Креды не дублируются: репозиторий, ветка/PR, токен и пароль `pull.php` читаются из
+`pull-config.php` в корне сайта. Пароль там хранится хешем, поэтому запрос к `pull.php`
+подписывается той же кукой `pull_auth`, что скрипт выдаёт сам (HMAC по хешу).
+
+```
+AUTOPULL_ENABLED   checkbox  1 — проверять; 0 (по умолчанию) — выключено
+AUTOPULL_INTERVAL  int       не чаще раза в N секунд; 0 — при каждом обращении
+AUTOPULL_URL       text      адрес pull.php; пусто — вычисляется из DOCUMENT_ROOT
+```
+
+Кнопка «Проверить и обновить» рядом — разовая проверка независимо от галочки.
+Тесты того, что решается до сети (чтение `pull-config.php`, поиск корня, галочка,
+пауза после ошибки, подпись запроса к `pull.php`): `php web/tests/auto_pull.php`.
+Состояние последней проверки (`auto-pull.json`) лежит в `WEB_DATA_DIR`, то есть вне
+каталога, который перезаписывает деплой. Ошибка проверки гасит автоматику на 120 секунд
+и показывается в этой же карточке.
 
 ### Модель / LLM
 

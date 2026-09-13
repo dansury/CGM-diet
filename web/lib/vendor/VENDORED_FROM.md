@@ -12,7 +12,7 @@ re-copied here verbatim. Do not edit these files directly in `CGM-diet` —
 edit upstream and re-sync.
 
 Vendored files: `llm.php`, `config.php`, `settings_store.php`,
-`model_catalog.php`, `diag_log.php`.
+`model_catalog.php`, `diag_log.php`, `auto_pull.php`.
 
 Last synced from `site_yacloud_openrouter` commit: (see the CGM-diet commit
 that introduced `web/` for the paired site_yacloud_openrouter commit hash —

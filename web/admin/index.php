@@ -73,6 +73,22 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         }
         DiagLog::info('admin', 'Настройки модели сохранены');
         $notice = 'Сохранено';
+    } elseif ($action === 'save_autopull') {
+        // Галочка и оба её параметра пишутся всегда — иначе «выключить» и
+        // «очистить адрес» не сработали бы.
+        $store->setSetting('AUTOPULL_ENABLED', isset($_POST['AUTOPULL_ENABLED']) ? '1' : '0');
+        foreach (['AUTOPULL_INTERVAL', 'AUTOPULL_URL'] as $key) {
+            if (isset($_POST[$key])) $store->setSetting($key, trim((string) $_POST[$key]));
+        }
+        DiagLog::info('admin', 'Автообновление кода: ' . (isset($_POST['AUTOPULL_ENABLED']) ? 'включено' : 'выключено'));
+        $notice = 'Сохранено';
+    } elseif ($action === 'autopull_check') {
+        $report = AutoPull::check(AutoPull::options(require WEB_ROOT . '/lib/vendor/config.php',
+            ['state_dir' => WEB_DATA_DIR]), true);
+        $notice = $report['ok']
+            ? 'Автообновление: ' . $report['note'] . ' (head ' . substr($report['head'], 0, 7) . ')'
+            : 'Автообновление: ' . $report['error'];
+        DiagLog::info('admin', $notice);
     } elseif ($action === 'llm_probe') {
         // One real completion per configured leg — a wrong key or a model the
         // cloud folder does not serve is named here instead of surfacing hours
@@ -571,6 +587,51 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
         } else { el.select(); document.execCommand('copy'); done(); }
     }
     </script>
+
+    <form method="post" class="card">
+        <h2 style="margin-top:0;">Автообновление кода с GitHub</h2>
+        <input type="hidden" name="action" value="save_autopull">
+        <?php
+        $apOpts   = AutoPull::options($cfg, ['state_dir' => WEB_DATA_DIR]);
+        $apStatus = AutoPull::status($apOpts);
+        $apRoot   = AutoPull::root($apOpts);
+        $apCfg    = AutoPull::pullConfig($apRoot);
+        ?>
+        <p class="muted">На время активной разработки: каждое обращение к сервису тихо спрашивает у GitHub
+            head отслеживаемой ссылки. Тот же коммит — не происходит ничего; новый — <code>pull.php</code>
+            выкладывает его, и страница открывается заново уже на новом коде. Репозиторий, токен и пароль
+            <code>pull.php</code> берутся из <code>pull-config.php</code> в корне сайта — здесь их дублировать не нужно.
+            <?php if ($apCfg === null): ?>
+                <br><b>pull-config.php не найден (искали в <?= htmlspecialchars($apRoot) ?>) — включать нечего.</b>
+            <?php else: ?>
+                <br>Отслеживается: <b><?= htmlspecialchars($apCfg['repo']) ?></b> ·
+                <?= $apCfg['source'] === 'pr' ? 'PR #' . (int) $apCfg['pr_number'] : 'ветка ' . htmlspecialchars($apCfg['branch']) ?>.
+            <?php endif; ?>
+            <?php if ($apStatus['checked_at'] > 0): ?>
+                <br>Последняя проверка: <?= htmlspecialchars(date('Y-m-d H:i:s', $apStatus['checked_at'])) ?><?= $apStatus['note'] !== '' ? ' — ' . htmlspecialchars($apStatus['note']) : '' ?>.
+            <?php endif; ?>
+            <?php if ($apStatus['error'] !== ''): ?>
+                <br><b>Ошибка: <?= htmlspecialchars(mb_substr($apStatus['error'], 0, 200)) ?></b>
+            <?php endif; ?>
+        </p>
+        <div class="field">
+            <label><input type="checkbox" name="AUTOPULL_ENABLED" value="1" <?= $eff('AUTOPULL_ENABLED') === '1' ? 'checked' : '' ?>>
+                Проверять обновления при каждом запуске сервиса</label>
+        </div>
+        <div class="field"><label>Не чаще, сек (0 — при каждом обращении)</label>
+            <input type="number" min="0" step="1" name="AUTOPULL_INTERVAL" value="<?= htmlspecialchars($eff('AUTOPULL_INTERVAL')) ?>"></div>
+        <div class="field"><label>Адрес pull.php (пусто — вычисляется сам)</label>
+            <input type="text" name="AUTOPULL_URL" value="<?= htmlspecialchars($eff('AUTOPULL_URL')) ?>" placeholder="https://сайт/pull.php"></div>
+        <button class="btn btn-primary" type="submit">Сохранить</button>
+    </form>
+
+    <form method="post" class="card">
+        <h2 style="margin-top:0;">Проверить обновление сейчас</h2>
+        <input type="hidden" name="action" value="autopull_check">
+        <p class="muted">Спрашивает head у GitHub и, если коммит новее выложенного, запускает
+            <code>pull.php</code> — независимо от галочки выше.</p>
+        <button class="btn btn-secondary" type="submit">Проверить и обновить</button>
+    </form>
 
     <form method="post" class="card">
         <h2 style="margin-top:0;">Пароль администратора</h2>

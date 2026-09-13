@@ -306,6 +306,41 @@ async def load_meal_likes(
     return out
 
 
+async def meals_due_for_sugar_reminder(
+    session: AsyncSession,
+    *,
+    now: datetime,
+    window_start_min: int = 60,
+    window_end_min: int = 75,
+) -> list[tuple[Meal, User]]:
+    """Meals whose «померьте сахар» follow-up (T040) is due right now.
+
+    Only for people who actually track glucose (`glucose_prompt_enabled`,
+    `spec/onboarding.md` § Сахарный трек) and only once per meal — the stamp
+    is written before the message goes out, so a retried tick never doubles
+    up (same pattern as `mark_weight_prompt`/`mark_presence_reminder`).
+    """
+    since = now - timedelta(minutes=window_end_min)
+    until = now - timedelta(minutes=window_start_min)
+    rows = await session.execute(
+        select(Meal, User)
+        .join(User, User.id == Meal.user_id)
+        .where(
+            User.glucose_prompt_enabled.is_(True),
+            User.blocked_at.is_(None),
+            Meal.sugar_reminder_sent_at.is_(None),
+            Meal.eaten_at >= since,
+            Meal.eaten_at < until,
+        )
+    )
+    return list(rows.all())
+
+
+async def mark_sugar_reminder(session: AsyncSession, meal: Meal, at: datetime) -> None:
+    meal.sugar_reminder_sent_at = at
+    await session.flush()
+
+
 # ------------------------------------------------------------------ glucose
 
 async def save_glucose(

@@ -714,6 +714,11 @@ def glucose_log_button() -> InlineKeyboardButton:
     return InlineKeyboardButton(text="🩸 Записать сахар", callback_data="sg:log")
 
 
+def sugar_reminder() -> InlineKeyboardMarkup:
+    """Кнопка под напоминанием «померьте сахар» через 60–75 мин после еды (T040)."""
+    return InlineKeyboardMarkup(inline_keyboard=[[glucose_log_button()]])
+
+
 def weight_prompt() -> InlineKeyboardMarkup:
     """Кнопка из напоминания: попасть в ввод веса одним нажатием."""
     return InlineKeyboardMarkup(
@@ -948,6 +953,7 @@ __all__ = [
     "sex_picker",
     "sleep_setup",
     "stats_windows",
+    "sugar_reminder",
     "symptom_picker",
     "tag_button_label",
     "notification_actions",

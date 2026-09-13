@@ -772,3 +772,22 @@ Append-only. Не читается в рутинных циклах разраб
   `test_router_tree_builds` (`tests/test_config_handlers.py`) вместо
   повторного `build_router()`, иначе второй вызов падает
   `RuntimeError: Router is already attached`
+
+## 2026-09-13 — Напоминание «померьте сахар» через 60–75 мин после еды (T040)
+
+- `meals.sugar_reminder_sent_at` (миграция `81dec5104bdb`): отметка, чтобы
+  повторный тик не задвоил напоминание про ту же еду
+- `repo.meals_due_for_sugar_reminder` / `repo.mark_sugar_reminder`: те, у кого
+  `glucose_prompt_enabled` (тот же переключатель, что у мгновенной подсказки
+  под записью еды и `/set sugar on|off` — второй флаг не понадобился) и еда
+  60–75 мин назад без замера
+- `scheduler.sugar_reminder_loop`/`run_sugar_reminders`, тик
+  `NOTIFY_TICK_SECONDS` — узкое 15-минутное окно требует более частого тика,
+  чем часовые `weight_reminder_loop`/`presence_reminder_loop`. Тихие часы —
+  как у остальных системных напоминаний
+- `reporting.format_sugar_reminder()` + `keyboards.sugar_reminder()`
+  (кнопка `sg:log` — та же, что и у мгновенной подсказки)
+- `/settings` и `/set sugar on|off` описывают оба эффекта переключателя
+- Web-паритет (`CLAUDE.md` #11): `[TG-ONLY]`, задокументировано в
+  `spec/onboarding.md` § Сахарный трек, задача на реализацию — T082
+  (у web-уведомлений нет понятия «через N минут после события»)

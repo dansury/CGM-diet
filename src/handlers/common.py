@@ -198,7 +198,7 @@ async def cmd_settings(message: Message) -> None:
             f"Напоминать взвеситься: раз в {days} дн.\n"
             f"Гарвардская тарелка: {'вкл' if user.plate_enabled else 'выкл'}\n"
             f"Наблюдение за сном: {'вкл' if user.sleep_presence_enabled else 'выкл'}\n"
-            f"Замер после еды: {'предлагать' if user.glucose_prompt_enabled else 'не предлагать'}\n"
+            f"Замер после еды: {'предлагать и напомнить через час' if user.glucose_prompt_enabled else 'не предлагать'}\n"
             f"Приёмов пищи в день: {meals}\n"
             "Напоминания (время и вид каждого): /notify\n\n"
             "Изменить: <code>/set tz Europe/Moscow</code>, "
@@ -287,14 +287,15 @@ def _apply_setting(user, key: str, value: str) -> str:
             return "наблюдение за сном: выключено"
         raise ValueError("нужно on или off")
     if key == "sugar":
-        # Предложение прислать замер после каждой записи еды
+        # Предложение прислать замер после каждой записи еды и напоминание
+        # через 60–75 мин, если замера ещё нет (T040), — один переключатель
         # (`spec/onboarding.md` § Сахарный трек).
         if value.lower() in {"on", "вкл", "да", "1", "true"}:
             user.glucose_prompt_enabled = True
-            return "замер после еды: буду предлагать"
+            return "замер после еды: буду предлагать и напомню через час"
         if value.lower() in {"off", "выкл", "нет", "0", "false"}:
             user.glucose_prompt_enabled = False
-            return "замер после еды: больше не предлагаю"
+            return "замер после еды: больше не предлагаю и не напоминаю"
         raise ValueError("нужно on или off")
     if key == "meals":
         from src.analytics.plate import MAX_MEALS_PER_DAY, MIN_MEALS_PER_DAY

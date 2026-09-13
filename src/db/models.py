@@ -172,6 +172,9 @@ class Meal(Base, TimestampMixin):
     confidence: Mapped[float | None] = mapped_column(Float)
     confirmed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     corrected: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: stamped before the "померьте сахар" follow-up goes out (T040), so a
+    #: retried tick never sends it twice for the same meal
+    sugar_reminder_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     items: Mapped[list[MealItem]] = relationship(
         back_populates="meal", cascade="all, delete-orphan", lazy="selectin"

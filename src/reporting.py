@@ -239,6 +239,19 @@ def format_glucose_after_meal() -> str:
     )
 
 
+def format_sugar_reminder() -> str:
+    """Напоминание через 60–75 мин после еды (T040), если замера ещё нет.
+
+    Та же просьба, что и сразу после записи (`format_glucose_after_meal`), —
+    отдельным сообщением, потому что к этому моменту исходное уже потерялось
+    в переписке (`spec/onboarding.md` § Сахарный трек).
+    """
+    return (
+        "🩸 Прошёл час после еды — самое время замерить сахар. Пришлите число, "
+        "фото глюкометра или скриншот датчика."
+    )
+
+
 def glucose_hint(examples: Sequence[str] | None = None) -> str:
     return f"Напишите значение текстом — {quoted(examples or glucose_examples())}."
 
@@ -1391,6 +1404,7 @@ __all__ = [
     "glucose_examples",
     "glucose_hint",
     "format_glucose_after_meal",
+    "format_sugar_reminder",
     "glucose_prompt",
     "dish_example",
     "items_example",

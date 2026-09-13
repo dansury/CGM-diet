@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.base import StorageKey
@@ -15,6 +17,7 @@ from src.db import repo
 from src.handlers import goals as goals_handler
 from src.handlers import onboarding
 from src.handlers import sugar as sugar_handler
+from src.vision.schemas import ItemDraft, MealDraft
 from tests.test_handlers_flow import TG_ID, FakeBot, FakeCallback, FakeMessage
 
 
@@ -213,3 +216,71 @@ async def test_the_offer_can_be_switched_off_by_hand(engine, session, state):
     await common.cmd_set(FakeMessage(text="/set sugar off"))
     await session.refresh(user)
     assert user.glucose_prompt_enabled is False
+
+
+# --------------------------------------------------- напоминание через час (T040)
+
+
+class _RecordingBot:
+    def __init__(self) -> None:
+        self.sent: list[tuple[int, str]] = []
+
+    async def send_message(self, chat_id: int, text: str, **kwargs) -> None:
+        self.sent.append((chat_id, text))
+
+
+async def _meal(session, user, *, eaten_at) -> None:
+    draft = MealDraft(title="суп", items=[ItemDraft(name="суп", portion_g=300)])
+    await repo.save_meal(session, user, draft, eaten_at=eaten_at)
+
+
+async def test_sugar_reminder_fires_once_in_the_60_to_75_minute_window(engine, session):
+    from src import scheduler
+
+    user = await repo.get_or_create_user(session, TG_ID)
+    user.glucose_prompt_enabled = True
+    user.tz = "UTC"
+    eaten = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
+    await _meal(session, user, eaten_at=eaten)
+    await session.commit()
+
+    bot = _RecordingBot()
+    too_soon = eaten + timedelta(minutes=45)
+    assert await scheduler.run_sugar_reminders(bot, now=too_soon) == 0
+
+    on_time = eaten + timedelta(minutes=65)
+    assert await scheduler.run_sugar_reminders(bot, now=on_time) == 1
+    assert bot.sent[0][0] == TG_ID
+    assert "сахар" in bot.sent[0][1].lower()
+
+    # тот же тик (или следующий) не шлёт второе напоминание про ту же еду
+    assert await scheduler.run_sugar_reminders(bot, now=eaten + timedelta(minutes=70)) == 0
+
+
+async def test_sugar_reminder_is_off_for_those_who_do_not_track_glucose(engine, session):
+    from src import scheduler
+
+    user = await repo.get_or_create_user(session, TG_ID)  # glucose_prompt_enabled defaults False
+    user.tz = "UTC"
+    eaten = datetime(2026, 9, 12, 12, 0, tzinfo=UTC)
+    await _meal(session, user, eaten_at=eaten)
+    await session.commit()
+
+    bot = _RecordingBot()
+    assert await scheduler.run_sugar_reminders(bot, now=eaten + timedelta(minutes=65)) == 0
+
+
+async def test_sugar_reminder_respects_quiet_hours(engine, session):
+    from src import scheduler
+
+    user = await repo.get_or_create_user(session, TG_ID)
+    user.glucose_prompt_enabled = True
+    user.tz = "UTC"
+    # due window (21:00-21:15) falls inside quiet hours (QUIET_END=20)
+    eaten = datetime(2026, 9, 12, 20, 0, tzinfo=UTC)
+    await _meal(session, user, eaten_at=eaten)
+    await session.commit()
+
+    bot = _RecordingBot()
+    assert await scheduler.run_sugar_reminders(bot, now=eaten + timedelta(minutes=65)) == 0
+    assert bot.sent == []

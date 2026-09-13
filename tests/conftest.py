@@ -60,3 +60,21 @@ async def session(engine):
 @pytest.fixture
 def now() -> datetime:
     return datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture(scope="session")
+def dispatcher():
+    """The real, fully-wired `Dispatcher` (`src.bot.build_dispatcher`).
+
+    Every handler router is a module-level singleton that aiogram parents to
+    the `Dispatcher`/`root` it is built into exactly once — a second build
+    raises `RuntimeError: Router is already attached`. So this dispatcher is
+    built once for the whole test session and shared; per-test isolation
+    comes from a fresh `Bot` per test and from resetting the in-process
+    throttle caches the dispatcher's middlewares keep
+    (`src.handlers.user_tracking.reset_seen_cache`,
+    `src.handlers.presence.reset_presence_cache`).
+    """
+    from src.bot import build_dispatcher
+
+    return build_dispatcher()

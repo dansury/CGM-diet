@@ -751,3 +751,24 @@ Append-only. Не читается в рутинных циклах разраб
 - Тесты: `resolve()` на `personal` для дефолта/`fixed`/`smart`
   (`tests/test_notifications.py`), плюс сквозной тест
   `run_notifications` — шаблонное ночное время гасится, личный выбор шлётся
+
+## 2026-09-13 — Тесты диспетчера aiogram: фильтры, middleware, порядок (T043)
+
+- `tests/test_dispatcher.py`: реальный `Dispatcher.feed_update` (не прямой
+  вызов тел обработчиков, как в `test_handlers_flow.py`) против фейковой
+  `Bot`-сессии (`FakeSession(BaseSession)`, без сети) — закрывает пробел
+  из `docs/bmad/06-qa-plan.md` § 6
+- Фильтр: `admin.router` owner-only — владельцу отвечает, чужому падает молча
+  (без ответа), при этом `UserTrackingMiddleware` всё равно пишет чужого в
+  реестр и шлёт владельцу «🆕 Новый пользователь» — фильтр одного роутера не
+  останавливает внешний middleware
+- Middleware: `PresenceMiddleware` (на `dispatcher.update`, выше маршрутизации)
+  фиксирует появление, даже когда апдейт не подошёл ни одному роутеру
+- Порядок роутеров: `/notify` берёт специфичный `notify.router`, а не
+  catch-all `intake.router` (`F.text & ~F.text.startswith("/")`)
+- `build_dispatcher()`/`build_router()` парентят модуль-синглтоны роутеров
+  ровно один раз за процесс — общая `dispatcher`-фикстура вынесена в
+  `tests/conftest.py` (session-scope) и переиспользована существующим
+  `test_router_tree_builds` (`tests/test_config_handlers.py`) вместо
+  повторного `build_router()`, иначе второй вызов падает
+  `RuntimeError: Router is already attached`

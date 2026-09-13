@@ -54,6 +54,13 @@ load_free_models(*, max_age_h=24, allow_refresh=True) -> list[FreeModel]  # asyn
 
 `data/free_models.json` — рантайм-кэш, в репозиторий не коммитится.
 
+Обновление (T052) — `scheduler.free_catalog_loop`/`run_free_catalog_refresh`,
+тик `TICK_SECONDS` (час): при `free_fallback_enabled` и не `llm_mock`
+зовёт `load_free_models()` (сеть трогается, только если дисковый кэш старше
+`max_age_h`) и кладёт первые 4 модели в фолбэк-пул (`llm.set_free_alternates`).
+Раньше это делалось один раз в `bot.prepare_runtime` при старте процесса —
+без периодического тика пул не обновлялся бы до следующего рестарта бота.
+
 ## Фолбэк на 429 (`src/llm/fallback.py`)
 
 Свободные модели у провайдера лимитируются постоянно; голый 429 не должен

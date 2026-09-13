@@ -126,6 +126,17 @@ def test_a_notification_the_owner_disabled_is_off_for_everyone():
     assert resolve(disabled, Pref("meal", "fixed", ("07:00",))).active is False
 
 
+def test_the_template_default_is_not_personal():
+    assert resolve(MEAL, None).personal is False
+    assert resolve(MEAL, Pref("meal", "default")).personal is False
+
+
+def test_a_persons_own_choice_is_personal():
+    assert resolve(MEAL, Pref("meal", "fixed", ("07:00",))).personal is True
+    assert resolve(MEAL, Pref("meal", "smart"), smart=("08:15",)).personal is True
+    assert resolve(MEAL, Pref("meal", "smart"), smart=()).personal is True
+
+
 # ------------------------------------------------------------- due windows
 
 def _at(hhmm: str) -> datetime:
@@ -194,6 +205,35 @@ async def test_deleting_a_notification_removes_what_people_set_about_it(session)
     await repo.delete_notification_template(session, "meal")
     assert await repo.get_notification_template(session, "meal") is None
     assert "meal" not in await repo.notification_prefs(session, user)
+
+
+class _RecordingBot:
+    def __init__(self) -> None:
+        self.sent: list[tuple[int, str]] = []
+
+    async def send_message(self, chat_id: int, text: str, **kwargs) -> None:
+        self.sent.append((chat_id, text))
+
+
+@pytest.mark.asyncio
+async def test_quiet_hours_gate_the_template_default_but_not_a_personal_choice(session):
+    from src import scheduler
+
+    by_default = await repo.get_or_create_user(session, 701)
+    by_default.onboarded = True
+    chose_night = await repo.get_or_create_user(session, 702)
+    chose_night.onboarded = True
+    await repo.seed_notifications(session)  # "cgm" template fires at 22:00
+    await repo.set_notification_pref(session, chose_night, "cgm", mode="fixed", times="22:00")
+    await session.commit()
+
+    bot = _RecordingBot()
+    # 19:00 UTC = 22:00 local (both users default to Europe/Moscow, UTC+3)
+    night = datetime(2026, 9, 12, 19, 0, tzinfo=UTC)
+    sent = await scheduler.run_notifications(bot, now=night)
+
+    assert sent == 1
+    assert [chat_id for chat_id, _ in bot.sent] == [702]
 
 
 @pytest.mark.asyncio

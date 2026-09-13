@@ -64,11 +64,18 @@ class Pref:
 
 @dataclass(slots=True)
 class Schedule:
-    """Resolved plan for one notification and one person."""
+    """Resolved plan for one notification and one person.
+
+    `personal` — did the person themselves pick this mode (`fixed`/`smart`/
+    `off`), or is it just the admin template nobody has touched? Quiet hours
+    only apply to the latter: a template time is the owner's guess at a
+    reasonable moment, not this specific person opting into a 3 a.m. ping.
+    """
 
     code: str
     mode: str
     times: tuple[str, ...] = field(default_factory=tuple)
+    personal: bool = False
 
     @property
     def active(self) -> bool:
@@ -217,6 +224,7 @@ def resolve(
     mode = pref.mode if pref is not None else "default"
     if mode not in USER_MODES:
         mode = "default"
+    personal = mode != "default"
     if mode == "default":
         mode = template.mode if template.mode in MODES else "fixed"
         times = template.times
@@ -228,8 +236,8 @@ def resolve(
         times = smart or template.times
     if mode == "smart" and not smart:
         # No habit yet — the template's times stand in, and the mode says so.
-        return Schedule(template.code, "smart", template.times)
-    return Schedule(template.code, mode, tuple(times))
+        return Schedule(template.code, "smart", template.times, personal=personal)
+    return Schedule(template.code, mode, tuple(times), personal=personal)
 
 
 def due_slots(

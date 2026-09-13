@@ -82,10 +82,10 @@ def build_dispatcher() -> Dispatcher:
 async def prepare_runtime(bot: Bot, settings: Settings) -> None:
     """Everything that must be live before the first update is served.
 
-    Error reports need a Bot to send through; the model cache must be filled
-    from the DB (`spec/models.md`), and the free-model catalogue feeds the 429
-    fallback chain. All three degrade quietly — none of them may keep the bot
-    from starting.
+    Error reports need a Bot to send through, and the model cache must be
+    filled from the DB (`spec/models.md`) — both degrade quietly, neither may
+    keep the bot from starting. `start_scheduler` also arms the free-model
+    catalogue refresh feeding the 429 fallback chain (T052).
     """
     from src.errors_report import wire_error_reporter
 
@@ -115,18 +115,10 @@ async def prepare_runtime(bot: Bot, settings: Settings) -> None:
 
     from src.scheduler import start_scheduler
 
+    # Populates the 429 fallback pool (`set_free_alternates`) on its first
+    # tick and keeps it current afterwards — see `scheduler.run_free_catalog_refresh`
+    # (T052: the catalogue used to refresh only once, right here, at process start).
     start_scheduler(bot)
-
-    if settings.free_fallback_enabled and not settings.llm_mock:
-        from src.llm import set_free_alternates
-        from src.llm.free_catalog import load_free_models
-
-        try:
-            free = await load_free_models()
-            set_free_alternates([m.id for m in free[:4]])
-            log.info("free-model fallback: %d candidates", len(free))
-        except Exception:
-            log.warning("free-model catalogue unavailable; no 429 fallback", exc_info=True)
 
 
 async def run_polling(settings: Settings | None = None) -> None:

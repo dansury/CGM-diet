@@ -88,11 +88,9 @@ def test_manual_edit_rescales_nutrients_to_the_new_portion():
     assert new.notes.startswith("учтена ваша правка")
 
 
-def test_router_tree_builds():
-    from src.handlers import build_router
-
-    router = build_router()
-    assert [r.name for r in router.sub_routers] == [
+def test_router_tree_builds(dispatcher):
+    root = dispatcher.sub_routers[-1]  # build_router()'s "root", included last
+    assert [r.name for r in root.sub_routers] == [
         "admin",
         "admin_panel",
         "notify_admin",

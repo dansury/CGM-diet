@@ -19,9 +19,9 @@ from aiogram import Bot
 from src.analytics import notify as notify_math
 from src.db import repo
 from src.handlers.deps import session_scope, to_local
-from src.keyboards import notification_actions, weight_prompt
+from src.keyboards import notification_actions, sugar_reminder, weight_prompt
 from src.logging_setup import get_logger
-from src.reporting import WEIGHT_PROMPT, format_notification
+from src.reporting import WEIGHT_PROMPT, format_notification, format_sugar_reminder
 
 log = get_logger("scheduler")
 
@@ -32,17 +32,23 @@ NOTIFY_TICK_SECONDS = 300
 QUIET_START = 9
 QUIET_END = 20
 
+#: окно T040: сколько минут после еды ждём замер, прежде чем напомнить
+SUGAR_REMINDER_START_MIN = 60
+SUGAR_REMINDER_END_MIN = 75
+
 _task: asyncio.Task | None = None
 _hints_task: asyncio.Task | None = None
 _presence_task: asyncio.Task | None = None
 _notify_task: asyncio.Task | None = None
+_sugar_task: asyncio.Task | None = None
+_free_catalog_task: asyncio.Task | None = None
 
 
 def start_scheduler(
     bot: Bot, *, interval_s: int = TICK_SECONDS, notify_interval_s: int = NOTIFY_TICK_SECONDS
 ) -> asyncio.Task | None:
     """Поднять фоновые циклы. Повторный вызов не плодит вторую задачу."""
-    global _task, _hints_task, _presence_task, _notify_task
+    global _task, _hints_task, _presence_task, _notify_task, _sugar_task, _free_catalog_task
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -54,6 +60,10 @@ def start_scheduler(
         _presence_task = loop.create_task(presence_reminder_loop(bot, interval_s=interval_s))
     if _notify_task is None or _notify_task.done():
         _notify_task = loop.create_task(notification_loop(bot, interval_s=notify_interval_s))
+    if _sugar_task is None or _sugar_task.done():
+        _sugar_task = loop.create_task(sugar_reminder_loop(bot, interval_s=notify_interval_s))
+    if _free_catalog_task is None or _free_catalog_task.done():
+        _free_catalog_task = loop.create_task(free_catalog_loop(interval_s=interval_s))
     if _task is not None and not _task.done():
         return _task
     _task = loop.create_task(weight_reminder_loop(bot, interval_s=interval_s))
@@ -61,8 +71,9 @@ def start_scheduler(
 
 
 async def stop_scheduler() -> None:
-    global _task, _hints_task, _presence_task, _notify_task
-    for task in (_task, _hints_task, _presence_task, _notify_task):
+    global _task, _hints_task, _presence_task, _notify_task, _sugar_task, _free_catalog_task
+    tasks = (_task, _hints_task, _presence_task, _notify_task, _sugar_task, _free_catalog_task)
+    for task in tasks:
         if task is None:
             continue
         task.cancel()
@@ -76,6 +87,8 @@ async def stop_scheduler() -> None:
     _hints_task = None
     _presence_task = None
     _notify_task = None
+    _sugar_task = None
+    _free_catalog_task = None
 
 
 async def weight_reminder_loop(bot: Bot, *, interval_s: int = TICK_SECONDS) -> None:
@@ -213,8 +226,10 @@ async def run_notifications(bot: Bot, *, now: datetime | None = None) -> int:
     Настройка владельца — исходная, личная перекрывает её, «умное» считается
     по записям самого человека (`spec/notifications.md`). Отметка о слоте
     ставится **до** отправки: оборванная сеть не должна превращаться во второе
-    уведомление на следующем тике. Тихие часы здесь не действуют — время у
-    каждого уведомления своё, и назначил его человек или владелец.
+    уведомление на следующем тике. Тихие часы действуют только там, где время
+    не выбирал сам человек (`schedule.personal`) — иначе ночное время в
+    шаблоне будило бы всех, у кого стоит «как у всех» (T074); свой личный
+    выбор времени — включая ночное — тихие часы не трогают.
     """
     from src.handlers.notify import smart_for
 
@@ -234,6 +249,8 @@ async def run_notifications(bot: Bot, *, now: datetime | None = None) -> int:
                 wants_smart = (pref.mode if pref else template.mode) == "smart"
                 smart = await smart_for(session, user, template) if wants_smart else ()
                 schedule = notify_math.resolve(template, pref, smart=smart)
+                if not schedule.personal and not QUIET_START <= local.hour < QUIET_END:
+                    continue
                 for slot in notify_math.due_slots(schedule, local_now=local):
                     claimed = await repo.claim_notification_slot(
                         session,
@@ -262,19 +279,103 @@ async def run_notifications(bot: Bot, *, now: datetime | None = None) -> int:
     return sent
 
 
+async def sugar_reminder_loop(bot: Bot, *, interval_s: int = NOTIFY_TICK_SECONDS) -> None:
+    while True:
+        try:
+            await run_sugar_reminders(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("sugar reminder tick failed")
+        await asyncio.sleep(interval_s)
+
+
+async def run_sugar_reminders(bot: Bot, *, now: datetime | None = None) -> int:
+    """Один тик T040: кому 60–75 мин назад была еда и до сих пор нет замера.
+
+    Только тем, кто сахар действительно меряет (`users.glucose_prompt_enabled`,
+    тот же переключатель, что у мгновенной подсказки под записью еды и у
+    `/set sugar on|off`). Тихие часы — как у остальных системных напоминаний:
+    это не личный выбор времени, а расписание, которое назначил не человек.
+    Отметка ставится **до** отправки — оборванная сеть не должна превращаться
+    в повторное напоминание про ту же еду.
+    """
+    moment = now or datetime.now(UTC)
+    sent = 0
+    async with session_scope() as session:
+        due = await repo.meals_due_for_sugar_reminder(
+            session,
+            now=moment,
+            window_start_min=SUGAR_REMINDER_START_MIN,
+            window_end_min=SUGAR_REMINDER_END_MIN,
+        )
+        for meal, user in due:
+            local = to_local(moment, user)
+            if not QUIET_START <= local.hour < QUIET_END:
+                continue
+            await repo.mark_sugar_reminder(session, meal, moment)
+            try:
+                await bot.send_message(
+                    user.tg_id, format_sugar_reminder(), reply_markup=sugar_reminder()
+                )
+                sent += 1
+            except Exception:
+                log.warning("sugar reminder not delivered to %s", user.tg_id, exc_info=True)
+    return sent
+
+
+async def free_catalog_loop(*, interval_s: int = TICK_SECONDS) -> None:
+    while True:
+        try:
+            await run_free_catalog_refresh()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("free-model catalogue tick failed")
+        await asyncio.sleep(interval_s)
+
+
+async def run_free_catalog_refresh() -> int:
+    """Один тик T052: держать пул свободных моделей 429-фолбэка свежим.
+
+    `load_free_models` сама решает, устарел ли дисковый кэш (сутки по
+    умолчанию) — сеть трогается не на каждом тике. Раньше каталог тянулся
+    только один раз, в `bot.prepare_runtime` на старте процесса: без этого
+    тика `set_free_alternates` не обновлялся бы до следующего рестарта бота
+    (`spec/models.md`).
+    """
+    from src.config import load_settings
+    from src.llm import set_free_alternates
+    from src.llm.free_catalog import load_free_models
+
+    settings = load_settings()
+    if not settings.free_fallback_enabled or settings.llm_mock:
+        return 0
+    free = await load_free_models()
+    set_free_alternates([m.id for m in free[:4]])
+    log.info("free-model fallback: %d candidates", len(free))
+    return len(free)
+
+
 __all__ = [
     "QUIET_END",
     "QUIET_START",
+    "SUGAR_REMINDER_END_MIN",
+    "SUGAR_REMINDER_START_MIN",
     "TICK_SECONDS",
     "NOTIFY_TICK_SECONDS",
     "feature_hint_loop",
+    "free_catalog_loop",
     "notification_loop",
+    "run_free_catalog_refresh",
     "run_notifications",
     "presence_reminder_loop",
     "run_feature_hints",
     "run_presence_reminders",
+    "run_sugar_reminders",
     "run_weight_reminders",
     "start_scheduler",
     "stop_scheduler",
+    "sugar_reminder_loop",
     "weight_reminder_loop",
 ]

@@ -25,6 +25,7 @@ products           id user_id? barcode brand name name_norm
 product_photos     id product_id media_id side(front|back)
 meals              id user_id eaten_at source(photo|text|voice|label) title raw_text note
                    media_id kcal protein_g fat_g carbs_g fiber_g confidence confirmed corrected
+                   sugar_reminder_sent_at(datetime|null)   -- напоминание T040, `spec/onboarding.md`
 meal_items         id meal_id product_id? name name_norm portion_g kcal protein_g fat_g
                    carbs_g fiber_g tags[]
 glucose_readings   id user_id measured_at value_mmol unit_input
@@ -109,6 +110,9 @@ template_of(row) -> analytics.notify.Template · pref_of(row) -> Pref?
 save_meal(session, user, draft, eaten_at, media_id?, confirmed=True, product_id?) -> Meal
 load_meals(session, user, since?) -> list[Meal]
 load_meal_likes(session, user, since?) -> list[MealLike]        # для analytics
+meals_due_for_sugar_reminder(session, now, window_start_min=60, window_end_min=75)
+  -> [(Meal, User)]                          # T040, `spec/onboarding.md` § Сахарный трек
+mark_sugar_reminder(session, meal, at)
 save_glucose(session, user, drafts, source, media_id?) -> list[GlucoseReading]  # дедуп
 load_points(session, user, since?) -> list[GlucosePoint]
 find_product / save_product(session, user, draft, media_ids=[(id, side)]) -> Product  # upsert

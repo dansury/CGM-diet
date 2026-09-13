@@ -213,8 +213,10 @@ async def run_notifications(bot: Bot, *, now: datetime | None = None) -> int:
     Настройка владельца — исходная, личная перекрывает её, «умное» считается
     по записям самого человека (`spec/notifications.md`). Отметка о слоте
     ставится **до** отправки: оборванная сеть не должна превращаться во второе
-    уведомление на следующем тике. Тихие часы здесь не действуют — время у
-    каждого уведомления своё, и назначил его человек или владелец.
+    уведомление на следующем тике. Тихие часы действуют только там, где время
+    не выбирал сам человек (`schedule.personal`) — иначе ночное время в
+    шаблоне будило бы всех, у кого стоит «как у всех» (T074); свой личный
+    выбор времени — включая ночное — тихие часы не трогают.
     """
     from src.handlers.notify import smart_for
 
@@ -234,6 +236,8 @@ async def run_notifications(bot: Bot, *, now: datetime | None = None) -> int:
                 wants_smart = (pref.mode if pref else template.mode) == "smart"
                 smart = await smart_for(session, user, template) if wants_smart else ()
                 schedule = notify_math.resolve(template, pref, smart=smart)
+                if not schedule.personal and not QUIET_START <= local.hour < QUIET_END:
+                    continue
                 for slot in notify_math.due_slots(schedule, local_now=local):
                     claimed = await repo.claim_notification_slot(
                         session,

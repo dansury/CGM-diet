@@ -52,13 +52,18 @@ TABLE notification_prefs
 Разрешение (`resolve_schedule`):
 
 ```
-effective(template, pref) -> (mode, times)
-  template.enabled = 0                  -> ('off', [])
-  pref is None or pref.mode = 'default' -> (template.mode, template.times)
-  pref.mode = 'fixed'                   -> ('fixed', pref.times or template.times)
-  pref.mode = 'smart'                   -> ('smart', smart_times(...) or template.times)
-  pref.mode = 'off'                     -> ('off', [])
+effective(template, pref) -> (mode, times, personal)
+  template.enabled = 0                  -> ('off', [], —)
+  pref is None or pref.mode = 'default' -> (template.mode, template.times, False)
+  pref.mode = 'fixed'                   -> ('fixed', pref.times or template.times, True)
+  pref.mode = 'smart'                   -> ('smart', smart_times(...) or template.times, True)
+  pref.mode = 'off'                     -> ('off', [], —)
 ```
+
+`personal` — выбрал ли этот режим сам человек, а не унаследовал шаблон
+владельца молча. От него зависят тихие часы (см. «бот» ниже): ночное время
+в шаблоне не должно будить всех, у кого стоит «как у всех», но свой личный
+выбор времени тихие часы не трогают.
 
 ## «Умное» время (`src/analytics/notify.py`, `web/app/js/notify.js`)
 
@@ -112,6 +117,12 @@ smart_times(minutes:list[int], *, slots:int, lead_min:int,
 То же разрешение расписания, локальное время — из `users.tz`. Дубль отсекает
 `notification_sends UNIQUE(user_id, code, slot, sent_on)`; отметка ставится до
 `send_message`, как у остальных напоминаний бота.
+
+Тихие часы (`QUIET_START`/`QUIET_END`, как у взвешивания и подсказок) режут
+слот, если `personal=False` — то есть время не выбирал сам человек, это
+просто время шаблона владельца. Личный выбор (`fixed`/`smart` от самого
+человека) тихие часы не трогает: ночная смена или ранний подъём — его
+решение, а не то, что назначил кто-то другой.
 
 ## Нажатие на уведомление
 

@@ -725,3 +725,29 @@ Append-only. Не читается в рутинных циклах разраб
 - Правка лежит в вендорном `web/lib/vendor/llm.php` впереди апстрима:
   `site_yacloud_openrouter` из этой сессии был недоступен, долг записан в
   `web/lib/vendor/VENDORED_FROM.md` и в `TODO.md` (T081)
+
+## 2026-09-13 — Qwen3.6 35B A3B в вижн-моделях web-админки
+
+- `web/lib/vendor/config.php → AVAILABLE_MODELS` получил строку
+  `qwen3.6-35b-a3b` (Yandex AI Studio, `vision => true`) и стал дефолтом
+  `LLM_VISION_MODEL` (`yandex:qwen3.6-35b-a3b`). Модель уже Ready у
+  провайдера, но её слаг без `-vl-` не ловится эвристикой
+  `ModelCatalog::yandexSeesImages()` (T072), поэтому строка прописана вручную,
+  а не через живой каталог
+- Правка вендорная (`config.php` мирроит `site_yacloud_openrouter`, апстрим
+  из сессии недоступен) — долг зафиксирован в `VENDORED_FROM.md` и `TODO.md`
+  (T081). `php web/tests/llm_chain.php` не задет
+
+## 2026-09-13 — Тихие часы не будят «как у всех» ночным временем шаблона (T074)
+
+- `Schedule.personal` (`src/analytics/notify.py`): выбрал ли режим/время сам
+  человек (`fixed`/`smart` от него) или это непереопределённый шаблон
+  владельца. `resolve()` теперь возвращает этот флаг вместе с расписанием
+- `src/scheduler.py → run_notifications`: тихие часы (`QUIET_START/END`)
+  режут слот, только если `personal=False` — то есть время не выбирал сам
+  человек. Личный выбор времени, включая ночное, тихие часы не трогают
+- `spec/notifications.md` обновлена: `effective()` и раздел «бот» описывают
+  `personal` и правило тихих часов
+- Тесты: `resolve()` на `personal` для дефолта/`fixed`/`smart`
+  (`tests/test_notifications.py`), плюс сквозной тест
+  `run_notifications` — шаблонное ночное время гасится, личный выбор шлётся

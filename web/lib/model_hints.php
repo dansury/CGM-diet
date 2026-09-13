@@ -122,6 +122,26 @@ function model_live_suggestions(array $models, string $provider, bool $vision, i
     return $out;
 }
 
+/**
+ * Plain-words note under the catalogue error, or '' when the text speaks for
+ * itself. A provider answering neither its own JSON error nor a 401 is not
+ * refusing us — something in front of it is, and «Access denied by security
+ * policy» reads like a bad key until someone says otherwise.
+ */
+function model_catalog_hint(string $error): string {
+    if ($error === '') return '';
+    $e = mb_strtolower($error);
+    if (strpos($e, 'access denied by security policy') !== false) {
+        return 'Так отвечает не провайдер, а защита хостинга: исходящие запросы к нему закрыты. '
+            . 'Ключ здесь ни при чём — попросите хостинг открыть исходящие HTTPS-соединения '
+            . 'или используйте второго провайдера.';
+    }
+    if (strpos($e, 'http 401') !== false) return 'Провайдер не принял ключ.';
+    if (strpos($e, 'no api key or folder id') !== false) return 'Не заполнены ключ или идентификатор папки.';
+    if (strpos($e, 'network:') !== false) return 'До провайдера не дошёл сам запрос: сеть хостинга или таймаут.';
+    return '';
+}
+
 /** Reason to append to a red probe line: "provider:slug" → why it failed. */
 function model_probe_hint(string $tag, array $models, array $liveProviders): string {
     $parts = explode(':', $tag, 2);

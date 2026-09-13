@@ -49,6 +49,9 @@ try {
     $status = 'error';
     $result = null;
     $errorMessage = $e->getMessage();
+    // What the user is told: one sentence about the cause, not the numbered
+    // chain of every candidate — that goes to the log right below.
+    $shortReason = LLM::failureReason();
     // Everything the admin log needs to explain the failure on its own: what
     // was sent, which candidates were tried and how the layer was configured.
     DiagLog::error('recognize', 'Распознавание не удалось: ' . $errorMessage, [
@@ -77,7 +80,8 @@ try {
 
 if ($status === 'error') {
     // The user gets the short reason; the whole candidate chain is in the log.
-    json_error('recognition failed: ' . ($errorMessage ?? 'unknown error'), 502);
+    $short = ($shortReason ?? '') !== '' ? $shortReason : 'модель не ответила';
+    json_error('Не удалось распознать (' . $short . '). Попробуйте ещё раз или опишите блюдо текстом.', 502);
 }
 
 json_out($result);

@@ -90,5 +90,13 @@ check('неизвестный слаг судится по провайдеру'
     strpos(model_probe_hint('yandex:llama-3.3-70b-instruct', $models, $live), 'нет в живом каталоге') !== false, true);
 check('строка без провайдера пропускается', model_probe_hint('deepseek-r1', $models, $live), '');
 
+// ── причина, по которой каталог не пришёл ────────────────────────────────
+check('403 от защиты хостинга объясняется словами, а не как отказ провайдера',
+    strpos(model_catalog_hint('openrouter: HTTP 403: { "success": false, "error": "Access denied by security policy." }'),
+        'защита хостинга') !== false, true);
+check('401 — про ключ', model_catalog_hint('HTTP 401: no auth'), 'Провайдер не принял ключ.');
+check('понятной ошибке пояснение не придумываем', model_catalog_hint('HTTP 500: oops'), '');
+check('пустой ошибке — пустое пояснение', model_catalog_hint(''), '');
+
 echo $failures ? "\n{$failures} проверок не прошло\n" : "\nвсе проверки прошли\n";
 exit($failures ? 1 : 0);

@@ -14,6 +14,26 @@ edit upstream and re-sync.
 Vendored files: `llm.php`, `config.php`, `settings_store.php`,
 `model_catalog.php`, `diag_log.php`, `auto_pull.php`.
 
+## Ahead of upstream — re-sync debt
+
+`llm.php` currently carries one change that has **not** landed in
+`site_yacloud_openrouter` yet (the repository was not reachable from the
+session that wrote it). Port it there, with its spec update, and re-sync this
+mirror afterwards — until then, a blind re-copy from upstream loses it:
+
+- `LLMHttpError` (provider, status, body + `providerWide()`), thrown by
+  `LLM::http()` instead of a bare `RuntimeException`;
+- `LLM::candidateChain(vision)` extracted out of `dispatch()`, dropping models
+  the provider's own live catalogue does not list and, on a photo step, models
+  that do not take images; `catalogueRow()` / `rowIsDead()` replace
+  `slugInCatalogue()`;
+- a provider whose refusal is not about the model (401/407, a 403 that is not
+  the provider's own error envelope) is skipped for the rest of the chain;
+- `LLM::failureReason()` — one sentence per provider for the end user.
+
+Spec of the behaviour: `spec/web.md` § Модель / LLM → Цепочка кандидатов.
+Test: `php web/tests/llm_chain.php`.
+
 Last synced from `site_yacloud_openrouter` commit: (see the CGM-diet commit
 that introduced `web/` for the paired site_yacloud_openrouter commit hash —
 this file is updated on every re-sync).

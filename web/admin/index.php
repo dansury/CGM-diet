@@ -93,10 +93,16 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
         // One real completion per configured leg — a wrong key or a model the
         // cloud folder does not serve is named here instead of surfacing hours
         // later as «не получилось распознать».
-        LLM::init(require WEB_ROOT . '/lib/vendor/config.php', DiagLog::store());
+        $probeCfg = require WEB_ROOT . '/lib/vendor/config.php';
+        LLM::init($probeCfg, DiagLog::store());
+        $probeModels = (array) ($probeCfg['AVAILABLE_MODELS'] ?? []);
+        $probeLive = model_live_providers($probeModels);
         $lines = [];
         foreach (LLM::probe() as $leg) {
-            $lines[] = ($leg['ok'] ? '✅ ' : '⛔ ') . $leg['leg'] . ' — ' . $leg['model'] . ': ' . $leg['text'];
+            // «Failed to get model» reads as a provider outage; say when it is
+            // just a model the folder does not serve.
+            $hint = empty($leg['ok']) ? model_probe_hint((string) $leg['model'], $probeModels, $probeLive) : '';
+            $lines[] = ($leg['ok'] ? '✅ ' : '⛔ ') . $leg['leg'] . ' — ' . $leg['model'] . ': ' . $leg['text'] . $hint;
         }
         $notice = $lines ? implode("\n", $lines) : 'Проверять нечего: ни один провайдер не настроен';
     } elseif ($action === 'diag_clear') {
@@ -180,6 +186,8 @@ $modelGroups = [];
 foreach ((array) ($cfg['AVAILABLE_MODELS'] ?? []) as $model) {
     if (empty($model['ocr_only'])) $modelGroups[(string) ($model['group'] ?? 'Модели')][] = $model;
 }
+/** Providers that answered GET /models — only their rows can be disproved. */
+$liveProviders = model_live_providers((array) ($cfg['AVAILABLE_MODELS'] ?? []));
 /** Price hint: RUB per 1k for hardcoded rows, USD per 1M for live ones. */
 $modelPrice = static function (array $m): string {
     $num = static fn (float $v): string => rtrim(rtrim(number_format($v, 2, '.', ''), '0'), '.');
@@ -200,7 +208,7 @@ $modelPrice = static function (array $m): string {
  * model withdrawn). It stays in the list as its own option — otherwise the
  * browser would silently pick the first one and saving would swap the model.
  */
-$modelSelect = static function (string $name, string $current, callable $value, ?callable $filter = null, string $empty = '') use ($modelGroups, $modelPrice): string {
+$modelSelect = static function (string $name, string $current, callable $value, ?callable $filter = null, string $empty = '') use ($modelGroups, $modelPrice, $liveProviders): string {
     $esc = static fn (string $v): string => htmlspecialchars($v, ENT_QUOTES, 'UTF-8');
     $html = '<select name="' . $esc($name) . '">';
     if ($empty !== '') {
@@ -216,6 +224,7 @@ $modelSelect = static function (string $name, string $current, callable $value, 
             $val = (string) $value($m);
             if ($val === $current) $known = true;
             $body .= '<option value="' . $esc($val) . '"' . ($val === $current ? ' selected' : '') . '>'
+                . $esc(model_mark($m, $liveProviders))
                 . $esc((string) $m['label']) . ' — ' . $esc((string) $m['provider']) . '/' . $esc((string) $m['full_id'])
                 . $esc($modelPrice($m)) . '</option>';
         }
@@ -237,6 +246,26 @@ $visionCurrent = $eff('LLM_VISION_MODEL');
 if ($visionCurrent !== '' && strpos($visionCurrent, ':') === false) {
     $visionRow = LLM::resolveModelSpec($visionCurrent);
     if ($visionRow !== null) $visionCurrent = $visionRow['provider'] . ':' . $visionRow['full_id'];
+}
+
+// Picked models the provider answered for but did not list: every request to
+// them comes back «Failed to get model», so the page says it before the probe.
+$effPicks = [];
+foreach (array_merge(array_keys(MODEL_PICK_FIELDS), ['LLM_FALLBACK_MODELS']) as $pickKey) {
+    $effPicks[$pickKey] = $eff($pickKey);
+}
+$deadPicks = model_dead_picks($effPicks, (array) ($cfg['AVAILABLE_MODELS'] ?? []), $liveProviders);
+// Что взять взамен — один раз на провайдера, а не построчно: для vision-поля
+// список другой (только зрячие), поэтому ключ составной.
+$deadSuggest = [];
+foreach ($deadPicks as $pick) {
+    $key = $pick['provider'] . ($pick['vision'] ? '|vision' : '|text');
+    if (isset($deadSuggest[$key])) continue;
+    $deadSuggest[$key] = [
+        'provider' => $pick['provider'],
+        'vision'   => $pick['vision'],
+        'models'   => model_live_suggestions((array) ($cfg['AVAILABLE_MODELS'] ?? []), $pick['provider'], $pick['vision']),
+    ];
 }
 
 $liveRows = ModelCatalog::decode((string) ($cfg['MODEL_CATALOG_MODELS'] ?? ''));
@@ -312,6 +341,8 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
     table { width: 100%; border-collapse: collapse; font-size: 14px; }
     td, th { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; }
     .notice { background: var(--accent); color: var(--accent-fg); padding: 10px 14px; border-radius: 10px; margin-bottom: 16px; }
+    .dead-picks { border: 1px solid var(--danger); color: var(--danger); border-radius: 10px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; }
+    .dead-picks ul { margin: 6px 0; padding-left: 20px; }
     .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 16px; }
     .stat { text-align: center; }
     .stat .n { font-size: 24px; font-weight: 700; }
@@ -353,6 +384,27 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
     <form method="post" class="card">
         <h2 style="margin-top:0;">Модель / LLM</h2>
         <input type="hidden" name="action" value="save_llm">
+
+        <?php if ($deadPicks): ?>
+        <div class="dead-picks">
+            <b>Этих моделей нет в живом каталоге провайдера</b> — на запрос к ним приходит
+            <code>Failed to get model</code>:
+            <ul>
+            <?php foreach ($deadPicks as $pick): ?>
+                <li><?= htmlspecialchars($pick['field']) ?> — <code><?= htmlspecialchars($pick['tag']) ?></code></li>
+            <?php endforeach; ?>
+            </ul>
+            <?php foreach ($deadSuggest as $suggest): ?>
+            <?php if ($suggest['models']): ?>
+            В каталоге <?= htmlspecialchars($suggest['provider']) ?><?= $suggest['vision'] ? ' со зрением' : '' ?>:
+            <?= htmlspecialchars(implode(', ', $suggest['models'])) ?>.<br>
+            <?php else: ?>
+            В каталоге <?= htmlspecialchars($suggest['provider']) ?> нет ни одной модели<?= $suggest['vision'] ? ' со зрением' : '' ?>.<br>
+            <?php endif; ?>
+            <?php endforeach; ?>
+            Выберите модель из списков ниже или включите нужную в каталоге облака.
+        </div>
+        <?php endif; ?>
 
         <div class="field">
             <label>Провайдер по умолчанию</label>
@@ -396,7 +448,7 @@ $pushEnabledCount = (int) $pdo->query('SELECT COUNT(*) FROM push_subscriptions W
         <div class="field">
             <label>Последняя попытка на Yandex (full_id без gpt://)</label>
             <?= $modelSelect('YANDEX_FALLBACK_MODEL', $eff('YANDEX_FALLBACK_MODEL'), $bySlug, static fn (array $m): bool => ($m['provider'] ?? '') === 'yandex', '— не задана —') ?>
-            <p class="muted" style="font-size:13px;">Модель, которой нет в живом каталоге провайдера, в запасные не подставляется: слепой запрос к ней отвечает <code>Failed to get model</code> и прячет настоящую причину сбоя.</p>
+            <p class="muted" style="font-size:13px;"><b>⛔</b> в списках — провайдер ответил на запрос каталога, но этой модели в нём не назвал: слепой запрос к ней отвечает <code>Failed to get model</code> и прячет настоящую причину сбоя. В запасные такая модель не подставляется.</p>
         </div>
 
         <p class="muted" style="font-size:13px;">

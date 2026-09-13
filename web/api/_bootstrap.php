@@ -54,6 +54,7 @@ putenv('DB_PATH=' . WEB_DB_PATH);
 
 require_once WEB_ROOT . '/lib/db.php';
 require_once WEB_ROOT . '/lib/webpush.php';
+require_once WEB_ROOT . '/lib/model_hints.php';
 require_once WEB_ROOT . '/lib/vendor/settings_store.php';
 require_once WEB_ROOT . '/lib/vendor/model_catalog.php';
 require_once WEB_ROOT . '/lib/vendor/diag_log.php';
@@ -68,7 +69,7 @@ $GLOBALS['web_cfg'] = require WEB_ROOT . '/lib/vendor/config.php';
 DiagLog::init(WEB_DB_PATH, DiagLog::codeStamp([
     WEB_ROOT . '/lib/vendor/llm.php', WEB_ROOT . '/lib/vendor/config.php',
     WEB_ROOT . '/lib/vendor/model_catalog.php', WEB_ROOT . '/lib/db.php',
-    WEB_ROOT . '/lib/notifications.php',
+    WEB_ROOT . '/lib/notifications.php', WEB_ROOT . '/lib/model_hints.php',
     WEB_ROOT . '/api/recognize.php', WEB_ROOT . '/admin/index.php',
     WEB_ROOT . '/app/js/app.js',
 ]));

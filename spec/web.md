@@ -38,6 +38,8 @@ web/
     webpush.php             VAPID JWT (ES256) + шифрование aes128gcm (RFC 8291/8292)
     notifications.php       шаблоны уведомлений, личные настройки, тик расписания
                             (`spec/notifications.md`)
+    model_hints.php         подтверждена ли выбранная модель живым каталогом
+                            провайдера (§ Модель / LLM)
     vendor/                 зеркало site_yacloud_openrouter (llm.php, config.php,
                             model_catalog.php, settings_store.php, diag_log.php,
                             auto_pull.php)
@@ -46,6 +48,8 @@ web/
                             отправок; каталог закрыт `.htaccess`, как `lib/`
   tests/auto_pull.php       `php web/tests/auto_pull.php` — что решает проверка
                             обновлений до сети (конфиг, корень, пауза, подпись)
+  tests/model_hints.php     `php web/tests/model_hints.php` — какая модель не
+                            подтверждена провайдером и что предложить взамен
   data/                     legacy-расположение app.db; используется, только если
                             каталог рядом с корнем деплоя недоступен на запись
   README.md                 инструкция по деплою
@@ -217,8 +221,8 @@ AES-128-GCM через `openssl_pkey_derive`/`hash_hkdf`/`openssl_encrypt`, PHP 
 **[BLOCKED: сквозная проверка push нужна на реальном браузере/устройстве —
 в среде сборки нет push-сервиса для end-to-end теста]**, как и мост Samsung
 Health (`DEV_PLAN.md` фаза 9): код собран и соответствует спецификации,
-`php -l` зелёный, `php web/tests/notifications.php` и `php web/tests/auto_pull.php`
-зелёные, живой пуш не
+`php -l` зелёный, `php web/tests/notifications.php`, `php web/tests/auto_pull.php`
+и `php web/tests/model_hints.php` зелёные, живой пуш не
 прогонялся.
 
 ## Регистрация и синхронизация (`js/sync.js`, `api/register.php`, `api/sync.php`)
@@ -397,6 +401,28 @@ YANDEX_API_KEY            password  первые и последние 4 зна�
 делают это вручную. Сеть недоступна — страница не ломается: остаётся прежний
 кэш, причина показана под списками.
 
+Живой каталог — ещё и проверка выбора. Провайдер, ответивший на `GET /models`,
+перечислил всё, что реально обслуживает; его строка, которой в этом ответе нет,
+помечается в списках знаком `⛔` перед названием (в хвосте `<option>` его срезала
+бы ширина поля) — слепой запрос к такой модели отвечает `Failed to get model`. Провайдер, каталог которого не получен, ничего не
+доказывает: его строки не помечаются (`web/lib/model_hints.php`):
+
+```
+model_live_providers(models)->[provider]            # у кого есть строки live=true
+model_unconfirmed(row, live)->bool                  # провайдер ответил, модель не назвал
+model_mark(row, live)->str                          # подпись к <option>
+model_find(models, spec, provider?)->row|null       # short id | slug | provider:slug
+model_dead_picks(cfg, models, live)->[{field,tag,provider,vision}]
+model_live_suggestions(models, provider, vision, limit)->[row]
+model_probe_hint(tag, models, live)->str
+```
+
+Над списками краснеет предупреждение, если неподтверждённая модель выбрана:
+названы поле («модель по умолчанию», «vision-модель», «запасная №1–3»,
+«последняя попытка openrouter|yandex»), слаг и живые модели на замену (для
+vision-поля — только со зрением). Выбор не подменяется и не запрещается:
+владелец может знать о модели раньше кэша.
+
 ### Проверка провайдеров
 
 `POST action=llm_probe` → `LLM::probe()` (`site_yacloud_openrouter`,
@@ -404,7 +430,9 @@ YANDEX_API_KEY            password  первые и последние 4 зна�
 (модель по умолчанию, vision-модель, запасные каждого провайдера), результат
 строками ✅/⛔ с ответом провайдера. Неверный ключ, чужая папка и модель, не
 включённая в каталоге облака, называются здесь, а не через часы в виде
-«не получилось распознать».
+«не получилось распознать». К строке про модель, которой нет в живом каталоге,
+дописывается причина (`model_probe_hint`) — иначе `Failed to get model` читается
+как сбой провайдера.
 
 ### Лог
 

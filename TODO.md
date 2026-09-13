@@ -33,11 +33,12 @@
 ## Приоритет 5 — то, что открылось этой работой
 
 - [ ] T081 Перенести фильтрацию цепочки кандидатов в `site_yacloud_openrouter`
-      и пересинхронизировать зеркало: `web/lib/vendor/llm.php` сейчас впереди
-      апстрима (`LLMHttpError`, `LLM::candidateChain`, `LLM::failureReason` —
-      список в `web/lib/vendor/VENDORED_FROM.md` § Ahead of upstream). Слепое
-      перекопирование из апстрима потеряет правку. Сделано в CGM-diet, потому
-      что репозиторий апстрима из сессии был недоступен
+      и пересинхронизировать зеркало: `web/lib/vendor/llm.php` и `config.php`
+      сейчас впереди апстрима (`LLMHttpError`, `LLM::candidateChain`,
+      `LLM::failureReason`, каталожная строка `qwen3.6-35b-a3b` + дефолтная
+      vision-модель — список в `web/lib/vendor/VENDORED_FROM.md` § Ahead of
+      upstream). Слепое перекопирование из апстрима потеряет правку. Сделано
+      в CGM-diet, потому что репозиторий апстрима из сессии был недоступен
 
 - [ ] T072 Пометки зрения у живых моделей Яндекса ставятся по имени слага
       (`gemma-3-*`, `*-vl-*`, …) — `GET /v1/models` модальности не отдаёт.

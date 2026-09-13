@@ -30,6 +30,12 @@ mirror afterwards — until then, a blind re-copy from upstream loses it:
 - a provider whose refusal is not about the model (401/407, a 403 that is not
   the provider's own error envelope) is skipped for the rest of the chain;
 - `LLM::failureReason()` — one sentence per provider for the end user.
+- `config.php → AVAILABLE_MODELS` carries a `qwen3.6-35b-a3b` (Yandex AI
+  Studio) row with `vision => true` and is the default `LLM_VISION_MODEL`
+  (`yandex:qwen3.6-35b-a3b`). Ready at the provider, but its slug has no
+  `-vl-` segment so `ModelCatalog::yandexSeesImages()` can't name it — see
+  T072. A blind re-copy from upstream would drop the row and reset the
+  default.
 
 Spec of the behaviour: `spec/web.md` § Модель / LLM → Цепочка кандидатов.
 Test: `php web/tests/llm_chain.php`.

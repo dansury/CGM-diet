@@ -41,13 +41,14 @@ _hints_task: asyncio.Task | None = None
 _presence_task: asyncio.Task | None = None
 _notify_task: asyncio.Task | None = None
 _sugar_task: asyncio.Task | None = None
+_free_catalog_task: asyncio.Task | None = None
 
 
 def start_scheduler(
     bot: Bot, *, interval_s: int = TICK_SECONDS, notify_interval_s: int = NOTIFY_TICK_SECONDS
 ) -> asyncio.Task | None:
     """Поднять фоновые циклы. Повторный вызов не плодит вторую задачу."""
-    global _task, _hints_task, _presence_task, _notify_task, _sugar_task
+    global _task, _hints_task, _presence_task, _notify_task, _sugar_task, _free_catalog_task
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -61,6 +62,8 @@ def start_scheduler(
         _notify_task = loop.create_task(notification_loop(bot, interval_s=notify_interval_s))
     if _sugar_task is None or _sugar_task.done():
         _sugar_task = loop.create_task(sugar_reminder_loop(bot, interval_s=notify_interval_s))
+    if _free_catalog_task is None or _free_catalog_task.done():
+        _free_catalog_task = loop.create_task(free_catalog_loop(interval_s=interval_s))
     if _task is not None and not _task.done():
         return _task
     _task = loop.create_task(weight_reminder_loop(bot, interval_s=interval_s))
@@ -68,8 +71,9 @@ def start_scheduler(
 
 
 async def stop_scheduler() -> None:
-    global _task, _hints_task, _presence_task, _notify_task, _sugar_task
-    for task in (_task, _hints_task, _presence_task, _notify_task, _sugar_task):
+    global _task, _hints_task, _presence_task, _notify_task, _sugar_task, _free_catalog_task
+    tasks = (_task, _hints_task, _presence_task, _notify_task, _sugar_task, _free_catalog_task)
+    for task in tasks:
         if task is None:
             continue
         task.cancel()
@@ -84,6 +88,7 @@ async def stop_scheduler() -> None:
     _presence_task = None
     _notify_task = None
     _sugar_task = None
+    _free_catalog_task = None
 
 
 async def weight_reminder_loop(bot: Bot, *, interval_s: int = TICK_SECONDS) -> None:
@@ -319,6 +324,39 @@ async def run_sugar_reminders(bot: Bot, *, now: datetime | None = None) -> int:
     return sent
 
 
+async def free_catalog_loop(*, interval_s: int = TICK_SECONDS) -> None:
+    while True:
+        try:
+            await run_free_catalog_refresh()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("free-model catalogue tick failed")
+        await asyncio.sleep(interval_s)
+
+
+async def run_free_catalog_refresh() -> int:
+    """Один тик T052: держать пул свободных моделей 429-фолбэка свежим.
+
+    `load_free_models` сама решает, устарел ли дисковый кэш (сутки по
+    умолчанию) — сеть трогается не на каждом тике. Раньше каталог тянулся
+    только один раз, в `bot.prepare_runtime` на старте процесса: без этого
+    тика `set_free_alternates` не обновлялся бы до следующего рестарта бота
+    (`spec/models.md`).
+    """
+    from src.config import load_settings
+    from src.llm import set_free_alternates
+    from src.llm.free_catalog import load_free_models
+
+    settings = load_settings()
+    if not settings.free_fallback_enabled or settings.llm_mock:
+        return 0
+    free = await load_free_models()
+    set_free_alternates([m.id for m in free[:4]])
+    log.info("free-model fallback: %d candidates", len(free))
+    return len(free)
+
+
 __all__ = [
     "QUIET_END",
     "QUIET_START",
@@ -327,7 +365,9 @@ __all__ = [
     "TICK_SECONDS",
     "NOTIFY_TICK_SECONDS",
     "feature_hint_loop",
+    "free_catalog_loop",
     "notification_loop",
+    "run_free_catalog_refresh",
     "run_notifications",
     "presence_reminder_loop",
     "run_feature_hints",

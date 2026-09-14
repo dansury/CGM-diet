@@ -16,6 +16,7 @@ users              id tg_id* username first_name locale tz glucose_unit sensor
                    last_seen_at? blocked_at?          -- реестр владельца (`spec/bot.md`)
                    sleep_presence_enabled last_presence_reminder_at?
                    glucose_prompt_enabled          -- предлагать замер после еды, `spec/onboarding.md`
+                   food_stats_at?                  -- когда собран кэш `/stats`, NULL = холодный
                    consent_at onboarded created_at
 media_files        id user_id kind(meal|glucose|label|lab|voice) tg_file_id tg_unique_id
                    mime size_bytes sha256 local_path
@@ -63,7 +64,9 @@ presence_pings     id user_id at source(telegram)   -- отметки появл
 message_log        id user_id direction(in|out) kind(text|photo|voice|document|callback)
                    text buttons(JSON) at   -- переписка для /last_msg, `spec/bot.md`
 food_stats         id user_id key_type(item|tag|product) key window n
-                   mean_delta median_delta max_delta ci_low ci_high confidence updated_at
+                   mean_delta median_delta max_delta sd ci_low ci_high n_without
+                   mean_without contrast p_value confidence examples(JSON) updated_at
+                   -- кэш `/stats`, `src/food_stats.py`; штамп — users.food_stats_at
 corrections        id user_id entity_type entity_id field old_value new_value created_at
 feature_flags      id user_id feature status(new|shown|accepted|declined) shown
                    last_shown_at? used_at?   -- uq(user_id,feature)
@@ -115,6 +118,9 @@ meals_due_for_sugar_reminder(session, now, window_start_min=60, window_end_min=7
 mark_sugar_reminder(session, meal, at)
 save_glucose(session, user, drafts, source, media_id?) -> list[GlucoseReading]  # дедуп
 load_points(session, user, since?) -> list[GlucosePoint]
+load_food_stats(session, user, key_type, window, ttl) -> [KeyStats]|None   # None = промах
+save_food_stats(session, user, {(key_type,window): [KeyStats]})           # весь кэш разом
+invalidate_food_stats(session, user)        # users.food_stats_at = NULL
 find_product / save_product(session, user, draft, media_ids=[(id, side)]) -> Product  # upsert
 seed_symptoms / list_symptoms(limit=12) / upsert_symptom(label)
 save_checkin(session, user, at, score, symptom_labels, note?, source) -> WellbeingCheckin

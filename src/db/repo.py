@@ -19,6 +19,7 @@ from src.analytics.meds import MedicationLike
 from src.analytics.notify import Pref, Template, parse_times
 from src.analytics.plate import PlateItem, PlateMeal
 from src.analytics.sleep import DayIntake, SleepInterval
+from src.analytics.stats import KeyStats
 from src.analytics.symptoms import CheckinLike
 from src.analytics.tags import normalize_name
 from src.analytics.windows import GlucosePoint, MealLike
@@ -31,6 +32,7 @@ from src.db.models import (
     Correction,
     DictionaryEntry,
     FeatureFlag,
+    FoodStat,
     GlucoseReading,
     Meal,
     MealItem,
@@ -268,6 +270,7 @@ async def save_meal(
     # Populate `meal.items` eagerly: callers read totals straight after saving,
     # and a lazy load outside the async context raises MissingGreenlet.
     await session.refresh(meal, attribute_names=["items"])
+    await invalidate_food_stats(session, user)
     return meal
 
 
@@ -378,6 +381,8 @@ async def save_glucose(
         session.add(reading)
         saved.append(reading)
     await session.flush()
+    if saved:
+        await invalidate_food_stats(session, user)
     return saved
 
 
@@ -399,6 +404,111 @@ async def load_points(
 ) -> list[GlucosePoint]:
     readings = await load_glucose(session, user, since=since)
     return [GlucosePoint(at=_aware(r.measured_at), value=r.value_mmol) for r in readings]
+
+
+# ------------------------------------------------------- food_stats cache
+
+async def invalidate_food_stats(session: AsyncSession, user: User) -> None:
+    """Mark the cached statistics stale: new data changes every excursion.
+
+    The rows themselves stay — the next rebuild replaces them wholesale, and a
+    stamp-less row is never read (`load_food_stats`).
+    """
+    user.food_stats_at = None
+
+
+async def load_food_stats(
+    session: AsyncSession, user: User, *, key_type: str, window: str, ttl: timedelta
+) -> list[KeyStats] | None:
+    """Cached aggregate, or None when the cache is cold, stale or expired.
+
+    An empty list is a legitimate answer (nothing crossed `min_observations`)
+    and is distinguished from a miss by the stamp on the user row.
+    """
+    if user.food_stats_at is None:
+        return None
+    if datetime.now(UTC) - _aware(user.food_stats_at) > ttl:
+        return None
+    rows = await session.scalars(
+        select(FoodStat).where(
+            FoodStat.user_id == user.id,
+            FoodStat.key_type == key_type,
+            FoodStat.window == window,
+        )
+    )
+    stats = [_key_stats(row) for row in rows]
+    stats.sort(key=lambda s: (-s.mean_delta, -s.n))
+    return stats
+
+
+async def save_food_stats(
+    session: AsyncSession, user: User, buckets: dict[tuple[str, str], list[KeyStats]]
+) -> None:
+    """Replace the whole cache for a user and stamp it.
+
+    Whole, not per bucket: one excursion build feeds every (key_type, window)
+    pair, so a partial cache would carry two different views of the same data.
+    """
+    await session.execute(delete(FoodStat).where(FoodStat.user_id == user.id))
+    for stats in buckets.values():
+        for stat in stats:
+            session.add(
+                FoodStat(
+                    user_id=user.id,
+                    key_type=stat.key_type,
+                    key=stat.key,
+                    window=stat.window,
+                    n=stat.n,
+                    mean_delta=stat.mean_delta,
+                    median_delta=stat.median_delta,
+                    max_delta=stat.max_delta,
+                    sd=stat.sd,
+                    ci_low=stat.ci_low,
+                    ci_high=stat.ci_high,
+                    n_without=stat.n_without,
+                    mean_without=stat.mean_without,
+                    contrast=stat.contrast,
+                    p_value=stat.p_value,
+                    confidence=stat.confidence,
+                    examples=[_iso(x) for x in stat.examples],
+                )
+            )
+    user.food_stats_at = datetime.now(UTC)
+    await session.flush()
+
+
+def _key_stats(row: FoodStat) -> KeyStats:
+    return KeyStats(
+        key=row.key,
+        key_type=row.key_type,
+        window=row.window,
+        n=row.n,
+        mean_delta=row.mean_delta or 0.0,
+        median_delta=row.median_delta or 0.0,
+        max_delta=row.max_delta or 0.0,
+        sd=row.sd,
+        ci_low=row.ci_low,
+        ci_high=row.ci_high,
+        n_without=row.n_without,
+        mean_without=row.mean_without,
+        contrast=row.contrast,
+        p_value=row.p_value,
+        confidence=row.confidence,
+        examples=[_from_iso(x) for x in (row.examples or [])],
+    )
+
+
+def _iso(value: Any) -> str | None:
+    return value.isoformat() if isinstance(value, datetime) else None
+
+
+def _from_iso(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return value
 
 
 # ------------------------------------------------------------------ products
@@ -1999,6 +2109,7 @@ async def delete_user_data(session: AsyncSession, user: User, *, drop_user: bool
         NutritionMemory,
         NotificationPref,
         NotificationSend,
+        FoodStat,
     ):
         if model is CheckinSymptom:
             checkin_ids = select(WellbeingCheckin.id).where(WellbeingCheckin.user_id == user.id)
@@ -2018,6 +2129,7 @@ async def delete_user_data(session: AsyncSession, user: User, *, drop_user: bool
             continue
         await session.execute(delete(model).where(model.user_id == user.id))
     await session.execute(delete(Symptom).where(Symptom.user_id == user.id))
+    user.food_stats_at = None
     if drop_user:
         await session.execute(delete(User).where(User.id == user.id))
     await session.flush()

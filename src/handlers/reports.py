@@ -9,10 +9,11 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
+from src import food_stats
 from src.analytics import activity as activity_mod
 from src.analytics import cgm_metrics
 from src.analytics import symptoms as symptoms_mod
-from src.analytics.stats import KeyStats, aggregate
+from src.analytics.stats import KeyStats
 from src.analytics.tags import normalize_name
 from src.analytics.windows import GlucosePoint, build_excursions
 from src.charts.render import render_ranking, render_timeline, render_wellbeing
@@ -20,6 +21,7 @@ from src.config import load_settings
 from src.db import repo
 from src.db.models import User
 from src.export import build_export
+from src.food_stats import DEFAULT_PERIOD_DAYS
 from src.handlers.deps import local_now, session_scope, to_local
 from src.handlers.features import mark_used, menu_of
 from src.ingest.units import format_value
@@ -38,8 +40,6 @@ from src.vision.schemas import ProductDraft
 
 router = Router(name="reports")
 
-DEFAULT_PERIOD_DAYS = 30
-
 
 def _windows(user: User) -> tuple[tuple[int, int], tuple[int, int]]:
     return (
@@ -51,25 +51,9 @@ def _windows(user: User) -> tuple[tuple[int, int], tuple[int, int]]:
 async def _compute_stats(
     session, user: User, *, window: str = "1h", key_type: str = "tag", days: int = DEFAULT_PERIOD_DAYS
 ) -> list[KeyStats]:
-    since = local_now(user) - timedelta(days=days)
-    meals = await repo.load_meal_likes(session, user, since=since)
-    points = await repo.load_points(session, user, since=since - timedelta(hours=6))
-    if not meals or not points:
-        return []
-    window_1h, window_2h = _windows(user)
-    excursions = build_excursions(
-        meals,
-        points,
-        window_1h=window_1h,
-        window_2h=window_2h,
-        baseline_window=user.baseline_window,
-    )
-    return aggregate(
-        meals,
-        excursions[window],
-        key_type=key_type,
-        window=window,
-        min_observations=load_settings().min_observations,
+    """Through the cache: the same thirty days answer every window button."""
+    return await food_stats.stats_for(
+        session, user, key_type=key_type, window=window, days=days
     )
 
 

@@ -386,6 +386,67 @@ async def save_glucose(
     return saved
 
 
+async def save_glucose_bulk(
+    session: AsyncSession,
+    user: User,
+    drafts: Sequence[GlucoseDraft],
+    *,
+    source: str,
+) -> int:
+    """Insert a vendor archive in one pass; returns how many rows were new.
+
+    `save_glucose` asks the database about every draft separately — fine for the
+    two readings of a screenshot, a five-figure query count for a year of CGM
+    history. Here the existing (measured_at, value) pairs of the covered period
+    are fetched once and the rest is a plain insert.
+
+    Naive timestamps are the vendor's wall clock in the user's zone: they become
+    UTC here, at the layer that owns the boundary (`CLAUDE.md` #7).
+    """
+    if not drafts:
+        return 0
+    zone = _zone(user)
+    stamps = [_localize(d.measured_at, zone) for d in drafts]
+    known = set(
+        await session.execute(
+            select(GlucoseReading.measured_at, GlucoseReading.value_mmol).where(
+                GlucoseReading.user_id == user.id,
+                GlucoseReading.measured_at >= min(stamps),
+                GlucoseReading.measured_at <= max(stamps),
+            )
+        )
+    )
+    known = {(_aware(at), value) for at, value in known}
+    added = 0
+    for draft, measured_at in zip(drafts, stamps, strict=True):
+        if (measured_at, draft.value_mmol) in known:
+            continue
+        known.add((measured_at, draft.value_mmol))
+        session.add(
+            GlucoseReading(
+                user_id=user.id,
+                measured_at=measured_at,
+                value_mmol=draft.value_mmol,
+                unit_input=draft.unit_input,
+                source=source,
+                device=draft.device,
+                confirmed=True,
+            )
+        )
+        added += 1
+    await session.flush()
+    if added:
+        await invalidate_food_stats(session, user)
+    return added
+
+
+def _localize(value: datetime, zone) -> datetime:
+    """Vendor wall clock → UTC, the unit everything else is stored in."""
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=zone)
+    return value.astimezone(UTC)
+
+
 async def load_glucose(
     session: AsyncSession, user: User, *, since: datetime | None = None
 ) -> list[GlucoseReading]:

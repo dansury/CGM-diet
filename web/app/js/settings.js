@@ -3,11 +3,12 @@
  * notification schedule), account (register/login/backup), clear my data.
  * spec: spec/web.md, spec/notifications.md.
  */
-import { getKV, setKV, clearAll } from './db.js';
+import { getKV, setKV, clearAll, getAll, addRecord } from './db.js';
 import { setTheme } from './theme.js';
 import { subscribePush, unsubscribePush, isPushSubscribed, isPushSupported } from './push.js';
 import { register, login, pushBackup, pullBackup, isRegistered } from './sync.js';
 import { loadNotifications, saveNotifications, effectiveTimes, computeSmart, parseTimes } from './notify.js';
+import { parseCgmCsv, UnknownFormat, SOURCE_NAMES } from './cgmcsv.js';
 import { el, showToast } from './utils.js';
 import { track, getClientId } from './telemetry.js';
 
@@ -123,6 +124,9 @@ export async function renderSettingsView(container) {
     }
     wrap.appendChild(accountCard);
 
+    wrap.appendChild(el('<div class="section-title">История с сенсора</div>'));
+    wrap.appendChild(cgmImportCard());
+
     wrap.appendChild(el('<div class="section-title">Данные</div>'));
     const dangerCard = el('<div class="card"></div>');
     const clearBtn = el('<button class="btn btn-danger" style="width:100%;">Очистить мои данные на этом устройстве</button>');
@@ -137,6 +141,71 @@ export async function renderSettingsView(container) {
     wrap.appendChild(dangerCard);
 
     container.appendChild(wrap);
+}
+
+/**
+ * Импорт выгрузки CGM. Файл разбирается здесь же, в браузере, и никуда не
+ * уходит — как и всё остальное в этом приложении (spec/web.md § Хранение).
+ */
+function cgmImportCard() {
+    const card = el(`
+        <div class="card">
+            <div class="muted" style="font-size:13px; margin-bottom:10px;">
+                Выгрузка из LibreView («Скачать глюкозные данные») или из Dexcom Clarity
+                («Экспорт» → CSV). Файл остаётся на телефоне.
+            </div>
+            <input type="file" accept=".csv,text/csv" hidden>
+            <button class="btn btn-secondary" style="width:100%;">Выбрать CSV</button>
+            <div class="muted" style="font-size:13px; margin-top:10px;" data-result></div>
+        </div>
+    `);
+    const input = card.querySelector('input[type=file]');
+    const button = card.querySelector('button');
+    const result = card.querySelector('[data-result]');
+
+    button.addEventListener('click', () => input.click());
+    input.addEventListener('change', async () => {
+        const file = input.files && input.files[0];
+        input.value = '';
+        if (!file) return;
+        button.disabled = true;
+        result.textContent = 'Читаю файл…';
+        try {
+            const parsed = parseCgmCsv(await file.text());
+            result.textContent = await storeReadings(parsed);
+            track('cgm_imported', { source: parsed.source, n: parsed.readings.length });
+        } catch (e) {
+            result.textContent = e instanceof UnknownFormat
+                ? `Не разобрал CSV: ${e.message}. Жду выгрузку LibreView или Dexcom Clarity без правок.`
+                : `Не смог прочитать файл: ${e.message}`;
+        } finally {
+            button.disabled = false;
+        }
+    });
+    return card;
+}
+
+/** Кладёт разобранные замеры в дневник, пропуская уже записанные. */
+async function storeReadings(parsed) {
+    const name = SOURCE_NAMES[parsed.source] || parsed.source;
+    if (!parsed.readings.length) return `Файл ${name} прочитал, но замеров в нём не нашёл.`;
+    const known = new Set((await getAll('glucose', { desc: false })).map((r) => `${r.ts}|${r.mmol}`));
+    let added = 0;
+    for (const reading of parsed.readings) {
+        const key = `${reading.ts}|${reading.mmol}`;
+        if (known.has(key)) continue;
+        known.add(key);
+        await addRecord('glucose', { ts: reading.ts, mmol: reading.mmol, source: parsed.source });
+        added++;
+    }
+    const lines = [`Прочитано ${parsed.readings.length} замеров из ${name}.`];
+    lines.push(added ? `Добавлено новых: ${added}.` : 'Новых замеров нет — этот период уже загружен.');
+    if (added && parsed.readings.length - added > 0) {
+        lines.push(`Уже были в дневнике: ${parsed.readings.length - added}.`);
+    }
+    if (parsed.rejected) lines.push(`Пропущено как невозможные значения: ${parsed.rejected}.`);
+    if (parsed.truncated) lines.push('Файл очень длинный — взял начало. Пришлите остаток отдельным файлом.');
+    return lines.join(' ');
 }
 
 const MODE_LABELS = {

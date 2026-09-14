@@ -27,6 +27,7 @@ web/
     css/app.css
     js/ app.js theme.js db.js onboarding.js camera.js recognize.js thinking.js
        dictionary.js charts.js settings.js telemetry.js push.js sync.js notify.js
+       cgmcsv.js
   admin/                    закрыто паролем, доступно только по /admin
     index.php login.php logout.php lib.php
   api/                      JSON-эндпоинты, без сессий кроме sync/register
@@ -52,6 +53,9 @@ web/
                             кого пропускает и что видит человек
   tests/model_hints.php     `php web/tests/model_hints.php` — какая модель не
                             подтверждена провайдером и что предложить взамен
+  tests/cgm_csv.mjs         `node web/tests/cgm_csv.mjs` — разбор выгрузок
+                            LibreView и Dexcom Clarity (единственный тест на JS:
+                            логика живёт в браузере, PHP её не видит)
   data/                     legacy-расположение app.db; используется, только если
                             каталог рядом с корнем деплоя недоступен на запись
   README.md                 инструкция по деплою
@@ -193,6 +197,33 @@ IndexedDB по `label` (префикс, затем подстрока), рота
 (`/meds`, `WellbeingFlow`), которого в web MVP ещё нет вовсе. Задача на
 реализацию — `TODO.md` T071.
 
+## Импорт CGM (`js/cgmcsv.js`, «Настройки» → «История с сенсора»)
+
+Зеркало `src/ingest/cgm_csv.py` бота: те же два формата, тот же выбор порядка
+дат, те же границы правдоподобия. Файл разбирается в браузере и никуда не
+уходит.
+
+```
+parseCgmCsv(text, {maxRows=20000})
+  -> {source, unit, device, readings:[{ts, mmol}], skippedRows, rejected, truncated, span}
+  throws UnknownFormat
+```
+
+| Формат | Что читаем | Что пропускаем |
+|---|---|---|
+| LibreView | `Record Type` 0/1/2 → `Historic`/`Scan`/`Strip Glucose` | инсулин, еда, заметки, кетоны |
+| Dexcom Clarity | строки `Event Type = EGV` | `FirstName`/`Device` и прочие метаданные без времени |
+
+- единица берётся из названия колонки (`… mmol/L` / `… mg/dL`), мг/дл
+  переводятся; значения вне 1.0–33.3 ммоль/л отбрасываются как невозможные;
+- `Low`/`High` у Dexcom — края диапазона сенсора (2.2 / 22.2), а не пропуск;
+- порядок дат (`15-01` или `01/15`) решается **один раз на файл**: ищем строку,
+  где первое число больше двенадцати; не нашлось — день вперёд;
+- `ts` пишется в ISO с поясом браузера; повторная загрузка того же файла ничего
+  не добавляет — дубликат ловится по паре `ts|mmol`.
+
+Проверяется офлайн: `node web/tests/cgm_csv.mjs`.
+
 ## Телеметрия (`js/telemetry.js`)
 
 При первом запуске: `utm_source/medium/campaign/term/content` из
@@ -201,7 +232,7 @@ IndexedDB по `label` (префикс, затем подстрока), рота
 `onboarding_step`, `onboarding_done`, `meal_recognized`, `camera_opened`,
 `dictionary_used`, `chart_viewed`, `push_subscribed`, `push_denied`,
 `push_sent` (уходит из `push_send.php`), `push_clicked` (из `sw.js`
-`notificationclick`), `data_cleared`, `registered`.
+`notificationclick`), `data_cleared`, `registered`, `cgm_imported`.
 
 ## Push-уведомления (`js/push.js`, `sw.js`, `api/push_*.php`, `lib/webpush.php`)
 
@@ -229,8 +260,8 @@ AES-128-GCM через `openssl_pkey_derive`/`hash_hkdf`/`openssl_encrypt`, PHP 
 в среде сборки нет push-сервиса для end-to-end теста]**, как и мост Samsung
 Health (`DEV_PLAN.md` фаза 9): код собран и соответствует спецификации,
 `php -l` зелёный, `php web/tests/notifications.php`, `php web/tests/auto_pull.php`,
-`php web/tests/llm_chain.php` и `php web/tests/model_hints.php` зелёные, живой пуш не
-прогонялся.
+`php web/tests/llm_chain.php`, `php web/tests/model_hints.php` и
+`node web/tests/cgm_csv.mjs` зелёные, живой пуш не прогонялся.
 
 ## Регистрация и синхронизация (`js/sync.js`, `api/register.php`, `api/sync.php`)
 

@@ -193,6 +193,37 @@ medications[(name,dose)], body:BodyFacts, at, fasting, leftover}`.
 `format_value` / `format_delta` печатают в единицах пользователя;
 отрицательная дельта — с настоящим минусом «−».
 
+## История CGM из CSV (`src/ingest/cgm_csv.py`)
+
+```
+parse_cgm_csv(data, max_rows=20000) -> CsvImport   # raises UnknownFormat
+CsvImport(source, device?, unit_input, readings[GlucoseDraft], skipped_rows,
+          rejected, truncated) ; span -> (first, last)|None
+LIBREVIEW="libreview" · CLARITY="clarity" · MAX_ROWS=20000
+```
+
+Документ с `.csv` (или `text/csv`) уходит сюда, а не в анализы. Выгрузка
+человека из приложения производителя — самый дешёвый источник замеров: тысячи
+точек уже со временем, распознавать нечего.
+
+| Формат | Замер | Не замер |
+|---|---|---|
+| LibreView | `Record Type` 0/1/2 → колонка `Historic`/`Scan`/`Strip Glucose` | инсулин, еда, заметки, кетоны |
+| Dexcom Clarity | `Event Type = EGV` | `FirstName`, `Device` и прочие метаданные без времени |
+
+- единица — из названия колонки (`… mmol/L` / `… mg/dL`), дальше `to_mmol`;
+  значение вне `MMOL_RANGE` отбрасывается в `rejected`, как и у скриншота;
+- `Low`/`High` у Dexcom — края диапазона сенсора (2.2 / 22.2 ммоль/л);
+- порядок дат решается **один раз на файл** (`_pick_date_order`): ищем строку,
+  где первое число больше двенадцати; не нашлось — день вперёд;
+- кодировка: `utf-8-sig`, `utf-8`, `cp1251`;
+- запись — `repo.save_glucose_bulk` (один запрос на дедуп вместо одного на
+  строку), наивное время файла становится UTC по поясу пользователя там же;
+- итог человеку — `reporting.format_cgm_import`: сколько прочитано, сколько
+  новых, сколько уже было, сколько отброшено.
+
+Паритет tg/web: зеркало в `web/app/js/cgmcsv.js` (`spec/web.md` § Импорт CGM).
+
 ## PDF (`src/ingest/pdf.py`)
 
 ```

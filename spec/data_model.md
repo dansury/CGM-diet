@@ -117,6 +117,8 @@ meals_due_for_sugar_reminder(session, now, window_start_min=60, window_end_min=7
   -> [(Meal, User)]                          # T040, `spec/onboarding.md` § Сахарный трек
 mark_sugar_reminder(session, meal, at)
 save_glucose(session, user, drafts, source, media_id?) -> list[GlucoseReading]  # дедуп
+save_glucose_bulk(session, user, drafts, source) -> добавлено   # архив CGM: дедуп одним
+                                                  # запросом, наивное время → UTC по tz
 load_points(session, user, since?) -> list[GlucosePoint]
 load_food_stats(session, user, key_type, window, ttl) -> [KeyStats]|None   # None = промах
 save_food_stats(session, user, {(key_type,window): [KeyStats]})           # весь кэш разом

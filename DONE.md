@@ -807,3 +807,18 @@ Append-only. Не читается в рутинных циклах разраб
   и обе ветки `run_free_catalog_refresh` (выключенный фолбэк/`llm_mock` —
   no-op; иначе обновляет пул) через фейковые `load_free_models`/
   `set_free_alternates`, без сети
+
+## 2026-09-14 — Правка цепочки кандидатов уехала в апстрим (T081)
+
+- `site_yacloud_openrouter` получил то, что зеркало несло впереди него:
+  `LLMHttpError` + `providerWide()`, `LLM::candidateChain(vision)`,
+  пропуск всей ноги провайдера после отказа не про модель,
+  `LLM::failureReason()` и каталожную строку `qwen3.6-35b-a3b`
+  (она же дефолтная `LLM_VISION_MODEL`)
+- Апстримные спеки под это: `/spec/llm.md` §2–§5 (цепочка разделена на
+  «кого спрашиваем» и «кто ответил»), `/spec/settings.md` (дефолт vision
+  и почему строка вшита), `spec.md` (карта файлов)
+- Апстримный тест `tests/llm_chain.php` — тот же набор проверок, что в
+  `web/tests/llm_chain.php`, но по-английски, как принято в том репозитории
+- `web/lib/vendor/VENDORED_FROM.md`: раздел «Ahead of upstream» пуст,
+  зеркало снова байт в байт равно апстриму (sync-коммит 8b6b088)

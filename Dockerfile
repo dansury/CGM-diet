@@ -18,7 +18,8 @@ ENV PATH=/opt/venv/bin:$PATH
 
 COPY pyproject.toml README.md ./
 COPY src ./src
-# `pdf` extra: local text extraction from lab PDFs (no vision call needed).
+# `pdf` extra: local text extraction from lab PDFs, and rendering the pages of
+# a scan for the vision path (`spec/ingest.md` § PDF).
 RUN pip install ".[pdf]"
 
 

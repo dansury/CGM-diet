@@ -340,15 +340,26 @@ async def on_document(message: Message, state: FSMContext, bot: Bot) -> None:
         return
     buffer = await bot.download(document.file_id)
     data = buffer.read() if hasattr(buffer, "read") else bytes(buffer)
-    from src.ingest.pdf import pdf_to_text
+    from src.ingest.pdf import MAX_OCR_PAGES, pdf_to_images, pdf_to_text
 
     text = pdf_to_text(data)
-    if not text:
+    if text:
+        await _process_labs(message, state, None, [document.file_id], text=text)
+        return
+    # A scan: render the pages ourselves instead of asking for a photo of a
+    # document the user has already sent (`spec/ingest.md` § PDF).
+    pages = pdf_to_images(data)
+    if not pages:
         await message.answer(
             "В PDF нет текстового слоя. Пришлите, пожалуйста, фото страницы — прочитаю с картинки."
         )
         return
-    await _process_labs(message, state, None, [document.file_id], text=text)
+    note = "Читаю страницы как картинки — текстового слоя в PDF нет."
+    if len(pages) == MAX_OCR_PAGES:
+        note += f" Смотрю первые {MAX_OCR_PAGES}."
+    await message.answer(note)
+    images = [ImagePart(data=page, mime="image/png") for page in pages]
+    await _process_labs(message, state, images, [document.file_id])
 
 
 # ------------------------------------------------------------------ voice

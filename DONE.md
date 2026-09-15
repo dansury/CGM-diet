@@ -792,6 +792,33 @@ Append-only. Не читается в рутинных циклах разраб
   `spec/onboarding.md` § Сахарный трек, задача на реализацию — T082
   (у web-уведомлений нет понятия «через N минут после события»)
 
+## 2026-09-15 — Продукт помнит последнюю съеденную порцию (T084)
+
+- `repo.remember_product_portion(name, portion_g)` правит `payload["portion_g"]`
+  словарной записи `kind="product"`; вызывается из `confirm.meal_ok`, когда
+  подтверждённый приём пришёл с этикетки (`draft.source == "label"`) — той
+  массой, которую человек реально подтвердил, а не печатной
+- `confirm.product_eat` больше не хардкодит 100 г: берёт
+  `views.PRODUCT_PORTION_KEY` из FSM (по умолчанию — печатная порция при
+  первом разе) и пересчитывает числа этикетки (на 100 г) пропорционально
+- `dictionary.on_use` для `kind="product"` передаёт запомненную
+  `payload["portion_g"]` в `show_product_draft`, вместо того чтобы каждый раз
+  открывать карточку с нуля
+- `save_product` больше не стирает запомненную массу при повторном
+  фото/этикетке той же упаковки — `payload["portion_g"]` переносится явно,
+  раз `bump_dictionary` заменяет payload целиком
+- `vision.schemas.product_from_dict` фильтрует payload по полям
+  `ProductDraft` (как `meal_from_dict`), потому что словарный payload несёт
+  лишний ключ `portion_g`
+- Спека: `spec/dictionary.md` § Память последней граммовки
+- Web-паритет (`CLAUDE.md` #11): `[WEB-ONLY GAP]` — у web нет самой сущности
+  «продукт»/сканирования этикетки (только `meal`/`item` в
+  `web/app/js/dictionary.js`), разбирать эту память там не с чего; задача на
+  всю этикеточную ветку для web заведена как T083
+- Тесты: `tests/test_dictionary.py` — память и её выживание при повторном
+  `save_product`, no-op без записи в словаре, толерантность
+  `product_from_dict` к лишнему ключу
+
 ## 2026-09-13 — Каталог свободных моделей обновляется по расписанию (T052)
 
 - `scheduler.free_catalog_loop`/`run_free_catalog_refresh`, тик

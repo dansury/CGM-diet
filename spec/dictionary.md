@@ -187,3 +187,43 @@ product_item_name(draft:ProductDraft) -> str                             # «б�
 
 Удаление: `/delete` (`repo.delete_user_data`) уносит таблицу целиком, `/export`
 отдаёт её как `user_nutrition.csv`.
+
+## Память последней граммовки (`kind="product"`)
+
+Упаковка (`🛒 Упаковки`) хранит состав на 100 г (`product_to_dict`), а не
+съеденную порцию — она у каждого приёма своя. Раньше кнопка словаря всегда
+открывала карточку с печатной сотней, даже если человек неизменно съедает,
+например, 150 г. Теперь payload несёт ещё и `portion_g` — последнюю
+подтверждённую массу:
+
+```
+repo.remember_product_portion(session, user, *, name:str, portion_g:float|None) -> None
+  # находит запись kind="product" по key_norm(name), правит payload["portion_g"]
+  # и last_used_at; без записи (prod:save ещё не было) — no-op
+```
+
+Поток:
+
+1. `handlers/confirm.product_eat` — старт: `portion_g` берётся из
+   `views.PRODUCT_PORTION_KEY` в FSM (задаётся при показе карточки), при
+   первом разе — печатные 100 г. Числа этикетки (на 100 г) пересчитываются
+   пропорционально, а не показываются как есть при другой порции;
+2. `handlers/confirm.meal_ok` — после `remember_meal`, если `draft.source ==
+   "label"`, зовёт `remember_product_portion` с массой из подтверждённой (и,
+   возможно, исправленной) карточки — то, что человек реально съел, а не то,
+   что было предложено;
+3. `handlers/dictionary.on_use` (`kind="product"`) — читает `payload
+   ["portion_g"]` и передаёт его в `views.show_product_draft(portion_g=...)`
+   вместо старта с нуля.
+
+`vision.schemas.product_from_dict` фильтрует payload по полям `ProductDraft`
+(как `meal_from_dict` — `_ITEM_FIELDS`), потому что тот же словарный payload
+несёт лишний ключ `portion_g`, которого у `ProductDraft` нет.
+
+`save_product` (при повторном фото/этикетке) переписывает `payload`
+составом заново — граммовка внутри сохраняется явно, иначе каждое новое
+фото той же упаковки стирало бы память о порции.
+
+**[WEB-ONLY GAP]** У web нет сущности «продукт»/сканирование этикетки
+вообще (только `meal`/`item` в IndexedDB, `web/app/js/dictionary.js`) —
+разбирать эту память там не с чего. TODO T083.

@@ -181,6 +181,11 @@ __all__ = [
 #: ones, and an unknown key must not crash the restore.
 _ITEM_FIELDS = frozenset(f.name for f in fields(ItemDraft))
 
+#: `product_from_dict` also feeds on dictionary payloads (`spec/dictionary.md`
+#: § Память последней граммовки), which carry an extra `portion_g` key that is
+#: not a `ProductDraft` field — filtering keeps that dict-restore path safe.
+_PRODUCT_FIELDS = frozenset(f.name for f in fields(ProductDraft))
+
 
 def meal_to_dict(draft: MealDraft) -> dict:
     return {
@@ -240,7 +245,7 @@ def product_to_dict(draft: ProductDraft) -> dict:
 
 
 def product_from_dict(data: dict) -> ProductDraft:
-    return ProductDraft(**data)
+    return ProductDraft(**{k: v for k, v in data.items() if k in _PRODUCT_FIELDS})
 
 
 def med_to_dict(draft: MedicationDraft) -> dict:

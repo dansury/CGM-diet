@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 import pytest
 
 from src.db import repo
-from src.vision.schemas import ItemDraft, MealDraft, ProductDraft
+from src.vision.schemas import ItemDraft, MealDraft, ProductDraft, product_from_dict
 
 pytestmark = pytest.mark.asyncio
 
@@ -185,6 +185,40 @@ async def test_example_labels_take_food_only(session):
     await repo.bump_dictionary(session, user, kind="symptom", label="сонливость")
     # лекарство и симптом примером «как записать еду» быть не могут
     assert await repo.example_labels(session, user) == ["сырники"]
+
+
+async def test_a_product_remembers_the_last_eaten_portion(session):
+    """Кнопка «🛒 Упаковки» должна предлагать не печатную сотню, а то, что
+    человек реально съел в прошлый раз (`spec/dictionary.md` § Память
+    последней граммовки)."""
+    user = await _user(session)
+    draft = ProductDraft(name="Йогурт", brand="Село", kcal_100=86)
+    await repo.save_product(session, user, draft)
+    entry = (await repo.list_dictionary(session, user, kind="product"))[0]
+    assert entry.payload.get("portion_g") is None
+
+    await repo.remember_product_portion(session, user, name="Село Йогурт", portion_g=150.0)
+    entry = (await repo.list_dictionary(session, user, kind="product"))[0]
+    assert entry.payload["portion_g"] == 150.0
+    assert entry.payload["kcal_100"] == 86  # состав не потерялся вместе с массой
+
+    # Повторное фото/распознавание той же упаковки не должно стереть память о массе.
+    await repo.save_product(session, user, draft)
+    entry = (await repo.list_dictionary(session, user, kind="product"))[0]
+    assert entry.payload["portion_g"] == 150.0
+
+
+async def test_remember_product_portion_is_a_noop_without_a_dictionary_entry(session):
+    user = await _user(session)
+    await repo.remember_product_portion(session, user, name="Нет такого", portion_g=200.0)
+    assert await repo.list_dictionary(session, user, kind="product") == []
+
+
+async def test_product_from_dict_ignores_the_dictionary_only_portion_key():
+    """Payload словаря несёт `portion_g`, которого нет у `ProductDraft`."""
+    draft = product_from_dict({"name": "Йогурт", "kcal_100": 86.0, "portion_g": 150.0})
+    assert draft.name == "Йогурт"
+    assert draft.kcal_100 == 86.0
 
 
 async def test_example_labels_wait_for_the_second_sighting(session):

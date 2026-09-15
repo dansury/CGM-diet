@@ -242,7 +242,11 @@ async def on_use(callback: CallbackQuery, state: FSMContext) -> None:
             )
             return
         await views.show_product_draft(
-            callback.message, state, product_from_dict(payload), mode="eaten"
+            callback.message,
+            state,
+            product_from_dict(payload),
+            mode="eaten",
+            portion_g=payload.get("portion_g"),
         )
         return
 

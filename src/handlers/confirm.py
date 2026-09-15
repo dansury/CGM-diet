@@ -17,7 +17,13 @@ from aiogram.types import CallbackQuery, Message
 from src.db import repo
 from src.handlers.deps import download_photo, local_now, session_scope, to_utc
 from src.handlers.states import GlucoseFlow, LabFlow, MealFlow, ProductFlow
-from src.handlers.views import DRAFT_KEY, EATEN_AT_KEY, FILES_KEY, personal_examples
+from src.handlers.views import (
+    DRAFT_KEY,
+    EATEN_AT_KEY,
+    FILES_KEY,
+    PRODUCT_PORTION_KEY,
+    personal_examples,
+)
 from src.ingest.correction import apply_meal_correction
 from src.ingest.nutrition import Remembered
 from src.ingest.units import MGDL, MMOL, format_value
@@ -85,6 +91,16 @@ async def meal_ok(callback: CallbackQuery, state: FSMContext) -> None:
         )
         # Second sighting of a dish turns it into a one-tap button (/my).
         await repo.remember_meal(session, user, draft)
+        if draft.source == "label" and draft.items:
+            # Упаковка съедена не по 100 г с этикетки, а сколько назвал
+            # пользователь — следующая кнопка «🛒 Упаковки» должна предлагать
+            # именно эту массу, а не печатную порцию (`spec/dictionary.md`).
+            await repo.remember_product_portion(
+                session,
+                user,
+                name=draft.items[0].name,
+                portion_g=draft.items[0].portion_g,
+            )
         # …and БЖУ typed by hand stay with the dish for good.
         await repo.remember_meal_macros(session, user, draft)
         # То же для чисел, прочитанных с этикетки (`spec/dictionary.md`).
@@ -487,17 +503,31 @@ async def product_save(callback: CallbackQuery, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "prod:eat", ProductFlow.confirming)
 async def product_eat(callback: CallbackQuery, state: FSMContext) -> None:
-    """Log the package as a meal; portion defaults to 100 g and is editable."""
+    """Log the package as a meal.
+
+    Portion defaults to the last amount the user actually confirmed eating of
+    this product (`spec/dictionary.md` § Память последней граммовки), or to
+    the printed 100 g serving the first time around — either way, editable.
+    """
     data = await state.get_data()
     draft = product_from_dict(data.get(DRAFT_KEY) or {})
+    portion_g = data.get(PRODUCT_PORTION_KEY) or 100.0
+    # Этикетка даёт числа на 100 г; при другой запомненной порции их надо
+    # пересчитать — карточка ниже показывает итог для `portion_g`, а не саму
+    # печатную сотню.
+    scale = portion_g / 100.0
+
+    def _scaled(value: float | None) -> float | None:
+        return round(value * scale, 1) if value is not None else None
+
     item = ItemDraft(
         name=repo.product_item_name(draft),
-        portion_g=100.0,
-        kcal=draft.kcal_100,
-        protein_g=draft.protein_100,
-        fat_g=draft.fat_100,
-        carbs_g=draft.carbs_100,
-        fiber_g=draft.fiber_100,
+        portion_g=portion_g,
+        kcal=_scaled(draft.kcal_100),
+        protein_g=_scaled(draft.protein_100),
+        fat_g=_scaled(draft.fat_100),
+        carbs_g=_scaled(draft.carbs_100),
+        fiber_g=_scaled(draft.fiber_100),
         tags=draft.flags,
         # Числа напечатаны на упаковке — это не оценка модели.
         macros_source="label" if draft.kcal_100 is not None else "",
@@ -578,6 +608,7 @@ async def product_apply_macros(
         mode=data.get("draft_mode") or "eaten",
         file_ids=data.get(FILES_KEY),
         applied=applied,
+        portion_g=data.get(PRODUCT_PORTION_KEY),
     )
 
 
@@ -627,6 +658,7 @@ async def product_apply_edit(
         mode=data.get("draft_mode") or "eaten",
         file_ids=data.get(FILES_KEY),
         applied=applied,
+        portion_g=data.get(PRODUCT_PORTION_KEY),
     )
 
 

@@ -59,6 +59,7 @@ FILES_KEY = "draft_files"
 EATEN_AT_KEY = "eaten_at"
 TAKEN_AT_KEY = "taken_at"
 MODE_KEY_VIEW = "draft_mode"
+PRODUCT_PORTION_KEY = "product_portion_g"
 
 
 async def show_meal_draft(
@@ -203,10 +204,16 @@ async def show_product_draft(
     mode: str,
     file_ids: list[str] | None = None,
     applied: list[str] | None = None,
+    portion_g: float | None = None,
 ) -> None:
     await state.set_state(ProductFlow.confirming)
     await state.update_data(
-        {DRAFT_KEY: product_to_dict(draft), FILES_KEY: file_ids or [], MODE_KEY_VIEW: mode}
+        {
+            DRAFT_KEY: product_to_dict(draft),
+            FILES_KEY: file_ids or [],
+            MODE_KEY_VIEW: mode,
+            PRODUCT_PORTION_KEY: portion_g,
+        }
     )
     if mode == "check":
         from src.handlers.reports import product_verdict_text
@@ -240,6 +247,7 @@ __all__ = [
     "EATEN_AT_KEY",
     "FILES_KEY",
     "MODE_KEY_VIEW",
+    "PRODUCT_PORTION_KEY",
     "TAKEN_AT_KEY",
     "show_glucose_draft",
     "show_lab_draft",

@@ -459,13 +459,26 @@ async def save_product(
         session.add(ProductPhoto(product_id=product.id, media_id=media_id, side=side))
     await session.flush()
     # Упаковка, прочитанная один раз, — уже кнопка: людям свойственно покупать
-    # одно и то же (`spec/dictionary.md`).
+    # одно и то же (`spec/dictionary.md`). `bump_dictionary` заменяет payload
+    # целиком, а состав распознаётся заново при каждом фото — не потерять бы
+    # уже запомненную граммовку, которой в свежем `product_to_dict` нет.
+    key = normalize_name(product_item_name(draft))
+    existing = await session.scalar(
+        select(DictionaryEntry).where(
+            DictionaryEntry.user_id == user.id,
+            DictionaryEntry.kind == "product",
+            DictionaryEntry.key_norm == key,
+        )
+    )
+    payload = product_to_dict(draft)
+    if existing and existing.payload and existing.payload.get("portion_g") is not None:
+        payload["portion_g"] = existing.payload["portion_g"]
     await bump_dictionary(
         session,
         user,
         kind="product",
         label=product_item_name(draft),
-        payload=product_to_dict(draft),
+        payload=payload,
     )
     return product
 
@@ -1326,6 +1339,39 @@ async def pinnable_entries(
         if len(found) >= limit:
             break
     return found
+
+
+async def remember_product_portion(
+    session: AsyncSession, user: User, *, name: str, portion_g: float | None
+) -> None:
+    """Record the grams eaten of a packaged product, for the next «Я это съел(а)».
+
+    `product_eat` always starts a fresh card at 100 g — the printed serving —
+    but the meal card that follows lets the person correct it. Once `meal:ok`
+    confirms the real amount, it lands here so the same product's dictionary
+    button (`spec/dictionary.md` § Память последней граммовки) offers that
+    amount next time instead of 100 g again. No-op for entries not yet in the
+    dictionary (`prod:save` never ran, or the label reading failed).
+    """
+    if portion_g is None:
+        return
+    key = normalize_name(name)
+    if not key:
+        return
+    entry = await session.scalar(
+        select(DictionaryEntry).where(
+            DictionaryEntry.user_id == user.id,
+            DictionaryEntry.kind == "product",
+            DictionaryEntry.key_norm == key,
+        )
+    )
+    if entry is None:
+        return
+    payload = dict(entry.payload or {})
+    payload["portion_g"] = portion_g
+    entry.payload = payload
+    entry.last_used_at = utcnow()
+    await session.flush()
 
 
 async def remember_meal(session: AsyncSession, user: User, draft: MealDraft) -> None:

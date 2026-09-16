@@ -8,7 +8,7 @@ Samsung Health не отдаёт данные серверам напрямую:
 ## Что делает
 
 ```
-Samsung Health → Health Connect → CGM Мост → POST <base>/health/samsung
+Samsung Health → Health Connect → CGM Мост → POST <base>/health/sync
                                              X-Health-Token: <token>
 ```
 
@@ -54,5 +54,5 @@ gradle assembleDebug      # app/build/outputs/apk/debug/app-debug.apk
 | `MainActivity.kt` | один экран: поля, разрешения, ручная синхронизация |
 | `Prefs.kt` | адрес, ID, токен, граница последней отправки, разбор `cgmdiet://` |
 | `HealthReader.kt` | чтение Health Connect → `Sample` |
-| `Uploader.kt` | `POST /health/samsung`, единственный сетевой вызов |
+| `Uploader.kt` | `POST /health/sync`, единственный сетевой вызов |
 | `SyncWorker.kt` | часовое расписание и одна синхронизация |

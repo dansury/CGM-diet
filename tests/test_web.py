@@ -1,4 +1,4 @@
-"""FastAPI surface: /health probe and the Health Connect relay."""
+"""FastAPI surface: /health probe and the phone health relay."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.config import Settings
-from src.health.samsung import make_token
+from src.health.sync import make_token
 from src.web.app import create_app
 
 SECRET = "relay-secret"
@@ -74,3 +74,30 @@ def test_samsung_sync_rejects_a_malformed_batch(client):
 
 def test_telegram_webhook_is_disabled_without_a_token(client):
     assert client.post("/telegram/webhook", json={}).status_code in (404, 503)
+
+
+def test_both_relay_paths_accept_the_same_batch(client):
+    """Мост, который уже стоит на телефоне, сам себя не обновит: старый путь
+    остаётся навсегда (`spec/health_sync.md` § HTTP)."""
+    headers = {"X-Health-Token": make_token(777, SECRET)}
+    body = {
+        "tg_id": 777,
+        "source": "healthkit",
+        "samples": [
+            {
+                "kind": "stepCount",
+                "start": "2026-09-14T08:00:00Z",
+                "end": "2026-09-14T08:15:00Z",
+                "steps": 300,
+                "external_id": "path-1",
+            }
+        ],
+    }
+    new_path = client.post("/health/sync", json=body, headers=headers)
+    assert new_path.status_code == 200
+    assert new_path.json() == {"accepted": 1, "received": 1}
+
+    body["samples"][0]["external_id"] = "path-2"
+    old_path = client.post("/health/samsung", json=body, headers=headers)
+    assert old_path.status_code == 200
+    assert old_path.json() == {"accepted": 1, "received": 1}

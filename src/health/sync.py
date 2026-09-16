@@ -1,10 +1,11 @@
-"""Samsung Health ingest.
+"""Phone health ingest — Health Connect (Android) and HealthKit (iOS).
 
-Samsung Health has no public server-side API for third parties: data leaves the
-phone through **Health Connect**, so the integration is a thin relay — a
-companion app (or Tasker/Shortcuts-style automation) reads Health Connect and
-POSTs batches here. The same endpoint shape works unchanged for Apple
-HealthKit later, which is why the payload is platform-neutral.
+Neither platform gives third parties a server-to-server API: the data leaves
+the phone or not at all. So the integration is a thin relay — something on the
+device (the Android bridge app, an iOS Shortcuts automation) reads the local
+store and POSTs batches here. One payload shape serves both, because the only
+platform-specific part is the vocabulary of sample names, and that is mapped in
+`KIND_ALIASES`.
 
 Auth is a per-user token derived from `HEALTH_SYNC_SECRET`, so the phone never
 carries the server secret and a leaked token exposes exactly one user.
@@ -22,6 +23,33 @@ from typing import Any
 from src.db.models import ActivitySample
 
 KINDS = {"steps", "workout", "sleep", "heart_rate"}
+
+#: What the two platforms call the same four things. Health Connect names come
+#: through the bridge already normalised; HealthKit names arrive raw when the
+#: sender is an iOS Shortcut, which has no place to rename them.
+KIND_ALIASES = {
+    # HealthKit / Shortcuts
+    "stepcount": "steps",
+    "step_count": "steps",
+    "hkquantitytypeidentifierstepcount": "steps",
+    "sleepanalysis": "sleep",
+    "sleep_analysis": "sleep",
+    "hkcategorytypeidentifiersleepanalysis": "sleep",
+    "heartrate": "heart_rate",
+    "hkquantitytypeidentifierheartrate": "heart_rate",
+    "activeenergyburned": "workout",
+    "hkworkouttypeidentifier": "workout",
+    "workouts": "workout",
+    # Health Connect spellings that are not ours
+    "stepsrecord": "steps",
+    "exercisesession": "workout",
+    "sleepsession": "sleep",
+    "heartraterecord": "heart_rate",
+}
+
+#: Platforms the relay is told about, for the `source` column. Anything else is
+#: stored as sent — the column is a label, not a gate.
+SOURCES = {"health_connect", "healthkit", "samsung_health", "shortcuts"}
 DEFAULT_BUCKET_MIN = 15
 MAX_SAMPLES_PER_REQUEST = 5000
 
@@ -44,6 +72,14 @@ def verify_token(tg_id: int, token: str, secret: str) -> bool:
     except HealthSyncError:
         return False
     return hmac.compare_digest(expected, (token or "").strip())
+
+
+def normalize_kind(raw: Any) -> str | None:
+    """Platform vocabulary → our four kinds. None = not something we store."""
+    key = str(raw or "steps").strip().lower().replace(" ", "")
+    if key in KINDS:
+        return key
+    return KIND_ALIASES.get(key.replace("-", "_")) or KIND_ALIASES.get(key)
 
 
 def _parse_stamp(raw: Any) -> datetime:
@@ -91,13 +127,13 @@ def parse_samples(payload: dict[str, Any]) -> list[ActivitySample]:
         raise HealthSyncError("`samples` must be a list")
     if len(raw_samples) > MAX_SAMPLES_PER_REQUEST:
         raise HealthSyncError(f"too many samples (max {MAX_SAMPLES_PER_REQUEST})")
-    source = str(payload.get("source") or "samsung_health")[:32]
+    source = str(payload.get("source") or "health_connect")[:32]
     out: list[ActivitySample] = []
     for raw in raw_samples:
         if not isinstance(raw, dict):
             continue
-        kind = str(raw.get("kind") or "steps").lower()
-        if kind not in KINDS:
+        kind = normalize_kind(raw.get("kind") or raw.get("type"))
+        if kind is None:
             continue
         start = _parse_stamp(raw.get("start") or raw.get("start_at"))
         end_raw = raw.get("end") or raw.get("end_at")
@@ -125,9 +161,12 @@ __all__ = [
     "DEFAULT_BUCKET_MIN",
     "HealthSyncError",
     "KINDS",
+    "KIND_ALIASES",
     "MAX_SAMPLES_PER_REQUEST",
+    "SOURCES",
     "SyncResult",
     "make_token",
+    "normalize_kind",
     "parse_samples",
     "verify_token",
 ]

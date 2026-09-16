@@ -329,6 +329,7 @@ async def on_health_step(callback: CallbackQuery) -> None:
     step = callback.data.split(":", 1)[1]
     texts = {
         "how": _health_how_text,
+        "ios": lambda: _health_ios_text(callback.from_user.id),
         "keys": lambda: _health_keys_text(callback.from_user.id),
         "app": _health_app_text,
         "menu": lambda: _health_status_text(None),
@@ -352,12 +353,13 @@ def _health_status_text(total_steps: int | None) -> str:
         else ""
     )
     return (
-        "⌚️ <b>Samsung Health</b>\n\n"
+        "⌚️ <b>Данные с телефона</b>\n\n"
         "Шаги, тренировки и сон с телефона помогают увидеть, "
         "как прогулка после еды меняет ваш сахар.\n\n"
-        "Samsung Health не отдаёт данные сайтам напрямую — их забирает "
-        "с телефона маленькое приложение-мост через Health Connect "
-        "и присылает сюда.\n\n"
+        "Ни Samsung Health, ни Apple Health не отдают данные сайтам напрямую: "
+        "они выходят только с самого телефона. Поэтому на телефоне работает "
+        "маленький отправщик — на Android приложение-мост, на iPhone "
+        "команда в «Быстрых командах».\n\n"
         "Настройка занимает 5 минут и делается один раз." + tail
     )
 
@@ -365,7 +367,7 @@ def _health_status_text(total_steps: int | None) -> str:
 def _health_how_text() -> str:
     """Пошагово, словами телефона Samsung — без единого технического термина сверх нужного."""
     return (
-        "📲 <b>Как подключить — 6 шагов</b>\n\n"
+        "📲 <b>Android: как подключить — 6 шагов</b>\n\n"
         "<b>1. Health Connect на телефоне</b>\n"
         "Android 14 и новее: <i>Настройки → Безопасность и конфиденциальность → "
         "Ещё → Health Connect</i> — он уже есть.\n"
@@ -388,14 +390,15 @@ def _health_how_text() -> str:
         "Через минуту вернитесь сюда и отправьте /health — внизу появится "
         "число полученных шагов. Дальше мост присылает данные сам, раз в час.\n\n"
         "⚠️ Если данные перестали приходить: <i>Настройки → Приложения → "
-        "CGM Мост → Батарея → Без ограничений</i>."
+        "CGM Мост → Батарея → Без ограничений</i>.\n\n"
+        "У вас iPhone — кнопка «🍏 iPhone» ниже."
     )
 
 
 def _health_keys_text(tg_id: int) -> str:
     settings = load_settings()
     base = settings.webhook_base_url or "https://&lt;ваш-домен&gt;"
-    from src.health.samsung import HealthSyncError, make_token
+    from src.health.sync import HealthSyncError, make_token
 
     try:
         token = make_token(tg_id, settings.health_sync_secret)
@@ -415,8 +418,55 @@ def _health_keys_text(tg_id: int) -> str:
         f"• Адрес сервера: <code>{base}</code>\n"
         f"• Ваш ID: <code>{tg_id}</code>\n"
         f"• Токен: <code>{token}</code>\n\n"
+        "Если отправляете сами (iPhone, Tasker, свой скрипт) — адрес целиком:\n"
+        f"<code>{base}/health/sync</code>\n\n"
         "🔒 Токен — только ваш: он открывает запись данных ровно в вашу карточку "
         "и ничего не читает. Никому его не пересылайте."
+    )
+
+
+def _health_ios_text(tg_id: int) -> str:
+    """iPhone без приложения: «Быстрые команды» умеют и читать Здоровье, и слать POST.
+
+    Своего приложения-моста под iOS нет, и обещать его нечестно. Зато
+    «Быстрые команды» стоят на каждом iPhone и делают ровно то же самое.
+    """
+    settings = load_settings()
+    base = settings.webhook_base_url or "https://&lt;ваш-домен&gt;"
+    from src.health.sync import HealthSyncError, make_token
+
+    try:
+        token = make_token(tg_id, settings.health_sync_secret)
+    except HealthSyncError:
+        token = "&lt;спросите у владельца бота&gt;"
+    return (
+        "🍏 <b>iPhone: как подключить</b>\n\n"
+        "Отдельного приложения под iPhone нет — и не нужно: всё делает "
+        "«Быстрые команды», они уже стоят на телефоне.\n\n"
+        "<b>1. Откройте «Быстрые команды» → + (новая команда)</b>\n\n"
+        "<b>2. Добавьте «Найти образцы Здоровья»</b>\n"
+        "Тип — <i>Шаги</i>, период — <i>сегодня</i>. "
+        "Так же можно добавить сон и тренировки.\n\n"
+        "<b>3. Добавьте «Получить содержимое URL»</b>\n"
+        f"Адрес: <code>{base}/health/sync</code>\n"
+        "Метод: <i>POST</i>\n"
+        "Заголовок: <code>X-Health-Token</code> со значением "
+        f"<code>{token}</code>\n"
+        "Тело запроса — <i>JSON</i> с полями:\n"
+        f"• <code>tg_id</code> — число <code>{tg_id}</code>\n"
+        "• <code>source</code> — текст <code>healthkit</code>\n"
+        "• <code>samples</code> — список, в нём для каждого образца "
+        "<code>kind</code> (<code>steps</code>, <code>sleep</code>, "
+        "<code>workout</code>), <code>start</code>, <code>end</code> и число "
+        "(<code>steps</code> или <code>kcal</code>).\n\n"
+        "<b>4. Проверьте</b>\n"
+        "Запустите команду и отправьте сюда /health — внизу появится число "
+        "полученных шагов.\n\n"
+        "<b>5. Сделайте её автоматической</b>\n"
+        "<i>Быстрые команды → Автоматизация → + → Время суток</i>, например "
+        "каждый вечер. Дальше телефон присылает данные сам.\n\n"
+        "🔒 Токен — только ваш: он открывает запись ровно в вашу карточку "
+        "и ничего не читает."
     )
 
 

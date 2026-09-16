@@ -919,3 +919,24 @@ Append-only. Не читается в рутинных циклах разраб
   прежний поток — сторонняя библиотека в приложение без сборки не тянется
 - Тесты: `tests/test_barcode.py` (14, включая чтение настоящего нарисованного
   EAN-13) и `node web/tests/barcode.mjs` (14)
+
+## 2026-09-14 — Релей стал платформо-нейтральным: HealthKit тем же путём (T037)
+
+- `/health/sync` — канонический путь; `/health/samsung` остаётся навсегда
+  (`include_in_schema=False`): мост, который уже стоит на телефоне, сам себя
+  не обновит
+- `src/health/samsung.py` → `src/health/sync.py`: модуль про две платформы,
+  а не про Samsung. `normalize_kind` + `KIND_ALIASES` приводят имена Apple
+  (`stepCount`, `HKQuantityTypeIdentifierStepCount`, `sleepAnalysis`,
+  `heartRate`) и Health Connect к нашим четырём видам — «Быстрой команде»
+  на iPhone переименовать их негде
+- Вид читается из `kind` или `type`; дефолт `source` — `health_connect`
+- `/health` → кнопки `🤖 Android` и `🍏 iPhone`. Под iOS своего приложения нет
+  и обещать его нечестно: инструкция ведёт через «Быстрые команды» («Найти
+  образцы Здоровья» → «Получить содержимое URL» → автоматизация по времени)
+- «Мои ключи» называют полный адрес `<base>/health/sync` — для тех, кто шлёт
+  сам (iPhone, Tasker, свой скрипт)
+- Мост переведён на новый путь (`Uploader.kt`), README моста тоже
+- Паритет tg/web: `[TG-ONLY]` в `spec/health_sync.md` — релей пишет по
+  `tg_id`, которого у web нет, и PWA всё равно не видит Health Connect
+- Тесты: оба пути принимают один и тот же батч, разбор имён HealthKit

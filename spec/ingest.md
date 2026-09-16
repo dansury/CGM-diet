@@ -193,10 +193,58 @@ medications[(name,dose)], body:BodyFacts, at, fasting, leftover}`.
 `format_value` / `format_delta` печатают в единицах пользователя;
 отрицательная дельта — с настоящим минусом «−».
 
+## История CGM из CSV (`src/ingest/cgm_csv.py`)
+
+```
+parse_cgm_csv(data, max_rows=20000) -> CsvImport   # raises UnknownFormat
+CsvImport(source, device?, unit_input, readings[GlucoseDraft], skipped_rows,
+          rejected, truncated) ; span -> (first, last)|None
+LIBREVIEW="libreview" · CLARITY="clarity" · MAX_ROWS=20000
+```
+
+Документ с `.csv` (или `text/csv`) уходит сюда, а не в анализы. Выгрузка
+человека из приложения производителя — самый дешёвый источник замеров: тысячи
+точек уже со временем, распознавать нечего.
+
+| Формат | Замер | Не замер |
+|---|---|---|
+| LibreView | `Record Type` 0/1/2 → колонка `Historic`/`Scan`/`Strip Glucose` | инсулин, еда, заметки, кетоны |
+| Dexcom Clarity | `Event Type = EGV` | `FirstName`, `Device` и прочие метаданные без времени |
+
+- единица — из названия колонки (`… mmol/L` / `… mg/dL`), дальше `to_mmol`;
+  значение вне `MMOL_RANGE` отбрасывается в `rejected`, как и у скриншота;
+- `Low`/`High` у Dexcom — края диапазона сенсора (2.2 / 22.2 ммоль/л);
+- порядок дат решается **один раз на файл** (`_pick_date_order`): ищем строку,
+  где первое число больше двенадцати; не нашлось — день вперёд;
+- кодировка: `utf-8-sig`, `utf-8`, `cp1251`;
+- запись — `repo.save_glucose_bulk` (один запрос на дедуп вместо одного на
+  строку), наивное время файла становится UTC по поясу пользователя там же;
+- итог человеку — `reporting.format_cgm_import`: сколько прочитано, сколько
+  новых, сколько уже было, сколько отброшено.
+
+Паритет tg/web: зеркало в `web/app/js/cgmcsv.js` (`spec/web.md` § Импорт CGM).
+
 ## PDF (`src/ingest/pdf.py`)
 
-`pdf_to_text(data, max_pages=10) -> str`. PyMuPDF — опциональный extra `[pdf]`.
-Нет библиотеки или нет текстового слоя → `""` → бот просит фото страницы.
+```
+pdf_to_text(data, max_pages=10) -> str
+pdf_to_images(data, max_pages=3, dpi=200) -> [png bytes]
+MAX_PAGES=10 · MAX_OCR_PAGES=3 · OCR_DPI=200
+```
+
+PyMuPDF — опциональный extra `[pdf]`. Порядок для документа:
+
+1. текстовый слой есть → `recognize_labs(text=…)`, модель картинок не видит:
+   дешевле и точнее;
+2. слоя нет (скан) → страницы рендерятся в PNG и идут тем же путём, что фото
+   страницы: `recognize_labs(images=…)`. Бот предупреждает строкой «Читаю
+   страницы как картинки…», и если страниц больше `MAX_OCR_PAGES` — что
+   смотрит первые три (один вызов модели на страницу, а числа в бланке
+   анализов на первых страницах);
+3. нечего и рендерить (нет библиотеки, битый файл) → просим фото страницы.
+
+`[TG-ONLY: в web-приложении загрузки анализов нет вообще — ни PDF, ни фото
+бланка; появится она — этот же порядок повторить там.]`
 
 
 ## Корректировки (`src/ingest/correction.py`)

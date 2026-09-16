@@ -28,6 +28,7 @@ from src.analytics.sleep import (
 from src.analytics.stats import KeyStats
 from src.analytics.symptoms import SymptomStats
 from src.analytics.tags import tag_label
+from src.ingest.cgm_csv import MAX_ROWS as MAX_IMPORT_ROWS
 from src.ingest.units import format_delta, format_value
 from src.vision.schemas import LabDraft, MealDraft, MedicationDraft, ProductDraft
 
@@ -536,6 +537,49 @@ def format_cgm_summary(summary: CGMSummary, *, unit: str = "mmol/L") -> str:
     lines.append("")
     lines.append("<i>Это описательные метрики, не диагноз.</i>")
     return "\n".join(lines)
+
+
+SOURCE_NAMES = {"libreview": "LibreView", "clarity": "Dexcom Clarity"}
+
+
+def format_cgm_import(result, *, added: int) -> str:
+    """Итог импорта архива CGM. Что не взяли — называем, а не прячем."""
+    name = SOURCE_NAMES.get(result.source, result.source)
+    if not result.readings:
+        return f"Файл {name} прочитал, но замеров в нём не нашёл."
+    lines = [f"📥 <b>Импорт {name}</b>"]
+    span = result.span
+    if span:
+        first, last = span
+        period = f"{first:%d.%m.%Y} — {last:%d.%m.%Y}"
+        lines.append(f"Прочитано {len(result.readings)} замеров, {period}.")
+    else:
+        lines.append(f"Прочитано {len(result.readings)} замеров.")
+    duplicates = len(result.readings) - added
+    if added:
+        lines.append(f"Добавлено новых: {added}.")
+    else:
+        lines.append("Новых замеров нет — этот период уже был загружен.")
+    if duplicates > 0 and added:
+        lines.append(f"Уже были в дневнике: {duplicates}.")
+    if result.rejected:
+        lines.append(f"Пропущено как невозможные значения: {result.rejected}.")
+    if result.truncated:
+        lines.append(
+            f"Файл длиннее {MAX_IMPORT_ROWS} строк — взял первые. "
+            "Пришлите остаток отдельным файлом."
+        )
+    lines.append("")
+    lines.append("<i>Статистика пересчитается при следующем /stats.</i>")
+    return "\n".join(lines)
+
+
+def format_cgm_import_failed(reason: str) -> str:
+    return (
+        f"Не разобрал CSV: {reason}.\n"
+        "Жду выгрузку из LibreView («Скачать глюкозные данные») или из Dexcom "
+        "Clarity («Экспорт» → CSV) без правок в файле."
+    )
 
 
 def format_symptoms(stats: list[SymptomStats], *, unit: str = "mmol/L") -> str:
@@ -1416,6 +1460,8 @@ __all__ = [
     "SLEEP_PRESENCE_REMINDER",
     "format_activity",
     "format_body_card",
+    "format_cgm_import",
+    "format_cgm_import_failed",
     "format_cgm_summary",
     "format_day_progress",
     "format_day_totals",

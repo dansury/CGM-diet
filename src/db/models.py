@@ -84,6 +84,9 @@ class User(Base, TimestampMixin):
     # and the moment the user blocked the bot (NULL = not blocked)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     blocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When `food_stats` was last rebuilt for this user; NULL = cold cache.
+    # Reset by every meal/reading change (`src/food_stats.py`).
+    food_stats_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class MediaFile(Base, TimestampMixin):
@@ -633,9 +636,18 @@ class FoodStat(Base):
     mean_delta: Mapped[float | None] = mapped_column(Float)
     median_delta: Mapped[float | None] = mapped_column(Float)
     max_delta: Mapped[float | None] = mapped_column(Float)
+    sd: Mapped[float | None] = mapped_column(Float)
     ci_low: Mapped[float | None] = mapped_column(Float)
     ci_high: Mapped[float | None] = mapped_column(Float)
+    # comparison group: meals without this key — the contrast is what separates
+    # "рис поднимает сахар" from "у меня всё поднимает сахар"
+    n_without: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    mean_without: Mapped[float | None] = mapped_column(Float)
+    contrast: Mapped[float | None] = mapped_column(Float)
+    p_value: Mapped[float | None] = mapped_column(Float)
     confidence: Mapped[str] = mapped_column(String(8), default="low", nullable=False)
+    #: last eaten_at values behind the key, ISO strings
+    examples: Mapped[list | None] = mapped_column(JSON)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )

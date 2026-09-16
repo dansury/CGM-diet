@@ -51,6 +51,8 @@ from src.reporting import (
     describe_food_hint,
     describe_food_retry,
     food_examples,
+    format_cgm_import,
+    format_cgm_import_failed,
     glucose_examples,
     glucose_hint,
     glucose_prompt,
@@ -335,20 +337,58 @@ async def on_document(message: Message, state: FSMContext, bot: Bot) -> None:
         image = await download_photo(bot, document.file_id)
         await _process_labs(message, state, [image], [document.file_id])
         return
-    if "pdf" not in mime and not (document.file_name or "").lower().endswith(".pdf"):
-        await message.answer("Пока понимаю только PDF и изображения.")
+    name = (document.file_name or "").lower()
+    if "csv" in mime or name.endswith(".csv"):
+        await _import_cgm_csv(message, bot, document.file_id)
+        return
+    if "pdf" not in mime and not name.endswith(".pdf"):
+        await message.answer("Пока понимаю только CSV, PDF и изображения.")
         return
     buffer = await bot.download(document.file_id)
     data = buffer.read() if hasattr(buffer, "read") else bytes(buffer)
-    from src.ingest.pdf import pdf_to_text
+    from src.ingest.pdf import MAX_OCR_PAGES, pdf_to_images, pdf_to_text
 
     text = pdf_to_text(data)
-    if not text:
+    if text:
+        await _process_labs(message, state, None, [document.file_id], text=text)
+        return
+    # A scan: render the pages ourselves instead of asking for a photo of a
+    # document the user has already sent (`spec/ingest.md` § PDF).
+    pages = pdf_to_images(data)
+    if not pages:
         await message.answer(
             "В PDF нет текстового слоя. Пришлите, пожалуйста, фото страницы — прочитаю с картинки."
         )
         return
-    await _process_labs(message, state, None, [document.file_id], text=text)
+    note = "Читаю страницы как картинки — текстового слоя в PDF нет."
+    if len(pages) == MAX_OCR_PAGES:
+        note += f" Смотрю первые {MAX_OCR_PAGES}."
+    await message.answer(note)
+    images = [ImagePart(data=page, mime="image/png") for page in pages]
+    await _process_labs(message, state, images, [document.file_id])
+
+
+async def _import_cgm_csv(message: Message, bot: Bot, file_id: str) -> None:
+    """A vendor CGM archive: parse it, store what is new, say what was dropped."""
+    from src.ingest.cgm_csv import UnknownFormat, parse_cgm_csv
+
+    buffer = await bot.download(file_id)
+    data = buffer.read() if hasattr(buffer, "read") else bytes(buffer)
+    try:
+        result = parse_cgm_csv(data)
+    except UnknownFormat as exc:
+        await message.answer(format_cgm_import_failed(str(exc)))
+        return
+    if not result.readings:
+        await message.answer(format_cgm_import(result, added=0))
+        return
+    await message.answer(f"Читаю {len(result.readings)} замеров…")
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, message.chat.id)
+        added = await repo.save_glucose_bulk(
+            session, user, result.readings, source=result.source
+        )
+    await message.answer(format_cgm_import(result, added=added))
 
 
 # ------------------------------------------------------------------ voice

@@ -539,6 +539,20 @@ def format_cgm_summary(summary: CGMSummary, *, unit: str = "mmol/L") -> str:
     return "\n".join(lines)
 
 
+def format_barcode_found(draft: ProductDraft) -> str:
+    """Откуда взялась карточка, если этикетку прочитать не удалось.
+
+    Источник называем прямо: числа в Open Food Facts вносят люди, и человек
+    вправе знать, что проверять (принцип III — данные принадлежат пользователю).
+    """
+    who = f"{draft.brand} · {draft.name}" if draft.brand else draft.name
+    return (
+        f"📦 Нашёл в Open Food Facts: <b>{escape(who)}</b>.\n"
+        "<i>Состав внесли люди в открытую базу — сверьте с упаковкой и "
+        "поправьте, если что-то не так.</i>"
+    )
+
+
 SOURCE_NAMES = {"libreview": "LibreView", "clarity": "Dexcom Clarity"}
 
 
@@ -1460,6 +1474,7 @@ __all__ = [
     "SLEEP_PRESENCE_REMINDER",
     "format_activity",
     "format_body_card",
+    "format_barcode_found",
     "format_cgm_import",
     "format_cgm_import_failed",
     "format_cgm_summary",

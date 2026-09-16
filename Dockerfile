@@ -20,7 +20,9 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 # `pdf` extra: local text extraction from lab PDFs, and rendering the pages of
 # a scan for the vision path (`spec/ingest.md` § PDF).
-RUN pip install ".[pdf]"
+# `barcode` extra: EAN off a pack photo before the model is asked
+# (`spec/ingest.md` § Штрихкод); the runtime stage carries its `libzbar0`.
+RUN pip install ".[pdf,barcode]"
 
 
 FROM python:${PYTHON_VERSION}-slim AS runtime
@@ -32,8 +34,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     APP_HOME=/app \
     MPLCONFIGDIR=/tmp/matplotlib
 
+# libzbar0 — the shared library `pyzbar` binds to; without it the barcode
+# path stays off and the label flow works exactly as before.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates tini \
+    && apt-get install -y --no-install-recommends ca-certificates tini libzbar0 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --system app \
     && useradd --system --gid app --home-dir /app --shell /usr/sbin/nologin app \

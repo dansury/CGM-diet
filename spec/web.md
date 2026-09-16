@@ -27,7 +27,7 @@ web/
     css/app.css
     js/ app.js theme.js db.js onboarding.js camera.js recognize.js thinking.js
        dictionary.js charts.js settings.js telemetry.js push.js sync.js notify.js
-       cgmcsv.js
+       cgmcsv.js barcode.js
   admin/                    закрыто паролем, доступно только по /admin
     index.php login.php logout.php lib.php
   api/                      JSON-эндпоинты, без сессий кроме sync/register
@@ -54,8 +54,10 @@ web/
   tests/model_hints.php     `php web/tests/model_hints.php` — какая модель не
                             подтверждена провайдером и что предложить взамен
   tests/cgm_csv.mjs         `node web/tests/cgm_csv.mjs` — разбор выгрузок
-                            LibreView и Dexcom Clarity (единственный тест на JS:
-                            логика живёт в браузере, PHP её не видит)
+                            LibreView и Dexcom Clarity (тесты на JS: логика
+                            живёт в браузере, PHP её не видит)
+  tests/barcode.mjs         `node web/tests/barcode.mjs` — контрольная цифра и
+                            разбор ответа Open Food Facts
   data/                     legacy-расположение app.db; используется, только если
                             каталог рядом с корнем деплоя недоступен на запись
   README.md                 инструкция по деплою
@@ -197,6 +199,29 @@ IndexedDB по `label` (префикс, затем подстрока), рота
 (`/meds`, `WellbeingFlow`), которого в web MVP ещё нет вовсе. Задача на
 реализацию — `TODO.md` T071.
 
+## Штрихкод (`js/barcode.js`)
+
+Зеркало `src/ingest/barcode.py` и `src/ingest/openfoodfacts.py` бота. Снимок не
+распознался (`recognize.php` вернул ошибку) → ищем на нём штрихкод и
+спрашиваем Open Food Facts; нашлось — обычный черновик приёма пищи на 100 г с
+пометкой об источнике, не нашлось — прежнее сообщение об ошибке.
+
+```
+isSupported() · isValid(code) · normalize(code)
+readBarcodes(blob) -> [код]
+lookupProduct(barcode) -> продукт|null · parseProduct(payload, barcode)
+draftFromProduct(product, grams=100) -> черновик
+```
+
+Чтение — встроенный `BarcodeDetector` (Chrome на Android, там же и съёмка);
+браузер без него молча отдаёт пустой список, и поток остаётся прежним.
+Сторонняя библиотека ради этого в приложение без сборки не тянется.
+Контрольная цифра GS1 обязательна — та же причина, что у бота: неверная цифра
+называет чужой продукт.
+
+Проверяется офлайн: `node web/tests/barcode.mjs` (чтение картинки — браузерное,
+проверяются код и разбор ответа базы).
+
 ## Импорт CGM (`js/cgmcsv.js`, «Настройки» → «История с сенсора»)
 
 Зеркало `src/ingest/cgm_csv.py` бота: те же два формата, тот же выбор порядка
@@ -232,7 +257,7 @@ parseCgmCsv(text, {maxRows=20000})
 `onboarding_step`, `onboarding_done`, `meal_recognized`, `camera_opened`,
 `dictionary_used`, `chart_viewed`, `push_subscribed`, `push_denied`,
 `push_sent` (уходит из `push_send.php`), `push_clicked` (из `sw.js`
-`notificationclick`), `data_cleared`, `registered`, `cgm_imported`.
+`notificationclick`), `data_cleared`, `registered`, `cgm_imported`, `barcode_used`.
 
 ## Push-уведомления (`js/push.js`, `sw.js`, `api/push_*.php`, `lib/webpush.php`)
 
@@ -261,7 +286,8 @@ AES-128-GCM через `openssl_pkey_derive`/`hash_hkdf`/`openssl_encrypt`, PHP 
 Health (`DEV_PLAN.md` фаза 9): код собран и соответствует спецификации,
 `php -l` зелёный, `php web/tests/notifications.php`, `php web/tests/auto_pull.php`,
 `php web/tests/llm_chain.php`, `php web/tests/model_hints.php` и
-`node web/tests/cgm_csv.mjs` зелёные, живой пуш не прогонялся.
+`node web/tests/cgm_csv.mjs` и `node web/tests/barcode.mjs` зелёные, живой пуш
+не прогонялся.
 
 ## Регистрация и синхронизация (`js/sync.js`, `api/register.php`, `api/sync.php`)
 

@@ -43,7 +43,14 @@ CATEGORY_LABELS: dict[str, str] = {
     "protein": "белок",
     "refined": "крахмалистое и белая мука",
     "extra": "прочее",
+    "drink": "напитки",
+    "oil": "масло",
 }
+#: В оригинальной тарелке масло и вода нарисованы **рядом** с тарелкой, а не
+#: её долями: доли никакой они не занимают. Поэтому их масса не участвует в
+#: пропорциях — иначе стакан воды «весил» бы как гарнир и занижал всё остальное.
+#: Своей цели у них нет и быть не может: это была бы норма (`spec/clinical.md`).
+ASIDE_CATEGORIES: tuple[str, ...] = ("drink", "oil")
 #: half the plate is vegetables+fruit, and vegetables come first
 HALF = ("veg", "fruit")
 
@@ -73,8 +80,10 @@ FALLBACK_PORTION_G = 100.0
 #: меньшие пробелы не стоят отдельной строки совета
 MIN_GAP_G = 30.0
 
-#: категории, из которых состоит собственно еда; кофе и орехи в них не входят
+#: категории, из которых состоит собственно еда; орехи и сладости в них не входят
 CORE_CATEGORIES: tuple[str, ...] = (*TARGET_SHARES, "refined")
+#: что вообще лежит на тарелке и делит её массу между собой
+PLATE_CATEGORIES: tuple[str, ...] = (*CORE_CATEGORIES, "extra")
 #: столько «еды» должно быть в приёме, чтобы это была тарелка, а не перекус, г
 MEAL_MIN_CORE_G = 200.0
 #: с этого счёта пропорции считаем собранными — говорить не о чем
@@ -86,7 +95,8 @@ _TAG_CATEGORY: dict[str, str] = {
     "legume": "protein",
     "fruit": "fruit",
     "dried_fruit": "fruit",
-    "juice": "extra",
+    "water": "drink",
+    "juice": "drink",
     "whole_grain": "grain",
     "white_rice": "refined",
     "refined_flour": "refined",
@@ -99,12 +109,12 @@ _TAG_CATEGORY: dict[str, str] = {
     "processed_meat": "protein",
     "cheese": "protein",
     "dairy_fermented": "protein",
-    "milk": "extra",
+    "milk": "drink",
     "nuts": "extra",
-    "fat_added": "extra",
+    "fat_added": "oil",
     "added_sugar": "extra",
-    "sweet_drink": "extra",
-    "alcohol": "extra",
+    "sweet_drink": "drink",
+    "alcohol": "drink",
     "sweetener": "extra",
     "ultra_processed": "extra",
 }
@@ -127,6 +137,7 @@ _TAG_PRIORITY: tuple[str, ...] = (
     "cheese",
     "dairy_fermented",
     "milk",
+    "water",
     "nuts",
     "juice",
     "sweet_drink",
@@ -157,7 +168,12 @@ class PlateMeal:
 
 @dataclass(frozen=True, slots=True)
 class PlateScore:
-    """Shares of one session against the plate."""
+    """Shares of one session against the plate.
+
+    `mass_g` и `shares` — про саму тарелку: напитки и масло в них не входят
+    (`ASIDE_CATEGORIES`). Их граммы видны в `grams` и в `drink_g` / `oil_g`,
+    чтобы о них можно было сказать, ничего не требуя.
+    """
 
     mass_g: float
     grams: dict[str, float]
@@ -170,6 +186,14 @@ class PlateScore:
     def half_share(self) -> float:
         return sum(self.shares.get(cat, 0.0) for cat in HALF)
 
+    @property
+    def drink_g(self) -> float:
+        return self.grams.get("drink", 0.0)
+
+    @property
+    def oil_g(self) -> float:
+        return self.grams.get("oil", 0.0)
+
 
 @dataclass(frozen=True, slots=True)
 class MealSession:
@@ -180,7 +204,14 @@ class MealSession:
 
     @property
     def mass_g(self) -> float:
-        return sum(_portion(item) for item in self.items)
+        """Масса самой тарелки: напитки и масло сюда не идут (T060/T061)."""
+        return sum(
+            _portion(item) for item in self.items if classify(item) in PLATE_CATEGORIES
+        )
+
+    @property
+    def drink_g(self) -> float:
+        return sum(_portion(item) for item in self.items if classify(item) == "drink")
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,15 +283,22 @@ def is_balanced(score: PlateScore) -> bool:
 
 
 def score_items(items: list[PlateItem]) -> PlateScore:
-    """Mass shares of one plate, and how much of the target they cover."""
+    """Mass shares of one plate, and how much of the target they cover.
+
+    Напитки и масло считаются, но долей не занимают: 300 мл воды — не гарнир.
+    """
     grams: dict[str, float] = defaultdict(float)
     estimated = False
     for item in items:
         if item.portion_g is None or item.portion_g <= 0:
             estimated = True
         grams[classify(item)] += _portion(item)
-    total = sum(grams.values())
-    shares = {cat: (value / total if total else 0.0) for cat, value in grams.items()}
+    total = sum(value for cat, value in grams.items() if cat in PLATE_CATEGORIES)
+    shares = {
+        cat: (value / total if total else 0.0)
+        for cat, value in grams.items()
+        if cat in PLATE_CATEGORIES
+    }
     covered = sum(min(shares.get(cat, 0.0), target) for cat, target in TARGET_SHARES.items())
     score = 100.0 * covered / sum(TARGET_SHARES.values())
     return PlateScore(
@@ -270,6 +308,44 @@ def score_items(items: list[PlateItem]) -> PlateScore:
         score=round(score, 1),
         n_items=len(items),
         estimated_mass=estimated,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class PlateWeek:
+    """Тарелка за период: доли по накопленной массе, а не среднее из средних.
+
+    Среднее из долей завысило бы вклад маленьких тарелок: перекус на 200 г
+    весил бы столько же, сколько обед на килограмм. Поэтому граммы сначала
+    складываются, и доли считаются один раз — от суммы.
+    """
+
+    days: int
+    meals: int
+    balanced: int
+    score: PlateScore
+
+    @property
+    def balanced_share(self) -> float:
+        return self.balanced / self.meals if self.meals else 0.0
+
+
+def week_summary(sessions: list[MealSession]) -> PlateWeek | None:
+    """Свод по тарелкам за период. None — настоящих приёмов пищи не было."""
+    plates = [s for s in sessions if is_meal(s.items)]
+    if not plates:
+        return None
+    items: list[PlateItem] = []
+    balanced = 0
+    for session in plates:
+        items.extend(session.items)
+        if is_balanced(score_items(session.items)):
+            balanced += 1
+    return PlateWeek(
+        days=len({s.started_at.date() for s in plates}),
+        meals=len(plates),
+        balanced=balanced,
+        score=score_items(items),
     )
 
 
@@ -458,8 +534,12 @@ def category_label(category: str) -> str:
 __all__ = [
     "BALANCED_SCORE",
     "BURST_GAP_MIN",
+    "ASIDE_CATEGORIES",
     "CATEGORY_LABELS",
     "CORE_CATEGORIES",
+    "PLATE_CATEGORIES",
+    "PlateWeek",
+    "week_summary",
     "DEFAULT_MEALS_PER_DAY",
     "DEFAULT_SESSION_MIN",
     "MAX_MEALS_PER_DAY",

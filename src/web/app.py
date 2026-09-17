@@ -13,7 +13,7 @@ from src.db import repo
 from src.db.engine import get_engine
 from src.errors_report import report_error
 from src.handlers.deps import session_scope
-from src.health.samsung import HealthSyncError, parse_samples, verify_token
+from src.health.sync import HealthSyncError, parse_samples, verify_token
 from src.logging_setup import get_logger, setup_logging
 
 log = get_logger("web")
@@ -123,11 +123,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         await dispatcher.feed_update(bot, update)
         return {"ok": "true"}
 
-    @app.post("/health/samsung")
-    async def samsung_sync(
+    # `/health/samsung` is the path the Android bridge shipped with. The relay
+    # is platform-neutral now (`/health/sync` — Health Connect and HealthKit
+    # alike), but an installed bridge is not going to update itself, so the old
+    # path stays an alias forever. `include_in_schema=False` keeps the docs
+    # showing one endpoint.
+    @app.post("/health/sync")
+    @app.post("/health/samsung", include_in_schema=False)
+    async def health_sync(
         request: Request, x_health_token: str | None = Header(default=None)
     ) -> dict[str, Any]:
-        """Relay endpoint for the phone-side Health Connect bridge."""
+        """Relay endpoint for whatever reads the phone's health store."""
         payload = await request.json()
         if not isinstance(payload, dict):
             raise HTTPException(status_code=400, detail="object expected")

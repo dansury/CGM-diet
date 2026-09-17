@@ -7,8 +7,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * POST /health/samsung — ровно один эндпоинт, ровно один заголовок.
+ * POST /health/sync — ровно один эндпоинт, ровно один заголовок.
  * Токен уходит только на адрес, который ввёл пользователь.
+ * Старый путь /health/samsung сервер принимает по-прежнему: мост, который уже
+ * стоит на телефоне, сам себя не обновит.
  */
 object Uploader {
 
@@ -25,7 +27,7 @@ object Uploader {
             put("samples", JSONArray().also { array -> samples.forEach { array.put(it.toJson()) } })
         }.toString()
 
-        val connection = (URL("${prefs.baseUrl}/health/samsung").openConnection()
+        val connection = (URL("${prefs.baseUrl}/health/sync").openConnection()
             as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = TIMEOUT_MS

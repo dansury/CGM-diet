@@ -6,6 +6,8 @@
  */
 import { getKV, addRecord, getAll } from './db.js';
 import { recognizeMeal, fileToCompressedDataUrl } from './recognize.js';
+import { readBarcodes, normalize, lookupProduct, draftFromProduct } from './barcode.js';
+import { emptyHints } from './goals.js';
 import { bumpDictionaryFromMeal, suggest, draftFromEntry, exampleLabels, matchDish } from './dictionary.js';
 import { el, showToast, formatTime, round1 } from './utils.js';
 import { showThinking } from './thinking.js';
@@ -110,7 +112,16 @@ async function renderListView(container) {
 
     wrap.appendChild(el('<div class="section-title">Приёмы пищи сегодня</div>'));
     if (todays.length === 0) {
-        wrap.appendChild(el('<div class="empty-hint">Пока ничего не записано — сфотографируйте еду или добавьте текстом.</div>'));
+        // Подсказка по названной цели, а не общее «сфотографируйте еду»:
+        // человек уже сказал, зачем пришёл (spec/onboarding.md § Цели).
+        const profile = await getKV('profile', {});
+        const hints = emptyHints((profile && profile.focus) || []).slice(0, 2);
+        const text = hints.length
+            ? 'Пока ничего не записано. ' + hints.join(' ')
+            : 'Пока ничего не записано — сфотографируйте еду или добавьте текстом.';
+        const hint = el('<div class="empty-hint"></div>');
+        hint.textContent = text;
+        wrap.appendChild(hint);
     } else {
         const list = el('<div class="list"></div>');
         for (const meal of todays) {
@@ -234,7 +245,15 @@ async function renderCaptureView(container, prefill = '', { openCamera = false }
             waiting.destroy();
             renderDraftView(container, draft);
         } catch (e) {
+            // Этикетка не далась — на пачке обычно есть штрихкод, а это точный
+            // ключ в открытую базу состава (spec/web.md § Штрихкод).
+            const draft = await draftByBarcode(file);
             waiting.destroy();
+            if (draft) {
+                track('barcode_used', { source: 'openfoodfacts' });
+                showToast('Нашёл по штрихкоду в Open Food Facts');
+                return renderDraftView(container, draft);
+            }
             showToast('Не получилось распознать: ' + e.message);
             renderCaptureView(container, text);
         }
@@ -299,6 +318,18 @@ async function wireQuickDictionaryInput(wrap, container) {
             }
         }, 120);
     });
+}
+
+/** Штрихкод с фотографии → состав из Open Food Facts. null, если не вышло. */
+async function draftByBarcode(file) {
+    try {
+        const codes = await readBarcodes(file);
+        for (const code of codes) {
+            const product = await lookupProduct(normalize(code));
+            if (product) return draftFromProduct(product);
+        }
+    } catch (e) { /* запасной путь молчит: человек уже видит ошибку распознавания */ }
+    return null;
 }
 
 function renderDraftView(container, draft) {

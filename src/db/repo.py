@@ -1144,7 +1144,7 @@ async def day_energy(
     Потрачено = ручные тренировки + то, что прислал телефон, без пересечений
     (`analytics.body.merge_burn`): одна пробежка не должна считаться дважды.
     """
-    from src.analytics.body import merge_burn
+    from src.analytics.body import merge_burn, steps_outside_workouts
 
     meals = await session.execute(
         select(func.sum(Meal.kcal), func.sum(Meal.carbs_g)).where(
@@ -1157,15 +1157,30 @@ async def day_energy(
         for row in await load_workouts(session, user, since=start)
         if row.started_at < end
     ]
-    samples = [
-        (_aware(sample.start_at), _aware(sample.end_at) if sample.end_at else None, sample.kcal)
+    activity = [
+        sample
         for sample in await load_activity(session, user, since=start)
-        if sample.kind == "workout" and _aware(sample.start_at) < end
+        if _aware(sample.start_at) < end
     ]
+    samples = [
+        (_aware(s.start_at), _aware(s.end_at) if s.end_at else None, s.kcal)
+        for s in activity
+        if s.kind == "workout"
+    ]
+    # Шаги внутри записанной вручную тренировки уже дали свои калории.
+    steps = steps_outside_workouts(
+        [
+            (_aware(s.start_at), _aware(s.end_at) if s.end_at else None, s.steps)
+            for s in activity
+            if s.kind == "steps"
+        ],
+        workouts,
+    )
     return {
         "consumed_kcal": float(consumed or 0.0),
         "carbs_g": float(carbs or 0.0),
         "burned_kcal": float(merge_burn(workouts, samples)),
+        "steps": steps,
     }
 
 

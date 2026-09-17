@@ -5,18 +5,8 @@
  * never sent anywhere unless the user registers (sync.js).
  */
 import { getKV, setKV } from './db.js';
+import { GOALS } from './goals.js';
 import { track } from './telemetry.js';
-
-const GOALS = [
-    ['weight', 'Изменить вес'],
-    ['sugar', 'Держать сахар в норме'],
-    ['energy', 'Больше энергии в течение дня'],
-    ['habits', 'Выстроить привычки в питании'],
-    ['symptoms', 'Понять причины самочувствия'],
-    ['labs', 'Разобраться в анализах'],
-    ['muscle', 'Набрать мышечную массу'],
-    ['sport', 'Улучшить результаты в спорте'],
-];
 
 // Meals per day — same bounds as the bot (src/analytics/plate.py).
 export const MIN_MEALS_PER_DAY = 1;
@@ -77,8 +67,8 @@ function waitForStep(container, title, bodyEl, { skippable = true, validate = ()
 async function stepFocus(container, profile) {
     const body = el('<div class="onb-goals"></div>');
     const selected = new Set();
-    for (const [key, label] of GOALS) {
-        const btn = el(`<button type="button" class="onb-goal-btn" data-key="${key}">${label}</button>`);
+    for (const { key, title } of GOALS) {
+        const btn = el(`<button type="button" class="onb-goal-btn" data-key="${key}">${title}</button>`);
         btn.addEventListener('click', () => {
             btn.classList.toggle('selected');
             if (selected.has(key)) selected.delete(key); else selected.add(key);

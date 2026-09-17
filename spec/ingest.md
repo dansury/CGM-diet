@@ -193,6 +193,39 @@ medications[(name,dose)], body:BodyFacts, at, fasting, leftover}`.
 `format_value` / `format_delta` печатают в единицах пользователя;
 отрицательная дельта — с настоящим минусом «−».
 
+## Штрихкод (`src/ingest/barcode.py`, `src/ingest/openfoodfacts.py`)
+
+```
+read_barcodes(data) -> [код]      # pyzbar, символики EAN13/EAN8/UPCA/UPCE
+is_valid(code) -> bool            # контрольная цифра GS1
+normalize(code) -> str            # UPC-A → написание EAN-13
+lookup_product(barcode, client?) -> ProductDraft|None
+parse_product(payload, barcode) -> ProductDraft|None
+```
+
+`pyzbar` + `pillow` — опциональный extra `[barcode]`, рядом нужен системный
+`libzbar0` (в образе есть). Нет библиотеки — путь просто выключен.
+
+Порядок для фото этикетки (`_process_label`):
+
+1. `recognize_label(images)` — как раньше;
+2. модель не справилась → ищем штрихкод на тех же снимках. Контрольная цифра
+   обязательна: одна неверно прочитанная цифра даёт существующий, но **чужой**
+   код, и это хуже, чем отсутствие кода;
+3. код есть → Open Food Facts (`world.openfoodfacts.org/api/v2`, запрашиваем
+   только нужные поля). Ответ без чисел карточкой не становится — за составом
+   и ходили. Значения вне 0–1000 на 100 г отбрасываются;
+4. ничего — прежняя просьба снять состав крупнее.
+
+Карточка из базы помечается человеку (`reporting.format_barcode_found`):
+состав туда вносят люди, и человек вправе знать, что проверять. Дальше —
+обычное подтверждение, как у распознавания.
+
+Читаются только товарные символики: QR-код программы лояльности рядом с
+составом — не идентификатор продукта.
+
+Паритет tg/web: `web/app/js/barcode.js` (`spec/web.md` § Штрихкод).
+
 ## История CGM из CSV (`src/ingest/cgm_csv.py`)
 
 ```

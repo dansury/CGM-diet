@@ -182,10 +182,12 @@ def product_actions(*, mode: str) -> InlineKeyboardMarkup:
 
 
 def health_setup(*, step: str = "menu") -> InlineKeyboardMarkup:
-    """Инструкция Samsung Health: шаги листаются кнопками (`spec/health_sync.md`)."""
+    """Инструкция по данным с телефона: шаги листаются кнопками (`spec/health_sync.md`)."""
     rows: list[list[InlineKeyboardButton]] = []
     if step != "how":
-        rows.append([InlineKeyboardButton(text="📲 Как подключить", callback_data="hs:how")])
+        rows.append([InlineKeyboardButton(text="🤖 Android", callback_data="hs:how")])
+    if step != "ios":
+        rows.append([InlineKeyboardButton(text="🍏 iPhone", callback_data="hs:ios")])
     if step != "keys":
         rows.append([InlineKeyboardButton(text="🔑 Мои ключи", callback_data="hs:keys")])
     if step != "app":
@@ -438,7 +440,10 @@ def stats_windows(active: str = "1h") -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🏷 По компонентам", callback_data="stats:k:tag"),
                 InlineKeyboardButton(text="🍲 По блюдам", callback_data="stats:k:item"),
             ],
-            [InlineKeyboardButton(text="📈 График", callback_data="stats:chart")],
+            [
+                InlineKeyboardButton(text="📈 График", callback_data="stats:chart"),
+                InlineKeyboardButton(text="🗓 Неделя", callback_data="stats:week"),
+            ],
         ]
     )
 

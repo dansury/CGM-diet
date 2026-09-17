@@ -1,9 +1,11 @@
 /**
  * charts.js — hand-rolled canvas charts (no dependency, no build step):
- * glucose trend, weight trend, daily calories, wellbeing score.
- * spec: spec/web.md.
+ * glucose trend, weight trend, daily calories, wellbeing score, plus the
+ * week-over-week card above them.
+ * spec: spec/web.md, § Неделя в сравнении.
  */
-import { getAll } from './db.js';
+import { getAll, getKV } from './db.js';
+import { buildDigest, digestLines } from './digest.js';
 import { el, formatDateShort } from './utils.js';
 import { track } from './telemetry.js';
 
@@ -83,16 +85,41 @@ function chartCard(title, canvasId) {
     `);
 }
 
+/**
+ * «Неделя в сравнении с прошлой» — над графиками: график показывает, как было,
+ * карточка — что изменилось. spec: spec/web.md § Неделя в сравнении.
+ */
+function weekCard(data, focus) {
+    const lines = digestLines(buildDigest(data), focus);
+    const card = el('<div class="card" style="margin-bottom:16px;"></div>');
+    card.appendChild(el('<h3 style="margin:0 0 8px;">Неделя в сравнении с прошлой</h3>'));
+    if (!lines.length) {
+        card.appendChild(el('<div class="muted" style="font-size:13px;">Заметных сдвигов нет — и это тоже ответ. Чтобы сравнение было о чём, нужны записи в обе недели.</div>'));
+        return card;
+    }
+    const list = el('<div></div>');
+    for (const line of lines) {
+        const row = el('<div style="margin:6px 0;"></div>');
+        row.textContent = '• ' + line;
+        list.appendChild(row);
+    }
+    card.appendChild(list);
+    card.appendChild(el('<div class="muted" style="font-size:12px; margin-top:8px;"><i>Это сравнение двух недель, а не объяснение. Что именно стоит за сдвигом, по этим числам не видно.</i></div>'));
+    return card;
+}
+
 export async function renderChartsView(container) {
     track('chart_viewed');
-    const [glucose, weight, meals, wellbeing] = await Promise.all([
+    const [glucose, weight, meals, wellbeing, profile] = await Promise.all([
         getAll('glucose', { desc: false }),
         getAll('weight', { desc: false }),
         getAll('meals', { desc: false }),
         getAll('wellbeing', { desc: false }),
+        getKV('profile', {}),
     ]);
 
     const wrap = el('<div></div>');
+    wrap.appendChild(weekCard({ glucose, weight, meals }, (profile && profile.focus) || []));
     wrap.appendChild(chartCard('Сахар, ммоль/л', 'chart-glucose'));
     wrap.appendChild(chartCard('Вес, кг', 'chart-weight'));
     wrap.appendChild(chartCard('Калории по дням', 'chart-kcal'));

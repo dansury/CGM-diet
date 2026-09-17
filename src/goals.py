@@ -13,7 +13,7 @@ what the bot says first. See `spec/onboarding.md` § Цели.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 #: ключ свободного варианта — текст лежит в `body_profile.focus_note`
@@ -28,25 +28,69 @@ class Goal:
     title: str
     #: возможности (`src/features.py`), которые этой цели служат напрямую
     features: tuple[str, ...] = ()
+    #: разделы отчётов, которые этой цели отвечают: их человек увидит первыми
+    sections: tuple[str, ...] = ()
+    #: чем заполнить пустой день — одна фраза, если записей ещё нет
+    empty_hint: str = ""
 
 
 GOALS: tuple[Goal, ...] = (
-    Goal(key="weight", title="Снизить вес", features=("body", "plate")),
-    Goal(key="sugar", title="Держать сахар в норме", features=("stats", "graph", "health")),
+    Goal(
+        key="weight",
+        title="Снизить вес",
+        features=("body", "plate"),
+        sections=("weight", "meals"),
+        empty_hint="Запишите, что съели, — из этого складывается дневной коридор.",
+    ),
+    Goal(
+        key="sugar",
+        title="Держать сахар в норме",
+        features=("stats", "graph", "health"),
+        sections=("glucose", "components"),
+        empty_hint="Пришлите показание сахара или фото еды — дальше я свяжу их сам.",
+    ),
     Goal(
         key="energy",
         title="Больше энергии, меньше сонливости после еды",
         features=("wellbeing", "stats"),
+        sections=("wellbeing", "components", "glucose"),
+        empty_hint="Отметьте самочувствие — так видно, после чего накрывает.",
     ),
-    Goal(key="habits", title="Наладить питание", features=("plate", "dictionary")),
+    Goal(
+        key="habits",
+        title="Наладить питание",
+        features=("plate", "dictionary"),
+        sections=("meals", "components"),
+        empty_hint="Запишите приём пищи — регулярность видно только по записям.",
+    ),
     Goal(
         key="symptoms",
         title="Понять, от каких продуктов плохо",
         features=("wellbeing", "meds"),
+        sections=("wellbeing", "components"),
+        empty_hint="Отметьте самочувствие и что ели рядом — связь ищется по парам.",
     ),
-    Goal(key="labs", title="Улучшить показатели анализов", features=("labs",)),
-    Goal(key="muscle", title="Набрать вес и мышцы", features=("body", "workout")),
-    Goal(key="sport", title="Форма и выносливость", features=("workout", "health")),
+    Goal(
+        key="labs",
+        title="Улучшить показатели анализов",
+        features=("labs",),
+        sections=("components", "meals"),
+        empty_hint="Пришлите PDF или фото бланка анализов — разберу по маркерам.",
+    ),
+    Goal(
+        key="muscle",
+        title="Набрать вес и мышцы",
+        features=("body", "workout"),
+        sections=("weight", "workouts", "meals"),
+        empty_hint="Запишите тренировку и еду — прирост считается из обоих.",
+    ),
+    Goal(
+        key="sport",
+        title="Форма и выносливость",
+        features=("workout", "health"),
+        sections=("workouts", "steps"),
+        empty_hint="Запишите тренировку — или подключите шаги с телефона в /health.",
+    ),
 )
 
 BY_KEY: dict[str, Goal] = {goal.key: goal for goal in GOALS}
@@ -101,6 +145,32 @@ def feature_order(keys: Iterable[str]) -> tuple[str, ...]:
     return tuple(order)
 
 
+def report_order(keys: Iterable[str], default: Sequence[str]) -> tuple[str, ...]:
+    """Разделы отчёта в порядке, отвечающем названным целям.
+
+    Разделы, которых цель просит, поднимаются наверх в порядке каталога целей;
+    остальные идут следом в своём обычном порядке. Порядок — единственное, на
+    что цели влияют: ни одна строка не появляется и не исчезает из-за цели
+    (`spec/onboarding.md`, `spec/clinical.md`).
+    """
+    wanted: list[str] = []
+    for key in decode(",".join(keys)):
+        for section in BY_KEY[key].sections if key in BY_KEY else ():
+            if section in default and section not in wanted:
+                wanted.append(section)
+    return tuple(wanted) + tuple(s for s in default if s not in wanted)
+
+
+def empty_hints(keys: Iterable[str]) -> list[str]:
+    """Чем заполнить пустой день — по одной фразе на названную цель."""
+    out: list[str] = []
+    for key in decode(",".join(keys)):
+        hint = BY_KEY[key].empty_hint if key in BY_KEY else ""
+        if hint and hint not in out:
+            out.append(hint)
+    return out
+
+
 def normalize_note(text: str | None) -> str | None:
     cleaned = " ".join((text or "").split())
     return cleaned[:NOTE_LIMIT] or None
@@ -113,6 +183,8 @@ __all__ = [
     "NOTE_LIMIT",
     "WEIGHT_GOALS",
     "Goal",
+    "empty_hints",
+    "report_order",
     "decode",
     "encode",
     "feature_order",

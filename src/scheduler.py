@@ -1,4 +1,5 @@
-"""Фоновые напоминания: «пора взвеситься» (`spec/body.md`), еженедельный
+"""Фоновые напоминания: «пора взвеситься» (`spec/body.md`), недельный дайджест
+(`spec/analytics.md`), еженедельный
 рассказ об одной неиспользованной возможности (`spec/features.md`),
 «бот вас не видит» для наблюдения за сном (`spec/sleep.md`) и уведомления по
 расписанию — общие настройки владельца поверх личных (`spec/notifications.md`).
@@ -16,12 +17,18 @@ from datetime import UTC, datetime
 
 from aiogram import Bot
 
+from src import digest
 from src.analytics import notify as notify_math
 from src.db import repo
 from src.handlers.deps import session_scope, to_local
 from src.keyboards import notification_actions, sugar_reminder, weight_prompt
 from src.logging_setup import get_logger
-from src.reporting import WEIGHT_PROMPT, format_notification, format_sugar_reminder
+from src.reporting import (
+    WEIGHT_PROMPT,
+    format_notification,
+    format_sugar_reminder,
+    format_weekly_digest,
+)
 
 log = get_logger("scheduler")
 
@@ -36,12 +43,18 @@ QUIET_END = 20
 SUGAR_REMINDER_START_MIN = 60
 SUGAR_REMINDER_END_MIN = 75
 
+#: день недели и час, когда уходит дайджест. Понедельник утром: неделя уже
+#: закрылась, а следующая ещё не прожита.
+DIGEST_WEEKDAY = 0
+DIGEST_HOUR = 10
+
 _task: asyncio.Task | None = None
 _hints_task: asyncio.Task | None = None
 _presence_task: asyncio.Task | None = None
 _notify_task: asyncio.Task | None = None
 _sugar_task: asyncio.Task | None = None
 _free_catalog_task: asyncio.Task | None = None
+_digest_task: asyncio.Task | None = None
 
 
 def start_scheduler(
@@ -49,6 +62,7 @@ def start_scheduler(
 ) -> asyncio.Task | None:
     """Поднять фоновые циклы. Повторный вызов не плодит вторую задачу."""
     global _task, _hints_task, _presence_task, _notify_task, _sugar_task, _free_catalog_task
+    global _digest_task
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -64,6 +78,8 @@ def start_scheduler(
         _sugar_task = loop.create_task(sugar_reminder_loop(bot, interval_s=notify_interval_s))
     if _free_catalog_task is None or _free_catalog_task.done():
         _free_catalog_task = loop.create_task(free_catalog_loop(interval_s=interval_s))
+    if _digest_task is None or _digest_task.done():
+        _digest_task = loop.create_task(weekly_digest_loop(bot, interval_s=interval_s))
     if _task is not None and not _task.done():
         return _task
     _task = loop.create_task(weight_reminder_loop(bot, interval_s=interval_s))
@@ -72,7 +88,11 @@ def start_scheduler(
 
 async def stop_scheduler() -> None:
     global _task, _hints_task, _presence_task, _notify_task, _sugar_task, _free_catalog_task
-    tasks = (_task, _hints_task, _presence_task, _notify_task, _sugar_task, _free_catalog_task)
+    global _digest_task
+    tasks = (
+        _task, _hints_task, _presence_task, _notify_task, _sugar_task,
+        _free_catalog_task, _digest_task,
+    )
     for task in tasks:
         if task is None:
             continue
@@ -89,6 +109,7 @@ async def stop_scheduler() -> None:
     _notify_task = None
     _sugar_task = None
     _free_catalog_task = None
+    _digest_task = None
 
 
 async def weight_reminder_loop(bot: Bot, *, interval_s: int = TICK_SECONDS) -> None:
@@ -321,6 +342,59 @@ async def run_sugar_reminders(bot: Bot, *, now: datetime | None = None) -> int:
                 sent += 1
             except Exception:
                 log.warning("sugar reminder not delivered to %s", user.tg_id, exc_info=True)
+    return sent
+
+
+async def weekly_digest_loop(bot: Bot, *, interval_s: int = TICK_SECONDS) -> None:
+    while True:
+        try:
+            await run_weekly_digests(bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("weekly digest tick failed")
+        await asyncio.sleep(interval_s)
+
+
+async def run_weekly_digests(bot: Bot, *, now: datetime | None = None) -> int:
+    """Один тик T042: понедельник, утро по местному времени — что сдвинулось.
+
+    Слот занимается **до** отправки через тот же `notification_sends`, что и
+    остальные расписания: обрыв сети не должен превращаться во второй дайджест.
+    Ключ слота — дата понедельника, поэтому часовой тик в течение дня шлёт
+    ровно одно письмо.
+    Пустой дайджест не отправляется: «сравнивать нечего» — не повод для письма.
+    """
+    moment = now or datetime.now(UTC)
+    sent = 0
+    async with session_scope() as session:
+        for user in await repo.users_with_notifications(session):
+            if not user.weekly_digest_enabled:
+                continue
+            local = to_local(moment, user)
+            if local.weekday() != DIGEST_WEEKDAY or local.hour < DIGEST_HOUR:
+                continue
+            if local.hour >= QUIET_END:
+                continue
+            report = await digest.build(session, user)
+            if not report.has_content:
+                continue
+            claimed = await repo.claim_notification_slot(
+                session,
+                user,
+                code="weekly_digest",
+                slot="w",
+                sent_on=local.date().isoformat(),
+            )
+            if not claimed:
+                continue
+            try:
+                await bot.send_message(
+                    user.tg_id, format_weekly_digest(report, unit=user.glucose_unit)
+                )
+                sent += 1
+            except Exception:
+                log.warning("weekly digest not delivered to %s", user.tg_id, exc_info=True)
     return sent
 
 

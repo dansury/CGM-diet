@@ -19,7 +19,7 @@ from src.db.models import User
 from src.handlers.deps import local_now, session_scope, to_utc, user_tz
 from src.keyboards import plate_meals_picker, plate_settings
 from src.logging_setup import get_logger
-from src.reporting import format_plate_advice, format_plate_settings
+from src.reporting import format_plate_advice, format_plate_settings, format_plate_week
 
 router = Router(name="plate")
 log = get_logger("handlers.plate")
@@ -143,4 +143,25 @@ async def cb_plate_meals_edit(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-__all__ = ["plate_advice_text", "router"]
+async def plate_week_text(
+    session: AsyncSession, user: User, *, now: datetime, days: int = 7
+) -> str | None:
+    """Свод тарелки за период для `/stats`. `None` — оценка выключена или пусто.
+
+    До этого доли были видны только сразу после записи и тут же исчезали; за
+    неделю их не видел никто (T062).
+    """
+    if not user.plate_enabled:
+        return None
+    since = to_utc(now - timedelta(days=days), user)
+    history = await repo.load_plate_meals(session, user, since=since)
+    if not history:
+        return None
+    window_min = plate_math.session_window_min(history)
+    week = plate_math.week_summary(plate_math.group_sessions(history, window_min=window_min))
+    if week is None:
+        return None
+    return format_plate_week(week, days=days)
+
+
+__all__ = ["plate_advice_text", "plate_week_text", "router"]

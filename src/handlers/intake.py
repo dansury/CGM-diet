@@ -51,6 +51,7 @@ from src.reporting import (
     describe_food_hint,
     describe_food_retry,
     food_examples,
+    format_barcode_found,
     format_cgm_import,
     format_cgm_import_failed,
     glucose_examples,
@@ -273,9 +274,37 @@ async def _process_label(
     try:
         draft = await recognize.recognize_label(images)
     except recognize.RecognitionError as exc:
-        await message.answer(f"Этикетка не читается: {exc}\nПопробуйте снять состав крупнее.")
-        return
+        # Blurred small print is not the end of the road: the pack usually
+        # carries its barcode too (`spec/ingest.md` § Штрихкод).
+        draft = await _product_by_barcode(message, images)
+        if draft is None:
+            await message.answer(
+                f"Этикетка не читается: {exc}\nПопробуйте снять состав крупнее."
+            )
+            return
     await views.show_product_draft(message, state, draft, mode=mode, file_ids=file_ids)
+
+
+async def _product_by_barcode(message: Message, images: list[ImagePart]):
+    """Barcode off the photo → Open Food Facts. None when that leads nowhere."""
+    from src.ingest.barcode import normalize, read_barcodes
+    from src.ingest.openfoodfacts import lookup_product
+
+    codes: list[str] = []
+    for image in images:
+        for code in read_barcodes(image.data):
+            if code not in codes:
+                codes.append(code)
+    if not codes:
+        return None
+    await message.answer(f"Нашёл штрихкод {codes[0]} — смотрю в Open Food Facts…")
+    for code in codes:
+        draft = await lookup_product(normalize(code))
+        if draft is not None:
+            await message.answer(format_barcode_found(draft))
+            return draft
+    log.info("barcode %s not found in openfoodfacts", codes[0])
+    return None
 
 
 async def _process_medication(

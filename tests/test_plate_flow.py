@@ -162,8 +162,10 @@ async def test_a_snack_lands_in_the_plate_of_the_meal_that_follows(engine, sessi
     card = await _confirm_meal(state)
     written = card.texts[-1]
     assert "Тарелка" in written
-    # 200 г кофе с молоком вошли в состав той же тарелки
-    assert "прочее" in written
+    # 200 мл кофе с молоком вошли в ту же тарелку — но как напиток, рядом
+    # с ней, а не долей (T060)
+    assert "Рядом с тарелкой" in written
+    assert "напитки 200 мл" in written
 
 
 async def test_an_even_plate_is_left_without_advice(engine, session, state):

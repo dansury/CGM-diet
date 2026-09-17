@@ -9,7 +9,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from src import food_stats
+from src import digest, food_stats, goals
 from src.analytics import activity as activity_mod
 from src.analytics import cgm_metrics
 from src.analytics import symptoms as symptoms_mod
@@ -24,7 +24,6 @@ from src.export import build_export
 from src.food_stats import DEFAULT_PERIOD_DAYS
 from src.handlers.deps import local_now, session_scope, to_local
 from src.handlers.features import mark_used, menu_of
-from src.ingest.units import format_value
 from src.keyboards import confirm_delete, health_setup, stats_windows
 from src.reporting import (
     DISCLAIMER,
@@ -35,6 +34,8 @@ from src.reporting import (
     format_sleep_short,
     format_stats,
     format_symptoms,
+    format_today,
+    format_weekly_digest,
 )
 from src.vision.schemas import ProductDraft
 
@@ -65,63 +66,51 @@ async def cmd_today(message: Message) -> None:
     async with session_scope() as session:
         user = await repo.get_or_create_user(session, message.chat.id)
         now = local_now(user)
-        start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-        meals = await repo.load_meals(session, user, since=start)
-        readings = await repo.load_glucose(session, user, since=start)
-        checkins = await repo.load_checkins(session, user, since=start)
-        unit = user.glucose_unit
         today = now.date()
-        lines = [f"📅 <b>{today:%d.%m.%Y}</b>", ""]
-        meals_today = [m for m in meals if to_local(m.eaten_at, user).date() == today]
-        if meals_today:
-            lines.append("<b>Еда</b>")
-            for meal in meals_today:
-                stamp = to_local(meal.eaten_at, user)
-                carbs = f" · угл {meal.carbs_g:.0f} г" if meal.carbs_g else ""
-                lines.append(f"• {stamp:%H:%M} {meal.title or 'приём пищи'}{carbs}")
-            lines.append("")
-        readings_today = [r for r in readings if to_local(r.measured_at, user).date() == today]
-        if readings_today:
-            lines.append("<b>Сахар</b>")
-            for reading in readings_today[-12:]:
-                stamp = to_local(reading.measured_at, user)
-                lines.append(f"• {stamp:%H:%M} {format_value(reading.value_mmol, unit)}")
-            lines.append("")
-        checkins_today = [
-            (c, labels) for c, labels in checkins if to_local(c.at, user).date() == today
-        ]
-        if checkins_today:
-            lines.append("<b>Самочувствие</b>")
-            for checkin, labels in checkins_today:
-                stamp = to_local(checkin.at, user)
-                tail = f" — {', '.join(labels)}" if labels else ""
-                lines.append(f"• {stamp:%H:%M} {checkin.score}/5{tail}")
-            lines.append("")
-        workouts_today = [
-            row
-            for row in await repo.load_workouts(session, user, since=start)
-            if to_local(row.started_at, user).date() == today
-        ]
-        if workouts_today:
-            from src.analytics.workout import kind_label
+        start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
 
-            lines.append("<b>Тренировки</b>")
-            for row in workouts_today:
-                stamp = to_local(row.started_at, user)
-                duration = f" · {row.duration_min:.0f} мин" if row.duration_min else ""
-                energy = f" · ≈ {row.kcal:.0f} ккал" if row.kcal else ""
-                lines.append(
-                    f"• {stamp:%H:%M} {row.title or kind_label(row.kind)}{duration}{energy}"
-                )
-            lines.append("")
-        if len(lines) <= 2:
-            lines.append("Сегодня записей пока нет. Пришлите фото еды или показание сахара.")
+        def is_today(value) -> bool:
+            return to_local(value, user).date() == today
+
+        meals = [
+            (to_local(m.eaten_at, user), m.title or "приём пищи", m.carbs_g)
+            for m in await repo.load_meals(session, user, since=start)
+            if is_today(m.eaten_at)
+        ]
+        readings = [
+            (to_local(r.measured_at, user), r.value_mmol)
+            for r in await repo.load_glucose(session, user, since=start)
+            if is_today(r.measured_at)
+        ]
+        checkins = [
+            (to_local(c.at, user), c.score, labels)
+            for c, labels in await repo.load_checkins(session, user, since=start)
+            if is_today(c.at)
+        ]
+        from src.analytics.workout import kind_label
+
+        workouts = [
+            (to_local(w.started_at, user), w.title or kind_label(w.kind), w.duration_min, w.kcal)
+            for w in await repo.load_workouts(session, user, since=start)
+            if is_today(w.started_at)
+        ]
+        profile = await repo.get_body_profile(session, user)
+        focus = goals.decode(profile.focus if profile else None)
+
         from src.handlers.body import day_progress_text
 
-        progress = await day_progress_text(session, user, now=now)
-        if progress:
-            lines.append(progress)
-    await message.answer("\n".join(lines), reply_markup=await menu_of(message.chat.id))
+        progress = await day_progress_text(session, user, now=now) or ""
+        text = format_today(
+            today,
+            meals=meals,
+            readings=readings,
+            checkins=checkins,
+            workouts=workouts,
+            unit=user.glucose_unit,
+            focus=focus,
+            progress=progress,
+        )
+    await message.answer(text, reply_markup=await menu_of(message.chat.id))
 
 
 # ------------------------------------------------------------------ /stats
@@ -139,6 +128,9 @@ async def on_stats_callback(callback: CallbackQuery, bot: Bot) -> None:
     await callback.answer()
     if kind == "chart":
         await _send_ranking_chart(callback.message, window="1h", key_type="tag")
+        return
+    if kind == "week":
+        await cmd_week(callback.message)
         return
     window = value if kind == "w" else "1h"
     key_type = value if kind == "k" else "tag"
@@ -164,8 +156,15 @@ async def _send_stats(message: Message, *, window: str, key_type: str, edit: boo
         from src.handlers.sleep import build_report as build_sleep_report
 
         sleep_line = format_sleep_short(await build_sleep_report(session, user))
+        # Доли тарелки за неделю: раньше их было видно только сразу после
+        # записи, и к следующему дню они пропадали (`spec/plate.md`).
+        from src.handlers.plate import plate_week_text
+
+        plate_line = await plate_week_text(session, user, now=local_now(user))
 
     blocks = [format_stats(stats, unit=unit, window=window)]
+    if plate_line:
+        blocks.append(plate_line)
     if sleep_line:
         blocks.append(sleep_line)
     if points:
@@ -185,6 +184,21 @@ async def _send_stats(message: Message, *, window: str, key_type: str, edit: boo
         except Exception:
             pass
     await message.answer(text, reply_markup=keyboard)
+
+
+# ------------------------------------------------------------------ /week
+
+@router.message(Command("week"))
+async def cmd_week(message: Message) -> None:
+    """Что сдвинулось за неделю. `/stats` про тридцать дней и меняется медленно."""
+    await mark_used(message.chat.id, "week")
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, message.chat.id)
+        report = await digest.build(session, user)
+        profile = await repo.get_body_profile(session, user)
+        focus = goals.decode(profile.focus if profile else None)
+        unit = user.glucose_unit
+    await message.answer(format_weekly_digest(report, unit=unit, focus=focus))
 
 
 # ------------------------------------------------------------------ /graph
@@ -329,6 +343,7 @@ async def on_health_step(callback: CallbackQuery) -> None:
     step = callback.data.split(":", 1)[1]
     texts = {
         "how": _health_how_text,
+        "ios": lambda: _health_ios_text(callback.from_user.id),
         "keys": lambda: _health_keys_text(callback.from_user.id),
         "app": _health_app_text,
         "menu": lambda: _health_status_text(None),
@@ -352,12 +367,13 @@ def _health_status_text(total_steps: int | None) -> str:
         else ""
     )
     return (
-        "⌚️ <b>Samsung Health</b>\n\n"
+        "⌚️ <b>Данные с телефона</b>\n\n"
         "Шаги, тренировки и сон с телефона помогают увидеть, "
         "как прогулка после еды меняет ваш сахар.\n\n"
-        "Samsung Health не отдаёт данные сайтам напрямую — их забирает "
-        "с телефона маленькое приложение-мост через Health Connect "
-        "и присылает сюда.\n\n"
+        "Ни Samsung Health, ни Apple Health не отдают данные сайтам напрямую: "
+        "они выходят только с самого телефона. Поэтому на телефоне работает "
+        "маленький отправщик — на Android приложение-мост, на iPhone "
+        "команда в «Быстрых командах».\n\n"
         "Настройка занимает 5 минут и делается один раз." + tail
     )
 
@@ -365,7 +381,7 @@ def _health_status_text(total_steps: int | None) -> str:
 def _health_how_text() -> str:
     """Пошагово, словами телефона Samsung — без единого технического термина сверх нужного."""
     return (
-        "📲 <b>Как подключить — 6 шагов</b>\n\n"
+        "📲 <b>Android: как подключить — 6 шагов</b>\n\n"
         "<b>1. Health Connect на телефоне</b>\n"
         "Android 14 и новее: <i>Настройки → Безопасность и конфиденциальность → "
         "Ещё → Health Connect</i> — он уже есть.\n"
@@ -388,14 +404,15 @@ def _health_how_text() -> str:
         "Через минуту вернитесь сюда и отправьте /health — внизу появится "
         "число полученных шагов. Дальше мост присылает данные сам, раз в час.\n\n"
         "⚠️ Если данные перестали приходить: <i>Настройки → Приложения → "
-        "CGM Мост → Батарея → Без ограничений</i>."
+        "CGM Мост → Батарея → Без ограничений</i>.\n\n"
+        "У вас iPhone — кнопка «🍏 iPhone» ниже."
     )
 
 
 def _health_keys_text(tg_id: int) -> str:
     settings = load_settings()
     base = settings.webhook_base_url or "https://&lt;ваш-домен&gt;"
-    from src.health.samsung import HealthSyncError, make_token
+    from src.health.sync import HealthSyncError, make_token
 
     try:
         token = make_token(tg_id, settings.health_sync_secret)
@@ -415,8 +432,55 @@ def _health_keys_text(tg_id: int) -> str:
         f"• Адрес сервера: <code>{base}</code>\n"
         f"• Ваш ID: <code>{tg_id}</code>\n"
         f"• Токен: <code>{token}</code>\n\n"
+        "Если отправляете сами (iPhone, Tasker, свой скрипт) — адрес целиком:\n"
+        f"<code>{base}/health/sync</code>\n\n"
         "🔒 Токен — только ваш: он открывает запись данных ровно в вашу карточку "
         "и ничего не читает. Никому его не пересылайте."
+    )
+
+
+def _health_ios_text(tg_id: int) -> str:
+    """iPhone без приложения: «Быстрые команды» умеют и читать Здоровье, и слать POST.
+
+    Своего приложения-моста под iOS нет, и обещать его нечестно. Зато
+    «Быстрые команды» стоят на каждом iPhone и делают ровно то же самое.
+    """
+    settings = load_settings()
+    base = settings.webhook_base_url or "https://&lt;ваш-домен&gt;"
+    from src.health.sync import HealthSyncError, make_token
+
+    try:
+        token = make_token(tg_id, settings.health_sync_secret)
+    except HealthSyncError:
+        token = "&lt;спросите у владельца бота&gt;"
+    return (
+        "🍏 <b>iPhone: как подключить</b>\n\n"
+        "Отдельного приложения под iPhone нет — и не нужно: всё делает "
+        "«Быстрые команды», они уже стоят на телефоне.\n\n"
+        "<b>1. Откройте «Быстрые команды» → + (новая команда)</b>\n\n"
+        "<b>2. Добавьте «Найти образцы Здоровья»</b>\n"
+        "Тип — <i>Шаги</i>, период — <i>сегодня</i>. "
+        "Так же можно добавить сон и тренировки.\n\n"
+        "<b>3. Добавьте «Получить содержимое URL»</b>\n"
+        f"Адрес: <code>{base}/health/sync</code>\n"
+        "Метод: <i>POST</i>\n"
+        "Заголовок: <code>X-Health-Token</code> со значением "
+        f"<code>{token}</code>\n"
+        "Тело запроса — <i>JSON</i> с полями:\n"
+        f"• <code>tg_id</code> — число <code>{tg_id}</code>\n"
+        "• <code>source</code> — текст <code>healthkit</code>\n"
+        "• <code>samples</code> — список, в нём для каждого образца "
+        "<code>kind</code> (<code>steps</code>, <code>sleep</code>, "
+        "<code>workout</code>), <code>start</code>, <code>end</code> и число "
+        "(<code>steps</code> или <code>kcal</code>).\n\n"
+        "<b>4. Проверьте</b>\n"
+        "Запустите команду и отправьте сюда /health — внизу появится число "
+        "полученных шагов.\n\n"
+        "<b>5. Сделайте её автоматической</b>\n"
+        "<i>Быстрые команды → Автоматизация → + → Время суток</i>, например "
+        "каждый вечер. Дальше телефон присылает данные сам.\n\n"
+        "🔒 Токен — только ваш: он открывает запись ровно в вашу карточку "
+        "и ничего не читает."
     )
 
 
@@ -456,4 +520,4 @@ async def product_verdict_text(tg_id: int, draft: ProductDraft) -> str:
     return format_product_verdict(draft, matches, unit) + "\n\n" + DISCLAIMER
 
 
-__all__ = ["cmd_stats", "cmd_today", "product_verdict_text", "router"]
+__all__ = ["cmd_stats", "cmd_today", "cmd_week", "product_verdict_text", "router"]

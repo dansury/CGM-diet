@@ -29,7 +29,7 @@
 | `/help` | подробная справка | `handlers/common.py` |
 | `/menu` | вернуть клавиатуру | `handlers/common.py` |
 | `/cancel` | отменить текущий ввод (то же, что `❌`) | `handlers/common.py` |
-| `/settings`, `/set` | пояс, единицы, окна, базовая линия, `weighin`, `plate`, `meals`, `sleep` | `handlers/common.py` |
+| `/settings`, `/set` | пояс, единицы, окна, базовая линия, `weighin`, `plate`, `meals`, `sleep`, `sugar`, `week` | `handlers/common.py` |
 | `/plate` | Гарвардская тарелка: что настроено и как менять | `handlers/plate.py` |
 | `/labs` | анализы: маркеры вне референса и продукты-источники | `handlers/labs.py` |
 | `/hidden` | скрытые возможности и возврат их в меню | `handlers/features.py` |
@@ -40,6 +40,7 @@
 | `/workout`, `/workouts` | записать тренировку или ходьбу; журнал за неделю | `handlers/workout.py` |
 | `/today` | записи за сегодня | `handlers/reports.py` |
 | `/stats` | статистика + метрики + симптомы + рекомендации | `handlers/reports.py` |
+| `/week` | неделя против прошлой недели (`spec/analytics.md` § Недельный дайджест) | `handlers/reports.py` |
 | `/graph` | таймлайн, самочувствие, рейтинг | `handlers/reports.py` |
 | `/export` | ZIP с CSV | `handlers/reports.py` |
 | `/delete` | удаление с подтверждением | `handlers/reports.py` |

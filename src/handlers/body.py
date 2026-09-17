@@ -39,6 +39,7 @@ from src.reporting import (
     format_goal_plan,
     format_meal_progress,
     format_meals_today,
+    format_measured_tdee,
     format_measurement_draft,
     format_weight_saved,
 )
@@ -105,6 +106,9 @@ async def _body_card(tg_id: int) -> tuple[str, bool, bool]:
             for row in await repo.load_weights(session, user)
         ]
         plan = await _plan_for(session, user) if goal else None
+        # Реальный расход показываем и без цели: он сам по себе ответ на
+        # «а сколько я вообще трачу» (T054).
+        measured = await _measured_tdee(session, user)
         age = body_math.age_from(profile.birth_year) if profile else None
         if last is not None:
             last.measured_at = to_local(last.measured_at, user)
@@ -119,7 +123,35 @@ async def _body_card(tg_id: int) -> tuple[str, bool, bool]:
         bmi_note=body_math.bmi_category(value),
         age=age,
     )
+    if measured is not None:
+        text += "\n\n" + format_measured_tdee(measured)
     return text, goal is not None, bool(profile and profile.sex == "f")
+
+
+#: Сколько истории берём на оценку реального расхода. Больше окна
+#: `MIN_TDEE_DAYS`, чтобы месяц набрался даже при редких взвешиваниях.
+TDEE_HISTORY_DAYS = 90
+
+
+async def _measured_tdee(session, user: User, *, formula_tdee: float | None = None):
+    """Реальный расход по динамике веса и записям еды. None — данных мало.
+
+    Считается на каждом пересборе плана: замеры и записи копятся сами, и через
+    месяц формула уступает место собственным числам (`spec/body.md`).
+    """
+    since = local_now(user) - timedelta(days=TDEE_HISTORY_DAYS)
+    weights = [
+        (row.measured_at, row.weight_kg)
+        for row in await repo.load_weights(session, user, since=to_utc(since, user))
+        if row.weight_kg
+    ]
+    if len(weights) < 2:
+        return None
+    intake = [
+        (day.date, day.kcal)
+        for day in await repo.daily_intake(session, user, since=to_utc(since, user))
+    ]
+    return body_math.measured_tdee(weights, intake, formula_tdee=formula_tdee)
 
 
 async def _plan_for(session, user: User, *, weight_kg: float | None = None) -> body_math.EnergyPlan | None:
@@ -130,6 +162,7 @@ async def _plan_for(session, user: User, *, weight_kg: float | None = None) -> b
     profile = await repo.get_body_profile(session, user)
     last = await repo.last_weight(session, user)
     weight = weight_kg or (last.weight_kg if last else None) or goal.start_weight_kg
+    measured = await _measured_tdee(session, user)
     try:
         return body_math.build_plan(
             kind=goal.kind,
@@ -143,6 +176,7 @@ async def _plan_for(session, user: User, *, weight_kg: float | None = None) -> b
             body_fat_pct=last.body_fat_pct if last else None,
             pregnant=bool(profile.pregnant) if profile else False,
             today=local_now(user).date(),
+            measured_tdee_kcal=measured.kcal if measured else None,
         )
     except body_math.PlanImpossible:
         return None
@@ -171,10 +205,37 @@ async def day_progress_text(session, user: User, *, now: datetime) -> str | None
     meals, meal_bar = await _meal_progress(
         session, user, start_local=start_local, target_kcal=target
     )
+    # Шаги становятся калориями только здесь: для этого нужны вес и уровень
+    # активности из профиля (`spec/body.md` § Шаги в коридоре).
+    profile = await repo.get_body_profile(session, user)
+    last = await repo.last_weight(session, user)
+    # Прошлая ночь — тоже расход: недоспанный час человек прожил бодрствуя, а
+    # это дороже часа сна (`spec/body.md` § Сон в коридоре).
+    from src.handlers.sleep import last_night
+
+    try:
+        night = await last_night(session, user)
+    except Exception:
+        log.exception("sleep for the daily corridor failed")
+        night = None
+    totals = {
+        **totals,
+        "weight_kg": last.weight_kg if last else None,
+        "activity": profile.activity if profile else None,
+        "sleep_hours": night[0] if night else None,
+        "typical_sleep_hours": night[1] if night else None,
+        "bmr_kcal": body_math.bmr(
+            last.weight_kg if last else None,
+            height_cm=profile.height_cm if profile else None,
+            age=body_math.age_from(profile.birth_year) if profile else None,
+            sex=profile.sex if profile else None,
+            body_fat_pct=last.body_fat_pct if last else None,
+        ),
+    }
     if not target:
         # Цели нет (или коридор не посчитался) — но съеденное за день человек
         # вправе видеть всегда; процентов и остатка без цели не показываем.
-        if not totals["consumed_kcal"] and not totals["burned_kcal"]:
+        if not totals["consumed_kcal"] and not totals["burned_kcal"] and not totals["steps"]:
             return None
         return format_day_totals(
             body_math.day_balance(target_kcal=0.0, **totals), meals=meals
@@ -249,6 +310,8 @@ async def _meal_progress(
         energy = await repo.day_energy(
             session, user, start=current.started_at, end=current.ended_at + timedelta(minutes=1)
         )
+        # Полоса одного приёма — только про съеденное: шаги и тренировки
+        # относятся к суткам, а не к тарелке.
         balance = body_math.day_balance(
             target_kcal=body_math.meal_target_kcal(target_kcal, meals_for_kcal),
             consumed_kcal=energy["consumed_kcal"],
@@ -485,6 +548,7 @@ async def _save_goal(tg_id: int, *, target_weight_kg: float, rate: float) -> str
         weight = last.weight_kg if last else None
         kind = body_math.goal_kind(weight, target_weight_kg)
         now = local_now(user)
+        measured = await _measured_tdee(session, user)
         try:
             plan = body_math.build_plan(
                 kind=kind,
@@ -498,6 +562,7 @@ async def _save_goal(tg_id: int, *, target_weight_kg: float, rate: float) -> str
                 body_fat_pct=last.body_fat_pct if last else None,
                 pregnant=bool(profile.pregnant) if profile else False,
                 today=now.date(),
+                measured_tdee_kcal=measured.kcal if measured else None,
             )
         except body_math.PlanImpossible as exc:
             reason = exc.args[0] if exc.args else ""

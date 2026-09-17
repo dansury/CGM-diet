@@ -49,6 +49,8 @@
 | «примите …» | (ничего; бот не назначает) |
 | «вам нужно 1600 ккал» | «ориентир на день — 1600 ккал: TDEE 2100 минус дефицит 500» |
 | «вы сожгли 320 ккал» | «≈ 320 ккал — оценка по MET, не измерение» |
+| «мало спите — наберёте вес» | «ночь 5.0 ч короче обычной; лишние часы бодрствования ≈ 53 ккал» |
+| «вы тратите 2550 ккал» | «расход по вашим записям ≈ 2550 ккал: за 42 дн. вес убавился на 3 кг при 2000 ккал в день» |
 | «у вас ожирение» | «ИМТ 31.2 — по классификации ВОЗ это диапазон ожирения» |
 | «у вас дефицит железа» | «ферритин ниже референса из документа — покажите врачу» |
 | «пейте железо» / «нужен БАД» | «пищевые источники железа: печень, чечевица, …» |
@@ -68,6 +70,10 @@ format_remembered_macros(draft, names:[str]) -> str   # «📌 Запомнил 
 format_product(draft, mode="eaten"|"check") -> str
 format_product_verdict(draft, matches:[KeyStats], unit) -> str
 format_stats(stats, unit, window, limit=8) -> str
+format_today(day, meals, readings, checkins, workouts, unit, focus, progress) -> str
+format_weekly_digest(digest, unit, focus) -> str   # `focus` меняет только порядок
+format_cgm_import(result, added) / format_cgm_import_failed(reason) -> str
+format_barcode_found(draft) -> str                 # источник карточки назван
 format_plate_score(score) / format_plate_advice(advice, with_rule=False) -> str
 format_plate_settings(enabled, meals_per_day, measured, session_min) -> str
 format_lab_value(value) / format_food_hint(hint) -> str
@@ -82,6 +88,7 @@ format_medication_draft(draft, taken_at?, applied?) -> str
 format_medications(rows, days=30) -> str
 format_body_card(profile, last?, goal?, plan?, trend?) -> str
 format_day_progress(balance, goal?, trend?) -> str      # полоса из 10 клеток
+format_measured_tdee(measured) -> str   # расход из замеров, всегда «≈» и с покрытием
 format_goal_plan(plan, kind, target_weight_kg) -> str   # включая сработавшие ограничители
 format_measurement_draft(draft) / format_weight_saved(weight, previous?, goal?)
 format_workout_draft(draft, estimate?, started_at?, applied?) -> str

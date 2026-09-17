@@ -87,6 +87,12 @@ class User(Base, TimestampMixin):
     # When `food_stats` was last rebuilt for this user; NULL = cold cache.
     # Reset by every meal/reading change (`src/food_stats.py`).
     food_stats_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Weekly digest on Monday morning (`spec/analytics.md` § Недельный дайджест).
+    # On by default: one message a week, and it is the only place the bot says
+    # what changed rather than what is true on average.
+    weekly_digest_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
 
 
 class MediaFile(Base, TimestampMixin):

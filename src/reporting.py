@@ -11,11 +11,18 @@ Two hard rules (`spec/clinical.md`):
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from html import escape
 
+from src import goals as goals_mod
 from src.analytics.activity import ActivityContrast
 from src.analytics.cgm_metrics import CGMSummary
+from src.analytics.digest import (
+    MEANINGFUL_MEAN_SHIFT,
+    MEANINGFUL_TIR_SHIFT,
+    KeyChange,
+    WeeklyDigest,
+)
 from src.analytics.labs import FoodHint, LabReview, LabValue
 from src.analytics.plate import TARGET_SHARES, PlateAdvice, PlateScore, category_label
 from src.analytics.sleep import (
@@ -539,6 +546,177 @@ def format_cgm_summary(summary: CGMSummary, *, unit: str = "mmol/L") -> str:
     return "\n".join(lines)
 
 
+#: разделы карточки «Сегодня» в порядке по умолчанию
+TODAY_SECTIONS = ("meals", "glucose", "wellbeing", "workouts")
+
+
+def format_today(
+    day: date,
+    *,
+    meals: Sequence[tuple[datetime, str, float | None]] = (),
+    readings: Sequence[tuple[datetime, float]] = (),
+    checkins: Sequence[tuple[datetime, int, Sequence[str]]] = (),
+    workouts: Sequence[tuple[datetime, str, float | None, float | None]] = (),
+    unit: str = "mmol/L",
+    focus: Sequence[str] = (),
+    progress: str = "",
+) -> str:
+    """Записи за день. `focus` меняет порядок разделов и подсказку пустого дня.
+
+    Данные приходят уже разобранными: слой отчётов не ходит в базу и не знает
+    про ORM (`CLAUDE.md` #6, #7).
+    """
+    blocks: dict[str, list[str]] = {name: [] for name in TODAY_SECTIONS}
+
+    if meals:
+        blocks["meals"].append("<b>Еда</b>")
+        for at, title, carbs in meals:
+            tail = f" · угл {carbs:.0f} г" if carbs else ""
+            blocks["meals"].append(f"• {at:%H:%M} {escape(title)}{tail}")
+    if readings:
+        blocks["glucose"].append("<b>Сахар</b>")
+        for at, value in readings[-12:]:
+            blocks["glucose"].append(f"• {at:%H:%M} {format_value(value, unit)}")
+    if checkins:
+        blocks["wellbeing"].append("<b>Самочувствие</b>")
+        for at, score, labels in checkins:
+            tail = f" — {escape(', '.join(labels))}" if labels else ""
+            blocks["wellbeing"].append(f"• {at:%H:%M} {score}/5{tail}")
+    if workouts:
+        blocks["workouts"].append("<b>Тренировки</b>")
+        for at, title, duration, kcal in workouts:
+            spent = f" · ≈ {kcal:.0f} ккал" if kcal else ""
+            length = f" · {duration:.0f} мин" if duration else ""
+            blocks["workouts"].append(f"• {at:%H:%M} {escape(title)}{length}{spent}")
+
+    lines = [f"📅 <b>{day:%d.%m.%Y}</b>", ""]
+    filled = False
+    for section in goals_mod.report_order(focus, TODAY_SECTIONS):
+        if not blocks[section]:
+            continue
+        lines.extend(blocks[section])
+        lines.append("")
+        filled = True
+    if not filled:
+        lines.append("Сегодня записей пока нет.")
+        hints = goals_mod.empty_hints(focus)
+        # Подсказка по названной цели, а не общее «пришлите фото»: человек
+        # сказал, зачем пришёл, — незачем спрашивать это заново.
+        lines.extend(hints[:2] or ["Пришлите фото еды или показание сахара."])
+    if progress:
+        lines.append(progress)
+    return "\n".join(lines)
+
+
+#: разделы недельного дайджеста в порядке по умолчанию; цели могут поднять
+#: свои наверх (`src/goals.py` § report_order)
+DIGEST_SECTIONS = ("glucose", "components", "meals", "steps", "weight")
+
+
+def format_weekly_digest(
+    digest: WeeklyDigest, *, unit: str = "mmol/L", focus: Sequence[str] = ()
+) -> str:
+    """Неделя против прошлой недели — что сдвинулось, и ничего про причины.
+
+    Каждая строка — сравнение человека с самим собой (`spec/clinical.md`).
+    Ни «из-за», ни «повышает»: только «средний подъём стал выше/ниже».
+    `focus` — цели знакомства: они меняют **порядок** разделов и ничего больше,
+    ни одна строка не появляется и не исчезает из-за цели.
+    """
+    blocks: dict[str, list[str]] = {name: [] for name in DIGEST_SECTIONS}
+
+    mean_shift = digest.mean_shift
+    if mean_shift is not None and abs(mean_shift) >= MEANINGFUL_MEAN_SHIFT:
+        word = "выше" if mean_shift > 0 else "ниже"
+        blocks["glucose"].append(
+            f"• Средний сахар за неделю {word} на "
+            f"{format_delta(abs(mean_shift), unit)}: "
+            f"{format_value(digest.glucose_now.mean, unit)} "
+            f"против {format_value(digest.glucose_before.mean, unit)}."
+        )
+    tir_shift = digest.tir_shift
+    if tir_shift is not None and abs(tir_shift) >= MEANINGFUL_TIR_SHIFT:
+        word = "больше" if tir_shift > 0 else "меньше"
+        blocks["glucose"].append(
+            f"• Времени в диапазоне 3.9–10.0 {word} на {abs(tir_shift):.0f} п.п.: "
+            f"{digest.glucose_now.tir:.0f}% против {digest.glucose_before.tir:.0f}%."
+        )
+
+    for change in digest.risen[:3]:
+        blocks["components"].append(_digest_key_line(change, unit))
+    for change in digest.calmed[:2]:
+        blocks["components"].append(_digest_key_line(change, unit))
+
+    if digest.meals_now:
+        blocks["meals"].append(
+            f"• Записей о еде: {digest.meals_now} "
+            f"(неделей раньше {digest.meals_before}), "
+            f"дней с записями — {digest.days_with_meals} из 7."
+        )
+    steps = digest.steps_shift
+    if steps is not None and abs(steps) >= 5000:
+        word = "больше" if steps > 0 else "меньше"
+        blocks["steps"].append(f"• Шагов за неделю на {abs(steps)} {word}: {digest.steps_now}.")
+    weight = digest.weight_shift
+    if weight is not None and abs(weight) >= 0.3:
+        word = "больше" if weight > 0 else "меньше"
+        blocks["weight"].append(f"• Вес на {abs(weight):.1f} кг {word}: {digest.weight_now:.1f} кг.")
+
+    body: list[str] = []
+    for section in goals_mod.report_order(focus, DIGEST_SECTIONS):
+        body.extend(blocks[section])
+
+    if not body:
+        return (
+            "🗓 <b>Неделя в сравнении с прошлой</b>\n\n"
+            "Заметных сдвигов нет — и это тоже ответ. "
+            "Чтобы сравнение было о чём, нужны записи о еде и замеры сахара "
+            "в обе недели."
+        )
+    lines = ["🗓 <b>Неделя в сравнении с прошлой</b>", "", *body, ""]
+    lines.append(
+        "<i>Это сравнение двух недель, а не объяснение. Что именно стоит за "
+        "сдвигом, по этим числам не видно.</i>"
+    )
+    return "\n".join(lines)
+
+
+def _digest_key_line(change: KeyChange, unit: str) -> str:
+    label = tag_label(change.key) if change.key_type == "tag" else change.key
+    label = escape(str(label))
+    if change.kind == "new":
+        return (
+            f"• <b>{label}</b> — новое в наблюдениях: средний подъём "
+            f"{format_delta(change.now, unit)} ({change.n_now} набл.)."
+        )
+    if change.kind == "gone":
+        return (
+            f"• <b>{label}</b> на этой неделе не набралось наблюдений — "
+            f"неделей раньше средний подъём был {format_delta(change.before, unit)}."
+        )
+    word = "выше" if change.kind == "up" else "ниже"
+    return (
+        f"• <b>{label}</b> — средний подъём {word}: "
+        f"{format_delta(change.now, unit)} против "
+        f"{format_delta(change.before, unit)} "
+        f"({change.n_now} набл. против {change.n_before})."
+    )
+
+
+def format_barcode_found(draft: ProductDraft) -> str:
+    """Откуда взялась карточка, если этикетку прочитать не удалось.
+
+    Источник называем прямо: числа в Open Food Facts вносят люди, и человек
+    вправе знать, что проверять (принцип III — данные принадлежат пользователю).
+    """
+    who = f"{draft.brand} · {draft.name}" if draft.brand else draft.name
+    return (
+        f"📦 Нашёл в Open Food Facts: <b>{escape(who)}</b>.\n"
+        "<i>Состав внесли люди в открытую базу — сверьте с упаковкой и "
+        "поправьте, если что-то не так.</i>"
+    )
+
+
 SOURCE_NAMES = {"libreview": "LibreView", "clarity": "Dexcom Clarity"}
 
 
@@ -905,8 +1083,12 @@ def format_day_progress(
     )
     if balance.burned_kcal:
         lines.append(
-            f"Ориентир {balance.target_kcal:.0f} ккал + тренировки ≈ {balance.burned_kcal:.0f} ккал"
+            f"Ориентир {balance.target_kcal:.0f} ккал + движение ≈ "
+            f"{balance.burned_kcal:.0f} ккал"
         )
+    for extra in (_steps_line(balance), _sleep_line(balance)):
+        if extra:
+            lines.append(extra)
     if balance.over:
         lines.append(f"Сверх ориентира: <b>{-balance.available_kcal:.0f} ккал</b>")
     else:
@@ -925,6 +1107,40 @@ def format_day_progress(
     return "\n".join(lines)
 
 
+def _sleep_line(balance) -> str:
+    """Прошлая ночь и её цена в калориях — без единого слова о последствиях.
+
+    «Недоспали — наберёте вес» сказать нельзя: это причинно-следственная
+    связь (`spec/clinical.md`). Можно сказать, сколько часов человек не спал
+    и во сколько это обошлось арифметически.
+    """
+    hours = getattr(balance, "sleep_hours", 0.0)
+    kcal = getattr(balance, "sleep_kcal", 0.0)
+    if not hours or not kcal:
+        return ""
+    word = "короче" if kcal > 0 else "длиннее"
+    return (
+        f"😴 Ночь {hours:.1f} ч — {word} обычной; лишние часы бодрствования "
+        f"≈ {abs(kcal):.0f} ккал"
+    )
+
+
+def _steps_line(balance) -> str:
+    """Шаги отдельной строкой: сколько прошёл и сколько это дало.
+
+    Числом, а не оценкой человека: «≈» обязательно — это модель по MET, а не
+    измерение (`spec/clinical.md`). Шаги ниже базового уровня активности
+    профиля калорий не добавляют вовсе, и тогда строки про них нет.
+    """
+    steps = getattr(balance, "steps", 0)
+    if not steps:
+        return ""
+    kcal = getattr(balance, "steps_kcal", 0.0)
+    if not kcal:
+        return f"👟 Шагов: {steps} — в пределах вашего обычного уровня активности"
+    return f"👟 Шагов: {steps}, из них сверх обычного ≈ {kcal:.0f} ккал"
+
+
 GOAL_HINT = "🎯 Задайте цель — /body — и буду показывать коридор и остаток на день."
 
 
@@ -938,9 +1154,13 @@ def format_day_totals(balance, *, meals: str = "") -> str:
     if balance.carbs_g:
         parts.append(f"углеводы {balance.carbs_g:.0f} г")
     if balance.burned_kcal:
-        parts.append(f"тренировки ≈ {balance.burned_kcal:.0f} ккал")
+        parts.append(f"движение ≈ {balance.burned_kcal:.0f} ккал")
     head = "📊 <b>Сегодня</b>: " + " · ".join(parts)
-    return "\n".join(part for part in (head, meals, GOAL_HINT) if part)
+    return "\n".join(
+        part
+        for part in (head, _steps_line(balance), _sleep_line(balance), meals, GOAL_HINT)
+        if part
+    )
 
 
 # ------------------------------------------------------------------ Harvard plate
@@ -976,8 +1196,57 @@ def format_plate_score(score: PlateScore, *, with_score: bool = True) -> str:
         target = TARGET_SHARES.get(category)
         aim = f" (ориентир {target * 100:.0f}%)" if target else ""
         lines.append(f"• {category_label(category)}: {share:.0f}%{aim} — {grams:.0f} г")
+    aside = _plate_aside_line(score)
+    if aside:
+        lines.append(aside)
     if score.estimated_mass:
         lines.append("<i>Часть порций я оценил сам — назовите граммы, и доли станут точнее.</i>")
+    return "\n".join(lines)
+
+
+def _plate_aside_line(score: PlateScore) -> str:
+    """Напитки и масло — рядом с тарелкой, не её долей.
+
+    В оригинальной тарелке они нарисованы сбоку: доли не занимают, цели у них
+    нет. Поэтому здесь только факт и граммы — ни ориентира, ни «мало/много»
+    (`spec/clinical.md`: никаких норм).
+    """
+    parts = []
+    if score.drink_g:
+        parts.append(f"напитки {score.drink_g:.0f} мл")
+    if score.oil_g:
+        parts.append(f"масло {score.oil_g:.0f} г")
+    if not parts:
+        return ""
+    return "<i>Рядом с тарелкой: " + ", ".join(parts) + " — в доли не входят.</i>"
+
+
+def format_plate_week(week, *, days: int = 7) -> str:
+    """Тарелка за период: те же доли, но по накопленной массе.
+
+    Про пропорции, а не про человека: ни «нормы», ни «правильно/неправильно»
+    (`spec/clinical.md`).
+    """
+    score = week.score
+    lines = [
+        f"🥗 <b>Тарелка за {days} дн.</b> — {score.score:.0f} из 100",
+        progress_bar(score.score / 100.0),
+    ]
+    for category in _PLATE_ORDER:
+        grams = score.grams.get(category)
+        if not grams:
+            continue
+        share = score.shares.get(category, 0.0) * 100
+        target = TARGET_SHARES.get(category)
+        aim = f" (ориентир {target * 100:.0f}%)" if target else ""
+        lines.append(f"• {category_label(category)}: {share:.0f}%{aim}")
+    lines.append(
+        f"Собранных тарелок: {week.balanced} из {week.meals} "
+        f"за {week.days} дн. с записями."
+    )
+    aside = _plate_aside_line(score)
+    if aside:
+        lines.append(aside)
     return "\n".join(lines)
 
 
@@ -1139,6 +1408,29 @@ def format_hidden_list(features) -> str:
     return "\n".join(lines)
 
 
+def format_measured_tdee(measured) -> str:
+    """Откуда взялось число, которым заменена формула.
+
+    Не «вы тратите N» как измерение: это оценка из двух рядов записей, и её
+    точность видна по числу дней и покрытию (`spec/clinical.md` — «≈», всегда
+    вместе с числами, из которых получено).
+    """
+    change = measured.weight_change_kg
+    moved = (
+        f"вес {'убавился' if change < 0 else 'прибавился'} на {abs(change):g} кг"
+        if abs(change) >= 0.1
+        else "вес остался прежним"
+    )
+    return (
+        f"📐 <b>Расход по вашим записям</b>: ≈ {measured.kcal:.0f} ккал в день.\n"
+        f"За {measured.days} дн. {moved}, в среднем съедено "
+        f"{measured.intake_kcal:.0f} ккал в день "
+        f"(еда записана в {measured.logged_days} дн. из {measured.days}).\n"
+        "<i>Это оценка из ваших же записей, а не измерение: чем больше дней с "
+        "едой, тем она ближе к правде.</i>"
+    )
+
+
 def format_goal_plan(plan, *, kind: str, target_weight_kg: float | None) -> str:
     """Из чего получился ориентир — и что в цели пришлось урезать."""
     words = {"lose": "снижение", "gain": "набор", "maintain": "удержание"}
@@ -1148,7 +1440,12 @@ def format_goal_plan(plan, *, kind: str, target_weight_kg: float | None) -> str:
     if plan.bmr_kcal:
         lines.append(f"Основной обмен (BMR): ≈ {plan.bmr_kcal:.0f} ккал")
     if plan.tdee_kcal:
-        lines.append(f"Суточный расход (TDEE): ≈ {plan.tdee_kcal:.0f} ккал")
+        source = (
+            " — по вашим замерам, не по формуле"
+            if getattr(plan, "tdee_source", "formula") == "measured"
+            else ""
+        )
+        lines.append(f"Суточный расход (TDEE): ≈ {plan.tdee_kcal:.0f} ккал{source}")
     if kind != "maintain":
         word = "дефицит" if plan.delta_kcal < 0 else "профицит"
         lines.append(
@@ -1161,6 +1458,12 @@ def format_goal_plan(plan, *, kind: str, target_weight_kg: float | None) -> str:
         lines.append(
             "<i>Рост и возраст не заполнены — расход посчитан грубо. "
             "Добавьте их в /body, и ориентир станет точнее.</i>"
+        )
+    if getattr(plan, "tdee_source", "formula") == "measured":
+        lines.append(
+            "<i>Расход взят из вашей истории: сколько веса ушло или пришло за "
+            "период и сколько вы за это время съели. Формула описывает среднего "
+            "человека, ваши замеры — вас.</i>"
         )
     if plan.capped:
         lines.append("")
@@ -1460,12 +1763,14 @@ __all__ = [
     "SLEEP_PRESENCE_REMINDER",
     "format_activity",
     "format_body_card",
+    "format_barcode_found",
     "format_cgm_import",
     "format_cgm_import_failed",
     "format_cgm_summary",
     "format_day_progress",
     "format_day_totals",
     "format_goal_plan",
+    "format_measured_tdee",
     "format_measurement_draft",
     "format_labs",
     "format_meal_draft",
@@ -1483,6 +1788,7 @@ __all__ = [
     "format_lab_value",
     "format_plate_advice",
     "format_plate_score",
+    "format_plate_week",
     "format_plate_settings",
     "format_product",
     "format_product_verdict",
@@ -1495,6 +1801,8 @@ __all__ = [
     "format_sleep",
     "format_sleep_short",
     "format_stats",
+    "format_today",
+    "format_weekly_digest",
     "format_symptoms",
     "format_weight_saved",
     "format_workout_draft",

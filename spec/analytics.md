@@ -11,9 +11,11 @@
   пунктуации и слов порций) → статистика по блюдам;
 - `tags` — **закрытый** словарь из 30 компонентов (`TAGS: slug -> русская метка`):
   `added_sugar, refined_flour, white_rice, potato, whole_grain, starch, fruit,
-  dried_fruit, juice, sweet_drink, milk, dairy_fermented, cheese, protein,
-  red_meat, processed_meat, fish, egg, legume, nuts, vegetable, fiber,
+  dried_fruit, water, juice, sweet_drink, milk, dairy_fermented, cheese,
+  protein, red_meat, processed_meat, fish, egg, legume, nuts, vegetable, fiber,
   fat_added, fried, alcohol, sweetener, ultra_processed, high_gi, low_gi`.
+  `water` — вода, чай и кофе без сахара: без него «напитки» тарелки
+  (`spec/plate.md`) не отличить от еды.
 
 ```
 normalize_name(s)->str ; normalize_tags(tags, name="")->[str] ; infer_tags(name)->[str]
@@ -101,6 +103,52 @@ KEY_TYPES=("tag","item") · WINDOWS=("1h","2h") · DEFAULT_PERIOD_DAYS=30 · CAC
 - `CACHE_TTL` нужен из-за скользящего окна в 30 дней: данные не менялись, а
   край периода уехал;
 - `days` не по умолчанию считается мимо кэша: кэш хранит ровно один период.
+
+## Недельный дайджест (`src/analytics/digest.py`, `src/digest.py`)
+
+```
+build_digest(now, meals, excursions, points, buckets?, weights?, key_type="tag", days=7)
+  -> WeeklyDigest
+WeeklyDigest: since until meals_now meals_before days_with_meals
+              glucose_now? glucose_before? risen[KeyChange] calmed[KeyChange]
+              steps_now? steps_before? weight_now? weight_before?
+              ; mean_shift · tir_shift · steps_shift · weight_shift · has_content
+KeyChange(key key_type now? before? n_now n_before kind) ; delta
+  kind ∈ new|gone|up|down|same
+WEEK_DAYS=7 · MIN_WEEK_POINTS=20 · MEANINGFUL_SHIFT=0.8 ммоль/л
+MEANINGFUL_MEAN_SHIFT=0.5 · MEANINGFUL_TIR_SHIFT=5 п.п.
+src/digest.py: build(session, user, days=7) -> WeeklyDigest   # два окна из одной выборки
+```
+
+`/stats` отвечает «что верно за тридцать дней» — в понедельник и в пятницу
+одинаково. Дайджест отвечает на другой вопрос: **изменилось ли что-нибудь**.
+Две равные недели рядом, ничего больше.
+
+Из чего складывается:
+
+| Строка | Условие |
+|---|---|
+| средний сахар | обе недели ≥ `MIN_WEEK_POINTS` замеров, сдвиг ≥ `MEANINGFUL_MEAN_SHIFT` |
+| время в диапазоне | те же замеры, сдвиг ≥ `MEANINGFUL_TIR_SHIFT` |
+| компонент вырос/успокоился | `aggregate` по каждой неделе отдельно, сдвиг среднего подъёма ≥ `MEANINGFUL_SHIFT` |
+| новый компонент | набрался только на этой неделе **и** сам по себе ≥ `MEANINGFUL_SHIFT` |
+| пропал компонент | набирался только на прошлой неделе и был ≥ `MEANINGFUL_SHIFT` |
+| еда, шаги, вес | ≥ 5000 шагов разницы, ≥ 0.3 кг |
+
+Порог обязателен: без него дайджест каждую неделю сообщал бы о дрожании
+выборки. Пустой дайджест (`has_content == False`) не отправляется.
+
+Отдача: `/week` и кнопка «🗓 Неделя» под `/stats`; рассылка —
+`scheduler.run_weekly_digests` по понедельникам с `DIGEST_HOUR`, слот
+занимается через `notification_sends` (`code="weekly_digest"`), выключается
+`/set week off` (`users.weekly_digest_enabled`).
+
+Формулировки — `reporting.format_weekly_digest`: «средний подъём выше», а не
+«стал поднимать»; хвост «это сравнение двух недель, а не объяснение»
+(`spec/clinical.md`).
+
+Паритет tg/web: `web/app/js/digest.js` считает ту же неделю без сравнения по
+компонентам — `spec/web.md` § Неделя в сравнении.
 
 ## CGM metrics (`src/analytics/cgm_metrics.py`)
 

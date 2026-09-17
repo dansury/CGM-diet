@@ -337,3 +337,184 @@ def test_the_body_card_asks_for_a_goal_when_there_is_none():
     text = format_body_card(profile=None, last=None, goal=None, plan=None, trend=None)
     assert "Цель не задана" in text
     assert "вес" in text.lower()
+
+
+# ------------------------------------------------------------------ T054
+
+def test_the_measured_tdee_reads_the_weight_that_actually_moved():
+    """Съедено 2000, ушло 3 кг за 42 дня — значит, тратилось ≈ 2550."""
+    from datetime import UTC, datetime, timedelta
+
+    from src.analytics.body import measured_tdee
+
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    weights = [(start, 85.0), (start + timedelta(days=42), 82.0)]
+    intake = [((start + timedelta(days=d)).date(), 2000.0) for d in range(43)]
+    measured = measured_tdee(weights, intake)
+    assert measured is not None
+    assert measured.kcal == 2550
+    assert measured.days == 42
+    assert measured.weight_change_kg == -3.0
+
+
+def test_a_short_stretch_is_not_enough_to_measure_anything():
+    from datetime import UTC, datetime, timedelta
+
+    from src.analytics.body import MIN_TDEE_DAYS, measured_tdee
+
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    days = MIN_TDEE_DAYS - 1
+    weights = [(start, 85.0), (start + timedelta(days=days), 84.0)]
+    intake = [((start + timedelta(days=d)).date(), 2000.0) for d in range(days + 1)]
+    assert measured_tdee(weights, intake) is None
+
+
+def test_days_without_food_records_are_missing_not_zero():
+    """Незаписанный день — не ноль калорий; при дырах измерять нечего."""
+    from datetime import UTC, datetime, timedelta
+
+    from src.analytics.body import measured_tdee
+
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    weights = [(start, 85.0), (start + timedelta(days=42), 82.0)]
+    sparse = [((start + timedelta(days=d)).date(), 2000.0) for d in range(0, 43, 3)]
+    assert measured_tdee(weights, sparse) is None
+
+
+def test_an_absurd_result_is_thrown_away_not_shown():
+    """Втрое больше формулы — это дыры в записях, а не обмен веществ."""
+    from datetime import UTC, datetime, timedelta
+
+    from src.analytics.body import measured_tdee
+
+    start = datetime(2026, 8, 1, tzinfo=UTC)
+    weights = [(start, 95.0), (start + timedelta(days=30), 80.0)]
+    intake = [((start + timedelta(days=d)).date(), 2000.0) for d in range(31)]
+    assert measured_tdee(weights, intake, formula_tdee=2200) is None
+    # без сверки с формулой число всё же считается — решает вызывающий
+    assert measured_tdee(weights, intake) is not None
+
+
+def test_the_plan_says_when_it_stopped_using_the_formula():
+    from src.analytics.body import build_plan
+    from src.reporting import format_goal_plan
+
+    plan = build_plan(
+        kind="lose", weight_kg=85.0, target_weight_kg=80.0, height_cm=178,
+        age=44, sex="m", activity="light", measured_tdee_kcal=2550,
+    )
+    assert plan.tdee_source == "measured"
+    assert plan.tdee_kcal == 2550
+    text = format_goal_plan(plan, kind="lose", target_weight_kg=80.0)
+    assert "по вашим замерам" in text
+
+    formula = build_plan(
+        kind="lose", weight_kg=85.0, target_weight_kg=80.0, height_cm=178,
+        age=44, sex="m", activity="light",
+    )
+    assert formula.tdee_source == "formula"
+    assert "по вашим замерам" not in format_goal_plan(formula, kind="lose", target_weight_kg=80.0)
+
+
+# ------------------------------------------------------------------ T053
+
+def test_steps_below_the_activity_baseline_add_nothing():
+    """Коэффициент активности их уже оплатил — иначе день посчитается дважды."""
+    from src.analytics.body import steps_burn
+
+    assert steps_burn(9000, 80, "moderate") == 0.0
+    assert steps_burn(3000, 80, "sedentary") == 0.0
+
+
+def test_steps_above_the_baseline_are_counted_once():
+    from src.analytics.body import steps_burn
+
+    # 12000 при сидячем уровне: сверх базовых 4000 — 8000 шагов
+    assert steps_burn(12000, 80, "sedentary") == round(8000 * 80 * 0.0005, 0)
+    # тот же человек с высоким уровнем активности — почти ничего сверх
+    assert steps_burn(12000, 80, "high") == 0.0
+
+
+def test_steps_inside_a_recorded_walk_are_not_counted_twice():
+    from datetime import UTC, datetime, timedelta
+
+    from src.analytics.body import steps_outside_workouts
+
+    start = datetime(2026, 9, 14, 18, 0, tzinfo=UTC)
+    workouts = [(start, start + timedelta(minutes=40), 210.0)]
+    buckets = [
+        (start + timedelta(minutes=10), start + timedelta(minutes=25), 2000),  # внутри
+        (start + timedelta(hours=3), start + timedelta(hours=3, minutes=15), 1500),
+    ]
+    assert steps_outside_workouts(buckets, workouts) == 1500
+
+
+def test_the_day_balance_names_steps_separately():
+    from src.analytics.body import day_balance
+    from src.reporting import format_day_progress
+
+    balance = day_balance(
+        target_kcal=1900, consumed_kcal=1200, burned_kcal=0,
+        steps=14000, weight_kg=80, activity="sedentary",
+    )
+    assert balance.steps_kcal == 400
+    assert balance.burned_kcal == 400
+    text = format_day_progress(balance)
+    assert "Шагов: 14000" in text
+    assert "≈ 400 ккал" in text
+
+
+def test_a_quiet_day_says_so_without_adding_calories():
+    from src.analytics.body import day_balance
+    from src.reporting import format_day_progress
+
+    balance = day_balance(
+        target_kcal=1900, consumed_kcal=1200, steps=3000,
+        weight_kg=80, activity="sedentary",
+    )
+    assert balance.steps_kcal == 0.0
+    assert "в пределах вашего обычного уровня" in format_day_progress(balance)
+
+
+# ------------------------------------------------------------------ T068
+
+def test_a_short_night_costs_the_extra_waking_hours():
+    from src.analytics.body import sleep_adjust
+
+    # три недоспанных часа при BMR 1700: ≈ 53 ккал
+    assert sleep_adjust(1700, 5.0, typical_hours=8.0) == 53.0
+    assert sleep_adjust(1700, 8.0, typical_hours=8.0) == 0.0
+
+
+def test_a_long_night_goes_the_other_way():
+    from src.analytics.body import sleep_adjust
+
+    assert sleep_adjust(1700, 11.0, typical_hours=8.0) < 0
+
+
+def test_sleep_without_a_bmr_changes_nothing():
+    from src.analytics.body import sleep_adjust
+
+    assert sleep_adjust(None, 5.0) == 0.0
+    assert sleep_adjust(1700, None) == 0.0
+
+
+def test_a_broken_night_cannot_swallow_the_corridor():
+    from src.analytics.body import MAX_SLEEP_KCAL, sleep_adjust
+
+    assert sleep_adjust(2500, 0.5, typical_hours=8.0) == MAX_SLEEP_KCAL
+
+
+def test_the_corridor_names_the_night_without_claiming_consequences():
+    from src.analytics.body import day_balance
+    from src.reporting import format_day_progress
+
+    balance = day_balance(
+        target_kcal=1900, consumed_kcal=1200, sleep_hours=5.0,
+        typical_sleep_hours=8.0, bmr_kcal=1700,
+    )
+    assert balance.sleep_kcal == 53.0
+    text = format_day_progress(balance)
+    assert "Ночь 5.0 ч" in text
+    for forbidden in ("наберёте", "из-за", "приведёт", "вызывает"):
+        assert forbidden not in text.lower()

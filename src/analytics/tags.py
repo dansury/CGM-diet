@@ -27,6 +27,7 @@ TAGS: dict[str, str] = {
     "starch": "крахмалистое",
     "fruit": "фрукты",
     "dried_fruit": "сухофрукты",
+    "water": "вода и несладкие напитки",
     "juice": "сок",
     "sweet_drink": "сладкий напиток",
     "milk": "молоко",
@@ -53,6 +54,10 @@ TAGS: dict[str, str] = {
 # Fallback keyword -> tag mapping, applied when the model returns no tags at
 # all (older models, degraded output). Deliberately conservative.
 _KEYWORD_TAGS: tuple[tuple[str, str], ...] = (
+    ("вода", "water"),
+    ("минералк", "water"),
+    ("чай", "water"),
+    ("кофе", "water"),
     ("сахар", "added_sugar"),
     ("мед", "added_sugar"),
     ("варенье", "added_sugar"),

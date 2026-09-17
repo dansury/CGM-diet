@@ -27,7 +27,7 @@ web/
     css/app.css
     js/ app.js theme.js db.js onboarding.js camera.js recognize.js thinking.js
        dictionary.js charts.js settings.js telemetry.js push.js sync.js notify.js
-       cgmcsv.js
+       cgmcsv.js barcode.js digest.js goals.js
   admin/                    закрыто паролем, доступно только по /admin
     index.php login.php logout.php lib.php
   api/                      JSON-эндпоинты, без сессий кроме sync/register
@@ -54,8 +54,14 @@ web/
   tests/model_hints.php     `php web/tests/model_hints.php` — какая модель не
                             подтверждена провайдером и что предложить взамен
   tests/cgm_csv.mjs         `node web/tests/cgm_csv.mjs` — разбор выгрузок
-                            LibreView и Dexcom Clarity (единственный тест на JS:
-                            логика живёт в браузере, PHP её не видит)
+                            LibreView и Dexcom Clarity (тесты на JS: логика
+                            живёт в браузере, PHP её не видит)
+  tests/barcode.mjs         `node web/tests/barcode.mjs` — контрольная цифра и
+                            разбор ответа Open Food Facts
+  tests/digest.mjs          `node web/tests/digest.mjs` — «неделя в сравнении»:
+                            пороги и что попадает в карточку
+  tests/goals.mjs           `node web/tests/goals.mjs` — что цели меняют дальше
+                            первого экрана: порядок разделов и пустой день
   data/                     legacy-расположение app.db; используется, только если
                             каталог рядом с корнем деплоя недоступен на запись
   README.md                 инструкция по деплою
@@ -197,6 +203,53 @@ IndexedDB по `label` (префикс, затем подстрока), рота
 (`/meds`, `WellbeingFlow`), которого в web MVP ещё нет вовсе. Задача на
 реализацию — `TODO.md` T071.
 
+## Неделя в сравнении (`js/digest.js`, карточка над графиками)
+
+```
+buildDigest({glucose, meals, weight, activity}, now=Date.now()) -> digest
+digestLines(digest) -> [строка]          # пустой список = говорить не о чем
+WEEK_DAYS=7 · MIN_WEEK_POINTS=20 · MEANINGFUL_MEAN_SHIFT=0.5 · MEANINGFUL_TIR_SHIFT=5
+MEANINGFUL_STEPS_SHIFT=5000 · MEANINGFUL_WEIGHT_SHIFT=0.3
+```
+
+Зеркало `src/analytics/digest.py` бота в той части, которую web умеет посчитать:
+средний сахар, время в диапазоне 3.9–10.0, записи о еде и дни с записями, шаги,
+вес. Те же пороги, тот же хвост «это сравнение двух недель, а не объяснение».
+
+Порядок строк задают цели знакомства (`js/goals.js` — зеркало `src/goals.py`):
+`digestLines(digest, focus)`. Цель переставляет разделы и ничего больше. Тот же
+каталог даёт подсказку пустого дня на главной (`emptyHints`).
+
+`[WEB-ONLY GAP: сравнение по компонентам]` — «после чего подъём стал выше» в
+web нет: для этого нужен весь движок экскурсий и статистики
+(`src/analytics/windows.py`, `stats.py`), а второй его экземпляр на JavaScript
+разошёлся бы с первым ровно там, где проекту это дороже всего. Задача — T085.
+
+Проверяется офлайн: `node web/tests/digest.mjs`.
+
+## Штрихкод (`js/barcode.js`)
+
+Зеркало `src/ingest/barcode.py` и `src/ingest/openfoodfacts.py` бота. Снимок не
+распознался (`recognize.php` вернул ошибку) → ищем на нём штрихкод и
+спрашиваем Open Food Facts; нашлось — обычный черновик приёма пищи на 100 г с
+пометкой об источнике, не нашлось — прежнее сообщение об ошибке.
+
+```
+isSupported() · isValid(code) · normalize(code)
+readBarcodes(blob) -> [код]
+lookupProduct(barcode) -> продукт|null · parseProduct(payload, barcode)
+draftFromProduct(product, grams=100) -> черновик
+```
+
+Чтение — встроенный `BarcodeDetector` (Chrome на Android, там же и съёмка);
+браузер без него молча отдаёт пустой список, и поток остаётся прежним.
+Сторонняя библиотека ради этого в приложение без сборки не тянется.
+Контрольная цифра GS1 обязательна — та же причина, что у бота: неверная цифра
+называет чужой продукт.
+
+Проверяется офлайн: `node web/tests/barcode.mjs` (чтение картинки — браузерное,
+проверяются код и разбор ответа базы).
+
 ## Импорт CGM (`js/cgmcsv.js`, «Настройки» → «История с сенсора»)
 
 Зеркало `src/ingest/cgm_csv.py` бота: те же два формата, тот же выбор порядка
@@ -232,7 +285,7 @@ parseCgmCsv(text, {maxRows=20000})
 `onboarding_step`, `onboarding_done`, `meal_recognized`, `camera_opened`,
 `dictionary_used`, `chart_viewed`, `push_subscribed`, `push_denied`,
 `push_sent` (уходит из `push_send.php`), `push_clicked` (из `sw.js`
-`notificationclick`), `data_cleared`, `registered`, `cgm_imported`.
+`notificationclick`), `data_cleared`, `registered`, `cgm_imported`, `barcode_used`.
 
 ## Push-уведомления (`js/push.js`, `sw.js`, `api/push_*.php`, `lib/webpush.php`)
 
@@ -261,7 +314,9 @@ AES-128-GCM через `openssl_pkey_derive`/`hash_hkdf`/`openssl_encrypt`, PHP 
 Health (`DEV_PLAN.md` фаза 9): код собран и соответствует спецификации,
 `php -l` зелёный, `php web/tests/notifications.php`, `php web/tests/auto_pull.php`,
 `php web/tests/llm_chain.php`, `php web/tests/model_hints.php` и
-`node web/tests/cgm_csv.mjs` зелёные, живой пуш не прогонялся.
+`node web/tests/cgm_csv.mjs`, `node web/tests/barcode.mjs` и
+`node web/tests/digest.mjs` и `node web/tests/goals.mjs` зелёные, живой пуш не
+прогонялся.
 
 ## Регистрация и синхронизация (`js/sync.js`, `api/register.php`, `api/sync.php`)
 

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from src.health.samsung import HealthSyncError, make_token, parse_samples, verify_token
+from src.health.sync import HealthSyncError, make_token, parse_samples, verify_token
 
 SECRET = "s3cret"
 
@@ -82,3 +82,44 @@ def test_workout_fields_are_kept():
     assert (sample.kcal, sample.distance_m, sample.avg_hr) == (210.0, 3200.0, 118.0)
     assert sample.source == "health_connect"
     assert sample.external_id == "w-1"
+
+
+# ------------------------------------------------------------------ HealthKit
+
+def test_healthkit_names_map_onto_our_four_kinds():
+    """iOS-«Быстрая команда» шлёт имена Apple — переименовать их ей негде."""
+    from src.health.sync import normalize_kind
+
+    assert normalize_kind("stepCount") == "steps"
+    assert normalize_kind("HKQuantityTypeIdentifierStepCount") == "steps"
+    assert normalize_kind("sleepAnalysis") == "sleep"
+    assert normalize_kind("heartRate") == "heart_rate"
+    assert normalize_kind("steps") == "steps"          # наше имя не ломается
+    assert normalize_kind("bodyTemperature") is None   # не наше — не храним
+
+
+def test_a_healthkit_batch_parses_like_a_health_connect_one():
+    payload = {
+        "tg_id": 1,
+        "source": "healthkit",
+        "samples": [
+            {
+                "type": "HKQuantityTypeIdentifierStepCount",
+                "start": "2026-09-14T08:00:00Z",
+                "end": "2026-09-14T08:15:00Z",
+                "steps": 420,
+                "id": "hk-1",
+            },
+            {
+                "kind": "sleepAnalysis",
+                "start": "2026-09-14T23:10:00Z",
+                "end": "2026-09-15T06:40:00Z",
+                "external_id": "hk-2",
+            },
+        ],
+    }
+    samples = parse_samples(payload)
+    assert [s.kind for s in samples] == ["steps", "sleep"]
+    assert samples[0].steps == 420
+    assert samples[0].source == "healthkit"
+    assert samples[1].external_id == "hk-2"

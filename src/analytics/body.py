@@ -170,6 +170,7 @@ class EnergyPlan:
     to_goal_kg: float | None = None
     capped: list[str] = field(default_factory=list)
     estimated: bool = False              # TDEE не посчитан, взята оценка
+    tdee_source: str = "formula"         # formula|measured — откуда взят расход
 
 
 class PlanImpossible(ValueError):
@@ -189,6 +190,7 @@ def build_plan(
     body_fat_pct: float | None = None,
     pregnant: bool = False,
     today: date | None = None,
+    measured_tdee_kcal: float | None = None,
 ) -> EnergyPlan:
     """Собрать дневной коридор калорий под цель, урезав её до безопасной.
 
@@ -206,6 +208,13 @@ def build_plan(
         # Без роста и возраста считать нечего; берём грубый ориентир 30 ккал/кг,
         # помечаем оценкой и просим дозаполнить профиль.
         maintenance = round((weight_kg or DEFAULT_WEIGHT_KG) * 30.0, 0)
+    tdee_source = "formula"
+    if measured_tdee_kcal:
+        # Собственные замеры точнее среднего человека в формуле — но подмена
+        # обязана быть видимой, поэтому источник едет в план и в текст.
+        maintenance = round(float(measured_tdee_kcal), 0)
+        estimated = False
+        tdee_source = "measured"
 
     if kind == "lose" and pregnant:
         # Дефицит при беременности небезопасен независимо от ИМТ — цель не строим
@@ -227,6 +236,7 @@ def build_plan(
             to_goal_kg=None,
             capped=capped,
             estimated=estimated,
+            tdee_source=tdee_source,
         )
 
     low, high = safe_rate_range(weight_kg, kind)
@@ -276,6 +286,7 @@ def build_plan(
         to_goal_kg=to_goal,
         capped=capped,
         estimated=estimated,
+        tdee_source=tdee_source,
     )
 
 
@@ -296,8 +307,12 @@ def goal_kind(weight_kg: float | None, target_weight_kg: float | None) -> str:
 class DayBalance:
     target_kcal: float
     consumed_kcal: float
-    burned_kcal: float
+    burned_kcal: float          # тренировки + шаги сверх базового уровня
     carbs_g: float = 0.0
+    steps: int = 0              # шагов вне записанных тренировок
+    steps_kcal: float = 0.0     # их доля в `burned_kcal`, отдельной строкой
+    sleep_hours: float = 0.0    # прошлая ночь, часов
+    sleep_kcal: float = 0.0     # поправка за недоспанное, тоже в `burned_kcal`
 
     @property
     def allowance_kcal(self) -> float:
@@ -326,12 +341,28 @@ def day_balance(
     consumed_kcal: float,
     burned_kcal: float = 0.0,
     carbs_g: float = 0.0,
+    steps: int = 0,
+    weight_kg: float | None = None,
+    activity: str | None = None,
+    sleep_hours: float | None = None,
+    typical_sleep_hours: float | None = None,
+    bmr_kcal: float | None = None,
 ) -> DayBalance:
+    """Дневной баланс. Шаги и сон превращаются в калории здесь, а не в
+    репозитории: для этого нужны вес, активность и BMR из профиля."""
+    steps_kcal = steps_burn(steps, weight_kg, activity) if steps else 0.0
+    if steps_kcal < MIN_STEPS_KCAL:
+        steps_kcal = 0.0
+    sleep_kcal = sleep_adjust(bmr_kcal, sleep_hours, typical_hours=typical_sleep_hours)
     return DayBalance(
         target_kcal=round(target_kcal, 0),
         consumed_kcal=round(consumed_kcal, 0),
-        burned_kcal=round(burned_kcal, 0),
+        burned_kcal=round(burned_kcal + steps_kcal + sleep_kcal, 0),
         carbs_g=round(carbs_g, 0),
+        steps=int(steps or 0),
+        steps_kcal=steps_kcal,
+        sleep_hours=round(float(sleep_hours or 0.0), 1),
+        sleep_kcal=sleep_kcal,
     )
 
 
@@ -362,6 +393,110 @@ def merge_burn(
         if not overlaps:
             total += kcal
     return round(total, 0)
+
+
+# ------------------------------------------------------------------ сон
+
+#: Час бодрствования стоит дороже часа сна, и только это здесь и считается.
+#: Спящий обмен ≈ 0.95 от основного, бодрствующий сидячий ≈ 1.2 — разница
+#: и есть цена недоспанного часа. Никаких «мало спите — наберёте вес»:
+#: это была бы причинно-следственная связь, а её мы не утверждаем
+#: (`spec/clinical.md`).
+SLEEP_MET_FACTOR = 0.95
+AWAKE_MET_FACTOR = 1.2
+#: С чем сравниваем ночь, когда собственной медианы ещё нет, часов.
+DEFAULT_SLEEP_HOURS = 8.0
+#: Поправка меньше этого — шум на фоне погрешности самих калорий.
+MIN_SLEEP_KCAL = 30.0
+#: И больше этого не бывает: 12 часов разницы — это сбой записи, а не ночь.
+MAX_SLEEP_KCAL = 150.0
+
+
+def sleep_adjust(
+    bmr_kcal: float | None,
+    sleep_hours: float | None,
+    *,
+    typical_hours: float | None = None,
+) -> float:
+    """Поправка коридора за недоспанные (или переспанные) часы, ккал.
+
+    Положительная — человек бодрствовал дольше обычного и потратил больше.
+    Ноль — сна нет, BMR неизвестен, или разница в пределах `MIN_SLEEP_KCAL`.
+    """
+    if not bmr_kcal or not sleep_hours or sleep_hours <= 0:
+        return 0.0
+    usual = typical_hours or DEFAULT_SLEEP_HOURS
+    if usual <= 0:
+        usual = DEFAULT_SLEEP_HOURS
+    awake_extra_h = usual - sleep_hours
+    per_hour = (bmr_kcal / 24.0) * (AWAKE_MET_FACTOR - SLEEP_MET_FACTOR)
+    kcal = round(awake_extra_h * per_hour, 0)
+    if abs(kcal) < MIN_SLEEP_KCAL:
+        return 0.0
+    return float(max(-MAX_SLEEP_KCAL, min(MAX_SLEEP_KCAL, kcal)))
+
+
+# ------------------------------------------------------------------ шаги
+
+#: Сколько шагов в сутки уже «зашито» в коэффициент активности профиля.
+#: Коэффициент TDEE уже оплачивает обычное движение: если добавить к расходу
+#: все шаги целиком, день посчитается дважды. Поэтому в расход идёт только то,
+#: что сверх базового уровня выбранной активности.
+ACTIVITY_STEPS_BASELINE: dict[str, int] = {
+    "sedentary": 4000,
+    "light": 7000,
+    "moderate": 10000,
+    "high": 12500,
+    "athlete": 15000,
+}
+DEFAULT_STEPS_BASELINE = 7000
+#: ккал на шаг на килограмм массы — ходьба в обычном темпе, ≈0.04 ккал/шаг
+#: у человека 80 кг. Оценка по MET, а не измерение.
+KCAL_PER_STEP_PER_KG = 0.0005
+#: Меньше этого расход шагов не показываем: в пределах погрешности шагомера.
+MIN_STEPS_KCAL = 30.0
+
+
+def steps_burn(
+    steps: int | None, weight_kg: float | None, activity: str | None = None
+) -> float:
+    """Энергия шагов **сверх** базового уровня активности профиля, ккал.
+
+    Двойной счёт ловится с двух сторон: базовый уровень вычитается, потому что
+    коэффициент активности его уже учёл, а шаги внутри записанной вручную
+    тренировки отбрасываются раньше, в `steps_outside_workouts`.
+    """
+    if not steps or steps <= 0:
+        return 0.0
+    baseline = ACTIVITY_STEPS_BASELINE.get(activity or "", DEFAULT_STEPS_BASELINE)
+    extra = steps - baseline
+    if extra <= 0:
+        return 0.0
+    mass = weight_kg or DEFAULT_WEIGHT_KG
+    return round(extra * mass * KCAL_PER_STEP_PER_KG, 0)
+
+
+def steps_outside_workouts(
+    buckets: list[tuple[datetime, datetime | None, int | None]],
+    workouts: list[tuple[datetime, datetime | None, float | None]],
+) -> int:
+    """Шаги, не попавшие внутрь записанной тренировки.
+
+    Прогулка, записанная руками, уже дала свои калории: её шаги посчитались бы
+    вторым разом (`spec/body.md` § Шаги в коридоре).
+    """
+    total = 0
+    for start, end, steps in buckets:
+        if not steps:
+            continue
+        finish = end or start
+        inside = any(
+            start <= (w_end or w_start) and w_start <= finish
+            for w_start, w_end, _ in workouts
+        )
+        if not inside:
+            total += int(steps)
+    return total
 
 
 # ------------------------------------------------------------------ trend
@@ -409,6 +544,88 @@ def weight_trend(
     )
 
 
+#: Сколько дней должен покрывать отрезок, чтобы по нему считать реальный TDEE.
+#: Меньше месяца — и разница в весе окажется водой, а не энергией.
+MIN_TDEE_DAYS = 28
+#: Доля дней отрезка, за которые еда записана. Незаписанный день выглядит как
+#: ноль калорий и занижает среднее сильнее, чем что угодно другое.
+MIN_TDEE_COVERAGE = 0.7
+#: За пределами этого коридора вокруг формулы измеренное значение не берём:
+#: такое расхождение говорит о дырах в записях, а не об обмене веществ.
+TDEE_SANITY_RANGE = (0.6, 1.6)
+
+
+@dataclass(frozen=True, slots=True)
+class MeasuredTDEE:
+    """Сколько человек тратит на самом деле — по его весу и его записям.
+
+    Формула (Миффлин или Кэтч-Макардл × коэффициент активности) — это средний
+    человек. Через месяц замеров есть кое-что лучше: если вес поехал вниз на
+    X кг за D дней, а съедено в среднем M ккал в день, то тратилось
+    `M + X·7700/D`. Погрешность у этого не меньше, чем у формулы, поэтому
+    результат всегда идёт с числом дней и покрытием, из которых он получен.
+    """
+
+    kcal: float
+    days: int
+    logged_days: int
+    intake_kcal: float
+    weight_change_kg: float
+
+    @property
+    def coverage(self) -> float:
+        return self.logged_days / self.days if self.days else 0.0
+
+
+def measured_tdee(
+    weights: list[tuple[datetime, float]],
+    intake: list[tuple[date, float]],
+    *,
+    min_days: int = MIN_TDEE_DAYS,
+    formula_tdee: float | None = None,
+) -> MeasuredTDEE | None:
+    """Реальный расход по динамике веса и съеденному. None — данных мало.
+
+    `intake` — по одной паре на день с записями (день, ккал). Дни без записей
+    сюда не попадают и в среднее не идут: съеденное в них неизвестно, а не
+    равно нулю.
+    """
+    ordered = sorted(weights, key=lambda item: item[0])
+    if len(ordered) < 2:
+        return None
+    first_at, first_kg = ordered[0]
+    last_at, last_kg = ordered[-1]
+    days = (last_at.date() - first_at.date()).days
+    if days < min_days:
+        return None
+
+    window = [
+        kcal
+        for day, kcal in intake
+        if first_at.date() <= day <= last_at.date() and kcal > 0
+    ]
+    if len(window) < days * MIN_TDEE_COVERAGE:
+        return None
+
+    mean_intake = sum(window) / len(window)
+    change = last_kg - first_kg
+    # Похудел — тратил больше съеденного ровно на энергию ушедших килограммов.
+    kcal = mean_intake - change * KCAL_PER_KG / days
+    if kcal <= 0:
+        return None
+    if formula_tdee:
+        low, high = TDEE_SANITY_RANGE
+        if not (formula_tdee * low <= kcal <= formula_tdee * high):
+            return None
+    return MeasuredTDEE(
+        kcal=round(kcal, 0),
+        days=days,
+        logged_days=len(window),
+        intake_kcal=round(mean_intake, 0),
+        weight_change_kg=round(change, 2),
+    )
+
+
 def safe_corridor(
     start_at: datetime, start_kg: float, *, rate_kg_week: float, kind: str, weeks: int = 26
 ) -> list[tuple[datetime, float]]:
@@ -425,7 +642,18 @@ __all__ = [
     "ACTIVITY_LABELS",
     "DEFAULT_WEIGHT_KG",
     "FEMALE",
+    "ACTIVITY_STEPS_BASELINE",
     "KCAL_PER_KG",
+    "KCAL_PER_STEP_PER_KG",
+    "MIN_SLEEP_KCAL",
+    "MIN_STEPS_KCAL",
+    "sleep_adjust",
+    "steps_burn",
+    "steps_outside_workouts",
+    "MIN_TDEE_COVERAGE",
+    "MIN_TDEE_DAYS",
+    "MeasuredTDEE",
+    "measured_tdee",
     "MALE",
     "MIN_KCAL",
     "DayBalance",

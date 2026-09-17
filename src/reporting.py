@@ -1154,8 +1154,57 @@ def format_plate_score(score: PlateScore, *, with_score: bool = True) -> str:
         target = TARGET_SHARES.get(category)
         aim = f" (ориентир {target * 100:.0f}%)" if target else ""
         lines.append(f"• {category_label(category)}: {share:.0f}%{aim} — {grams:.0f} г")
+    aside = _plate_aside_line(score)
+    if aside:
+        lines.append(aside)
     if score.estimated_mass:
         lines.append("<i>Часть порций я оценил сам — назовите граммы, и доли станут точнее.</i>")
+    return "\n".join(lines)
+
+
+def _plate_aside_line(score: PlateScore) -> str:
+    """Напитки и масло — рядом с тарелкой, не её долей.
+
+    В оригинальной тарелке они нарисованы сбоку: доли не занимают, цели у них
+    нет. Поэтому здесь только факт и граммы — ни ориентира, ни «мало/много»
+    (`spec/clinical.md`: никаких норм).
+    """
+    parts = []
+    if score.drink_g:
+        parts.append(f"напитки {score.drink_g:.0f} мл")
+    if score.oil_g:
+        parts.append(f"масло {score.oil_g:.0f} г")
+    if not parts:
+        return ""
+    return "<i>Рядом с тарелкой: " + ", ".join(parts) + " — в доли не входят.</i>"
+
+
+def format_plate_week(week, *, days: int = 7) -> str:
+    """Тарелка за период: те же доли, но по накопленной массе.
+
+    Про пропорции, а не про человека: ни «нормы», ни «правильно/неправильно»
+    (`spec/clinical.md`).
+    """
+    score = week.score
+    lines = [
+        f"🥗 <b>Тарелка за {days} дн.</b> — {score.score:.0f} из 100",
+        progress_bar(score.score / 100.0),
+    ]
+    for category in _PLATE_ORDER:
+        grams = score.grams.get(category)
+        if not grams:
+            continue
+        share = score.shares.get(category, 0.0) * 100
+        target = TARGET_SHARES.get(category)
+        aim = f" (ориентир {target * 100:.0f}%)" if target else ""
+        lines.append(f"• {category_label(category)}: {share:.0f}%{aim}")
+    lines.append(
+        f"Собранных тарелок: {week.balanced} из {week.meals} "
+        f"за {week.days} дн. с записями."
+    )
+    aside = _plate_aside_line(score)
+    if aside:
+        lines.append(aside)
     return "\n".join(lines)
 
 
@@ -1662,6 +1711,7 @@ __all__ = [
     "format_lab_value",
     "format_plate_advice",
     "format_plate_score",
+    "format_plate_week",
     "format_plate_settings",
     "format_product",
     "format_product_verdict",

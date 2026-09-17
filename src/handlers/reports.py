@@ -156,8 +156,15 @@ async def _send_stats(message: Message, *, window: str, key_type: str, edit: boo
         from src.handlers.sleep import build_report as build_sleep_report
 
         sleep_line = format_sleep_short(await build_sleep_report(session, user))
+        # Доли тарелки за неделю: раньше их было видно только сразу после
+        # записи, и к следующему дню они пропадали (`spec/plate.md`).
+        from src.handlers.plate import plate_week_text
+
+        plate_line = await plate_week_text(session, user, now=local_now(user))
 
     blocks = [format_stats(stats, unit=unit, window=window)]
+    if plate_line:
+        blocks.append(plate_line)
     if sleep_line:
         blocks.append(sleep_line)
     if points:

@@ -275,7 +275,13 @@ def test_a_snack_joins_the_plate_when_a_meal_lands_next_to_it():
     )
     assert len(sessions) == 1
     assert plate.is_meal(sessions[0].items)
-    assert plate.score_items(sessions[0].items).grams["extra"] == 200
+    score = plate.score_items(sessions[0].items)
+    # Кофе с молоком — напиток: он посчитан, но доли у тарелки не отнимает,
+    # иначе 200 мл «весили» бы как гарнир (T060).
+    assert score.drink_g == 200
+    assert "drink" not in score.shares
+    assert score.mass_g == 350
+    assert round(score.shares["veg"], 3) == round(200 / 350, 3)
 
 
 def test_a_lonely_snack_is_not_counted_as_a_meal_of_the_day():
@@ -347,3 +353,140 @@ def test_advice_text_shows_rounded_gaps():
     assert "+200 г" in text
     # protein gap is 125 -> ceil to 150
     assert "+150 г" in text
+
+
+# ------------------------------------------------------------------ T060/T061
+
+def test_a_drink_does_not_weigh_like_a_side_dish():
+    """300 мл воды рядом с обедом не должны занижать доли всего остального."""
+    food = [
+        plate.PlateItem("салат", 300, ["vegetable"]),
+        plate.PlateItem("гречка", 200, ["whole_grain"]),
+        plate.PlateItem("курица", 200, ["protein"]),
+        plate.PlateItem("яблоко", 100, ["fruit"]),
+    ]
+    dry = plate.score_items(food)
+    wet = plate.score_items([*food, plate.PlateItem("вода", 300, ["water"])])
+    assert wet.shares == dry.shares
+    assert wet.score == dry.score
+    assert wet.mass_g == dry.mass_g == 800
+    assert wet.drink_g == 300
+
+
+def test_water_tea_and_coffee_are_drinks_even_without_a_tag():
+    for name in ("вода", "чай", "кофе", "минералка"):
+        assert plate.classify(plate.PlateItem(name, 200)) == "drink", name
+
+
+def test_sweet_drinks_and_alcohol_are_drinks_too_not_extra():
+    for tag in ("juice", "sweet_drink", "alcohol", "milk"):
+        assert plate.classify(plate.PlateItem("напиток", 200, [tag])) == "drink", tag
+
+
+def test_oil_is_counted_beside_the_plate_not_inside_it():
+    """В оригинальной тарелке масло нарисовано рядом — доли у него нет."""
+    score = plate.score_items(
+        [
+            plate.PlateItem("салат", 300, ["vegetable"]),
+            plate.PlateItem("масло оливковое", 15, ["fat_added"]),
+        ]
+    )
+    assert score.oil_g == 15
+    assert "oil" not in score.shares
+    assert score.mass_g == 300
+
+
+def test_a_glass_of_water_alone_is_still_not_a_meal():
+    assert not plate.is_meal([plate.PlateItem("вода", 500, ["water"])])
+
+
+def test_drinks_do_not_inflate_the_typical_meal_mass():
+    """Иначе ориентир одного приёма рос бы от выпитого, а не от съеденного."""
+    session = plate.group_sessions(
+        [
+            meal(0, [plate.PlateItem("суп", 300, ["vegetable"]),
+                     plate.PlateItem("чай", 250, ["water"])]),
+        ],
+        window_min=60,
+    )[0]
+    assert session.mass_g == 300
+    assert session.drink_g == 250
+
+
+def test_the_card_names_drinks_and_oil_without_asking_for_more():
+    from src.reporting import format_plate_score
+
+    text = format_plate_score(
+        plate.score_items(
+            [
+                plate.PlateItem("салат", 300, ["vegetable"]),
+                plate.PlateItem("вода", 400, ["water"]),
+                plate.PlateItem("масло", 10, ["fat_added"]),
+            ]
+        )
+    )
+    assert "напитки 400 мл" in text
+    assert "масло 10 г" in text
+    # ни нормы, ни оценки — их там быть не может (`spec/clinical.md`)
+    for forbidden in ("норма", "мало", "недостаточно", "ориентир 0%"):
+        assert forbidden not in text.lower()
+
+
+# ------------------------------------------------------------------ T062
+
+def test_the_week_sums_grams_before_it_divides():
+    """Среднее из долей завысило бы вклад маленьких тарелок."""
+    big = plate.group_sessions(
+        [meal(0, [plate.PlateItem("салат", 900, ["vegetable"]),
+                  plate.PlateItem("курица", 100, ["protein"])])],
+        window_min=60,
+    )
+    small = plate.group_sessions(
+        [meal(600, [plate.PlateItem("курица", 200, ["protein"]),
+                    plate.PlateItem("салат", 50, ["vegetable"])])],
+        window_min=60,
+    )
+    week = plate.week_summary([*big, *small])
+    assert week.meals == 2
+    # 950 г овощей из 1250 — а не «среднее из 90% и 20%»
+    assert round(week.score.shares["veg"], 3) == round(950 / 1250, 3)
+
+
+def test_the_week_counts_how_many_plates_came_together():
+    even = [
+        plate.PlateItem("салат", 300, ["vegetable"]),
+        plate.PlateItem("яблоко", 100, ["fruit"]),
+        plate.PlateItem("гречка", 200, ["whole_grain"]),
+        plate.PlateItem("курица", 200, ["protein"]),
+    ]
+    skewed = [plate.PlateItem("картошка", 500, ["potato"])]
+    sessions = plate.group_sessions(
+        [meal(0, even), meal(600, skewed), meal(1200, even)], window_min=60
+    )
+    week = plate.week_summary(sessions)
+    assert (week.meals, week.balanced) == (3, 2)
+    assert round(week.balanced_share, 2) == 0.67
+
+
+def test_a_week_of_snacks_is_not_a_week_of_plates():
+    snacks = plate.group_sessions([meal(0, [plate.PlateItem("кофе", 200, ["milk"])])], window_min=60)
+    assert plate.week_summary(snacks) is None
+    assert plate.week_summary([]) is None
+
+
+def test_the_week_card_shows_shares_and_says_nothing_about_the_person():
+    from src.reporting import format_plate_week
+
+    sessions = plate.group_sessions(
+        [meal(0, [plate.PlateItem("салат", 300, ["vegetable"]),
+                  plate.PlateItem("курица", 300, ["protein"]),
+                  plate.PlateItem("вода", 500, ["water"])])],
+        window_min=60,
+    )
+    text = format_plate_week(plate.week_summary(sessions), days=7)
+    assert "Тарелка за 7 дн." in text
+    assert "овощи: 50% (ориентир 38%)" in text
+    assert "Собранных тарелок: 0 из 1" in text
+    assert "напитки 500 мл" in text
+    for forbidden in ("правильно", "неправильно", "норма", "вы "):
+        assert forbidden not in text.lower()

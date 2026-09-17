@@ -11,9 +11,11 @@
   пунктуации и слов порций) → статистика по блюдам;
 - `tags` — **закрытый** словарь из 30 компонентов (`TAGS: slug -> русская метка`):
   `added_sugar, refined_flour, white_rice, potato, whole_grain, starch, fruit,
-  dried_fruit, juice, sweet_drink, milk, dairy_fermented, cheese, protein,
-  red_meat, processed_meat, fish, egg, legume, nuts, vegetable, fiber,
+  dried_fruit, water, juice, sweet_drink, milk, dairy_fermented, cheese,
+  protein, red_meat, processed_meat, fish, egg, legume, nuts, vegetable, fiber,
   fat_added, fried, alcohol, sweetener, ultra_processed, high_gi, low_gi`.
+  `water` — вода, чай и кофе без сахара: без него «напитки» тарелки
+  (`spec/plate.md`) не отличить от еды.
 
 ```
 normalize_name(s)->str ; normalize_tags(tags, name="")->[str] ; infer_tags(name)->[str]

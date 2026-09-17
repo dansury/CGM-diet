@@ -1083,8 +1083,12 @@ def format_day_progress(
     )
     if balance.burned_kcal:
         lines.append(
-            f"Ориентир {balance.target_kcal:.0f} ккал + тренировки ≈ {balance.burned_kcal:.0f} ккал"
+            f"Ориентир {balance.target_kcal:.0f} ккал + движение ≈ "
+            f"{balance.burned_kcal:.0f} ккал"
         )
+    for extra in (_steps_line(balance), _sleep_line(balance)):
+        if extra:
+            lines.append(extra)
     if balance.over:
         lines.append(f"Сверх ориентира: <b>{-balance.available_kcal:.0f} ккал</b>")
     else:
@@ -1103,6 +1107,40 @@ def format_day_progress(
     return "\n".join(lines)
 
 
+def _sleep_line(balance) -> str:
+    """Прошлая ночь и её цена в калориях — без единого слова о последствиях.
+
+    «Недоспали — наберёте вес» сказать нельзя: это причинно-следственная
+    связь (`spec/clinical.md`). Можно сказать, сколько часов человек не спал
+    и во сколько это обошлось арифметически.
+    """
+    hours = getattr(balance, "sleep_hours", 0.0)
+    kcal = getattr(balance, "sleep_kcal", 0.0)
+    if not hours or not kcal:
+        return ""
+    word = "короче" if kcal > 0 else "длиннее"
+    return (
+        f"😴 Ночь {hours:.1f} ч — {word} обычной; лишние часы бодрствования "
+        f"≈ {abs(kcal):.0f} ккал"
+    )
+
+
+def _steps_line(balance) -> str:
+    """Шаги отдельной строкой: сколько прошёл и сколько это дало.
+
+    Числом, а не оценкой человека: «≈» обязательно — это модель по MET, а не
+    измерение (`spec/clinical.md`). Шаги ниже базового уровня активности
+    профиля калорий не добавляют вовсе, и тогда строки про них нет.
+    """
+    steps = getattr(balance, "steps", 0)
+    if not steps:
+        return ""
+    kcal = getattr(balance, "steps_kcal", 0.0)
+    if not kcal:
+        return f"👟 Шагов: {steps} — в пределах вашего обычного уровня активности"
+    return f"👟 Шагов: {steps}, из них сверх обычного ≈ {kcal:.0f} ккал"
+
+
 GOAL_HINT = "🎯 Задайте цель — /body — и буду показывать коридор и остаток на день."
 
 
@@ -1116,9 +1154,13 @@ def format_day_totals(balance, *, meals: str = "") -> str:
     if balance.carbs_g:
         parts.append(f"углеводы {balance.carbs_g:.0f} г")
     if balance.burned_kcal:
-        parts.append(f"тренировки ≈ {balance.burned_kcal:.0f} ккал")
+        parts.append(f"движение ≈ {balance.burned_kcal:.0f} ккал")
     head = "📊 <b>Сегодня</b>: " + " · ".join(parts)
-    return "\n".join(part for part in (head, meals, GOAL_HINT) if part)
+    return "\n".join(
+        part
+        for part in (head, _steps_line(balance), _sleep_line(balance), meals, GOAL_HINT)
+        if part
+    )
 
 
 # ------------------------------------------------------------------ Harvard plate
@@ -1366,6 +1408,29 @@ def format_hidden_list(features) -> str:
     return "\n".join(lines)
 
 
+def format_measured_tdee(measured) -> str:
+    """Откуда взялось число, которым заменена формула.
+
+    Не «вы тратите N» как измерение: это оценка из двух рядов записей, и её
+    точность видна по числу дней и покрытию (`spec/clinical.md` — «≈», всегда
+    вместе с числами, из которых получено).
+    """
+    change = measured.weight_change_kg
+    moved = (
+        f"вес {'убавился' if change < 0 else 'прибавился'} на {abs(change):g} кг"
+        if abs(change) >= 0.1
+        else "вес остался прежним"
+    )
+    return (
+        f"📐 <b>Расход по вашим записям</b>: ≈ {measured.kcal:.0f} ккал в день.\n"
+        f"За {measured.days} дн. {moved}, в среднем съедено "
+        f"{measured.intake_kcal:.0f} ккал в день "
+        f"(еда записана в {measured.logged_days} дн. из {measured.days}).\n"
+        "<i>Это оценка из ваших же записей, а не измерение: чем больше дней с "
+        "едой, тем она ближе к правде.</i>"
+    )
+
+
 def format_goal_plan(plan, *, kind: str, target_weight_kg: float | None) -> str:
     """Из чего получился ориентир — и что в цели пришлось урезать."""
     words = {"lose": "снижение", "gain": "набор", "maintain": "удержание"}
@@ -1375,7 +1440,12 @@ def format_goal_plan(plan, *, kind: str, target_weight_kg: float | None) -> str:
     if plan.bmr_kcal:
         lines.append(f"Основной обмен (BMR): ≈ {plan.bmr_kcal:.0f} ккал")
     if plan.tdee_kcal:
-        lines.append(f"Суточный расход (TDEE): ≈ {plan.tdee_kcal:.0f} ккал")
+        source = (
+            " — по вашим замерам, не по формуле"
+            if getattr(plan, "tdee_source", "formula") == "measured"
+            else ""
+        )
+        lines.append(f"Суточный расход (TDEE): ≈ {plan.tdee_kcal:.0f} ккал{source}")
     if kind != "maintain":
         word = "дефицит" if plan.delta_kcal < 0 else "профицит"
         lines.append(
@@ -1388,6 +1458,12 @@ def format_goal_plan(plan, *, kind: str, target_weight_kg: float | None) -> str:
         lines.append(
             "<i>Рост и возраст не заполнены — расход посчитан грубо. "
             "Добавьте их в /body, и ориентир станет точнее.</i>"
+        )
+    if getattr(plan, "tdee_source", "formula") == "measured":
+        lines.append(
+            "<i>Расход взят из вашей истории: сколько веса ушло или пришло за "
+            "период и сколько вы за это время съели. Формула описывает среднего "
+            "человека, ваши замеры — вас.</i>"
         )
     if plan.capped:
         lines.append("")
@@ -1694,6 +1770,7 @@ __all__ = [
     "format_day_progress",
     "format_day_totals",
     "format_goal_plan",
+    "format_measured_tdee",
     "format_measurement_draft",
     "format_labs",
     "format_meal_draft",

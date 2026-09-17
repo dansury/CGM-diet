@@ -28,6 +28,32 @@ router = Router(name="sleep")
 SLEEP_PERIOD_DAYS = 30
 
 
+async def last_night(session, user: User, *, days: int = 14) -> tuple[float, float] | None:
+    """(часов прошлой ночью, обычная длительность) — вход дневного коридора.
+
+    Берётся только длительность: контрасты и режим для коридора не нужны, а
+    полный `build_report` тянет еду, сахар и экскурсии за две недели.
+    """
+    tz = user_tz(user)
+    since = local_now(user) - timedelta(days=days)
+    intervals = await repo.load_sleep_intervals(session, user, since=since)
+    nights = sleep_mod.nights_from_intervals(intervals, tz)
+    if not nights and user.sleep_presence_enabled:
+        nights = sleep_mod.nights_from_presence(
+            await repo.load_presence(session, user, since=since), tz
+        )
+    if not nights:
+        return None
+    today = local_now(user).date()
+    latest = max(nights, key=lambda night: night.date)
+    if latest.date != today:
+        # Ночь позавчерашняя — к сегодняшнему коридору она отношения не имеет.
+        return None
+    stats = sleep_mod.summarize(nights, tz)
+    typical = (stats.median_duration_min or 0.0) / 60.0
+    return latest.duration_min / 60.0, typical or 0.0
+
+
 async def build_report(
     session, user: User, *, days: int = SLEEP_PERIOD_DAYS
 ) -> sleep_mod.SleepReport:

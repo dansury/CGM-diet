@@ -344,7 +344,9 @@ async def test_a_workout_adds_to_the_daily_allowance(engine, session, state):
     await workout.workout_ok(FakeCallback(data="wo:ok", message=FakeMessage()), state)
 
     after = await body.day_progress_text(session, user, now=datetime.now().astimezone())
-    assert "тренировки" in after
+    # «движение», а не «тренировки»: в ту же строку теперь входят и шаги
+    # сверх обычного уровня активности (T053)
+    assert "движение" in after
     assert before != after
 
 

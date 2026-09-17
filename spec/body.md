@@ -39,16 +39,24 @@ day_balance(target_kcal, consumed_kcal, burned_kcal) -> DayBalance
 meal_target_kcal(day_target_kcal, meals_per_day) -> float   # day_target_kcal / meals_per_day
 weight_trend(series:[(at, kg)], window_days=14) -> WeightTrend|None
 merge_burn(workouts, samples) -> float    # ккал за день без двойного счёта
+measured_tdee(weights, intake, min_days=28, formula_tdee?) -> MeasuredTDEE|None
+steps_burn(steps, weight_kg, activity) -> float        # сверх базового уровня
+steps_outside_workouts(buckets, workouts) -> int
+sleep_adjust(bmr_kcal, sleep_hours, typical_hours?) -> float
 ```
+
+`MeasuredTDEE`: `kcal, days, logged_days, intake_kcal, weight_change_kg`;
+`coverage`.
 
 `ACTIVITY_FACTORS`: sedentary 1.2, light 1.375, moderate 1.55, high 1.725,
 athlete 1.9. `KCAL_PER_KG = 7700`.
 
 `EnergyPlan`: `target_kcal, tdee_kcal, bmr_kcal, rate_kg_week, delta_kcal,
-weeks, eta_date, capped:[str]`.
+weeks, eta_date, capped:[str], tdee_source(formula|measured)`.
 
 `DayBalance`: `target_kcal, consumed_kcal, burned_kcal, available_kcal,
-share (0..~2), over:bool`.
+share (0..~2), over:bool, steps, steps_kcal, sleep_hours, sleep_kcal`.
+`burned_kcal` = тренировки + шаги сверх базового уровня + поправка за сон.
 
 `WeightTrend`: `first_at, last_at, first_kg, last_kg, rate_kg_week, to_goal_kg`.
 
@@ -66,10 +74,63 @@ share (0..~2), over:bool`.
 Каждый сработавший клип попадает в `capped` и **обязан** быть показан
 пользователю: тихо урезать чужую цель нельзя.
 
+## Реальный расход вместо формулы
+
+Формула (Миффлин или Кэтч-Макардл × коэффициент активности) описывает среднего
+человека. Через месяц замеров есть кое-что лучше: вес поехал на X кг за D дней,
+съедено в среднем M ккал в день → тратилось `M + X·7700/D`.
+
+`measured_tdee` отдаёт результат, только когда ему есть на чём стоять:
+
+| Условие | Зачем |
+|---|---|
+| отрезок ≥ `MIN_TDEE_DAYS` (28 дней) | на коротком отрезке разница в весе — вода, а не энергия |
+| еда записана в ≥ 70 % дней отрезка (`MIN_TDEE_COVERAGE`) | незаписанный день выглядит нулём и занижает среднее |
+| результат внутри `TDEE_SANITY_RANGE` (0.6–1.6 от формулы) | большее расхождение говорит о дырах в записях |
+
+Найденное значение подставляется в `build_plan(measured_tdee_kcal=…)` и
+**обязано быть названо**: `plan.tdee_source = "measured"`, строка «по вашим
+замерам, не по формуле» и абзац о том, откуда число.
+`/body` показывает `format_measured_tdee` даже без цели: «а сколько я вообще
+трачу» — самостоятельный вопрос. История берётся за `TDEE_HISTORY_DAYS` (90).
+
+## Шаги в коридоре
+
+Коэффициент активности профиля **уже** оплачивает обычное движение, поэтому в
+расход идут только шаги сверх базового уровня своей активности
+(`ACTIVITY_STEPS_BASELINE`: sedentary 4000, light 7000, moderate 10000,
+high 12500, athlete 15000). Цена шага — `KCAL_PER_STEP_PER_KG = 0.0005`
+ккал·шаг⁻¹·кг⁻¹ (≈0.04 ккал/шаг у человека 80 кг), оценка по MET, не измерение.
+
+Двойной счёт ловится с двух сторон: базовый уровень вычитается, а шаги внутри
+записанной вручную тренировки отбрасываются в `steps_outside_workouts` — та
+прогулка уже дала свои калории (`repo.day_energy` отдаёт `steps` уже без них).
+Меньше `MIN_STEPS_KCAL` (30) не показываем. Строка «👟 Шагов: N, из них сверх
+обычного ≈ K ккал»; шаги ниже базового уровня — «в пределах вашего обычного
+уровня активности», без калорий.
+
+## Сон в коридоре
+
+Час бодрствования дороже часа сна: спящий обмен ≈ `SLEEP_MET_FACTOR` (0.95) от
+основного, бодрствующий сидячий ≈ `AWAKE_MET_FACTOR` (1.2). `sleep_adjust`
+считает только эту разницу: `(обычная длительность − прошлая ночь) × BMR/24 ×
+0.25`. Обычная длительность — медиана собственных ночей, иначе
+`DEFAULT_SLEEP_HOURS` (8).
+
+Границы: меньше `MIN_SLEEP_KCAL` (30) — шум, больше `MAX_SLEEP_KCAL` (150) —
+сбой записи, а не ночь. Ночь берётся только сегодняшняя (`handlers/sleep.
+last_night`): позавчерашняя к сегодняшнему коридору отношения не имеет.
+
+Текст говорит про арифметику и молчит про последствия: «Ночь 5.0 ч — короче
+обычной; лишние часы бодрствования ≈ 53 ккал». «Мало спите — наберёте вес» —
+причинно-следственная связь, её не утверждаем (`spec/clinical.md`).
+
 ## Дневной коридор
 
 `day_balance` считает: `available = target + burned − consumed`.
-`share = consumed / (target + burned)`.
+`share = consumed / (target + burned)`. В `burned` входят тренировки, шаги
+сверх базового уровня и поправка за сон — каждое со своей строкой, чтобы
+человек видел, из чего сложилось.
 
 После записи приёма пищи в сообщении живут две полосы разной природы: эта —
 про калории за день, вторая — про состав тарелки (`spec/plate.md` § Показ).

@@ -122,3 +122,94 @@ async def test_the_body_card_shows_the_goals(engine, session, state):
     card = FakeMessage()
     await body.cmd_body(card, state)
     assert "Цели: держать сахар в норме · меньше отёков" in card.texts[-1]
+
+
+# ------------------------------------------------------------------ T064
+
+def test_goals_reorder_a_report_without_adding_or_dropping_anything():
+    """Цель меняет порядок и только его: набор разделов обязан совпасть."""
+    from src.goals import report_order
+
+    default = ("glucose", "components", "meals", "steps", "weight")
+    ordered = report_order(["sport", "weight"], default)
+    assert set(ordered) == set(default)
+    assert ordered[0] == "weight"          # «снизить вес» — первым каталогом
+    assert "steps" in ordered[:3]          # «форма и выносливость» подняла шаги
+
+
+def test_no_goals_keeps_the_default_order():
+    from src.goals import report_order
+
+    default = ("meals", "glucose", "wellbeing")
+    assert report_order([], default) == default
+    assert report_order(["custom"], default) == default
+
+
+def test_a_goal_section_the_report_does_not_have_is_ignored():
+    from src.goals import report_order
+
+    # у «Сегодня» нет раздела `components`, цель `sugar` просит его и `glucose`
+    assert report_order(["sugar"], ("meals", "glucose")) == ("glucose", "meals")
+
+
+def test_the_digest_puts_the_goal_first():
+    from datetime import UTC, datetime
+
+    from src.analytics.cgm_metrics import summarize
+    from src.analytics.digest import KeyChange, WeeklyDigest
+    from src.analytics.windows import GlucosePoint
+    from src.reporting import format_weekly_digest
+
+    now = datetime(2026, 9, 14, 12, 0, tzinfo=UTC)
+    digest = WeeklyDigest(since=now, until=now)
+    digest.glucose_now = summarize([GlucosePoint(at=now, value=8.0)] * 25)
+    digest.glucose_before = summarize([GlucosePoint(at=now, value=6.0)] * 25)
+    digest.risen = [
+        KeyChange(key="white_rice", key_type="tag", now=3.0, before=1.0, n_now=4, n_before=4,
+                  kind="up")
+    ]
+
+    sugar_first = format_weekly_digest(digest, focus=["sugar"])
+    assert sugar_first.index("Средний сахар") < sugar_first.index("средний подъём выше")
+
+    # цель про еду поднимает компоненты выше сахара
+    habits_first = format_weekly_digest(digest, focus=["habits"])
+    assert habits_first.index("средний подъём выше") < habits_first.index("Средний сахар")
+    # и ни одна строка при этом не потерялась
+    assert sorted(sugar_first.split("\n")) == sorted(habits_first.split("\n"))
+
+
+def test_an_empty_day_suggests_what_the_person_came_for():
+    from datetime import date
+
+    from src.reporting import format_today
+
+    text = format_today(date(2026, 9, 14), focus=["sugar"])
+    assert "показание сахара" in text
+    assert "Сегодня записей пока нет." in text
+
+    # целей нет — общая подсказка, как раньше
+    plain = format_today(date(2026, 9, 14))
+    assert "Пришлите фото еды или показание сахара." in plain
+
+
+def test_today_orders_its_blocks_by_the_goal():
+    from datetime import date, datetime
+
+    from src.reporting import format_today
+
+    at = datetime(2026, 9, 14, 8, 30)
+    text = format_today(
+        date(2026, 9, 14),
+        meals=[(at, "Овсянка", 30.0)],
+        readings=[(at, 5.4)],
+        focus=["sugar"],
+    )
+    assert text.index("<b>Сахар</b>") < text.index("<b>Еда</b>")
+
+    plain = format_today(
+        date(2026, 9, 14),
+        meals=[(at, "Овсянка", 30.0)],
+        readings=[(at, 5.4)],
+    )
+    assert plain.index("<b>Еда</b>") < plain.index("<b>Сахар</b>")

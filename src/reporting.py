@@ -11,9 +11,10 @@ Two hard rules (`spec/clinical.md`):
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import date, datetime
 from html import escape
 
+from src import goals as goals_mod
 from src.analytics.activity import ActivityContrast
 from src.analytics.cgm_metrics import CGMSummary
 from src.analytics.digest import (
@@ -545,19 +546,89 @@ def format_cgm_summary(summary: CGMSummary, *, unit: str = "mmol/L") -> str:
     return "\n".join(lines)
 
 
-def format_weekly_digest(digest: WeeklyDigest, *, unit: str = "mmol/L") -> str:
+#: разделы карточки «Сегодня» в порядке по умолчанию
+TODAY_SECTIONS = ("meals", "glucose", "wellbeing", "workouts")
+
+
+def format_today(
+    day: date,
+    *,
+    meals: Sequence[tuple[datetime, str, float | None]] = (),
+    readings: Sequence[tuple[datetime, float]] = (),
+    checkins: Sequence[tuple[datetime, int, Sequence[str]]] = (),
+    workouts: Sequence[tuple[datetime, str, float | None, float | None]] = (),
+    unit: str = "mmol/L",
+    focus: Sequence[str] = (),
+    progress: str = "",
+) -> str:
+    """Записи за день. `focus` меняет порядок разделов и подсказку пустого дня.
+
+    Данные приходят уже разобранными: слой отчётов не ходит в базу и не знает
+    про ORM (`CLAUDE.md` #6, #7).
+    """
+    blocks: dict[str, list[str]] = {name: [] for name in TODAY_SECTIONS}
+
+    if meals:
+        blocks["meals"].append("<b>Еда</b>")
+        for at, title, carbs in meals:
+            tail = f" · угл {carbs:.0f} г" if carbs else ""
+            blocks["meals"].append(f"• {at:%H:%M} {escape(title)}{tail}")
+    if readings:
+        blocks["glucose"].append("<b>Сахар</b>")
+        for at, value in readings[-12:]:
+            blocks["glucose"].append(f"• {at:%H:%M} {format_value(value, unit)}")
+    if checkins:
+        blocks["wellbeing"].append("<b>Самочувствие</b>")
+        for at, score, labels in checkins:
+            tail = f" — {escape(', '.join(labels))}" if labels else ""
+            blocks["wellbeing"].append(f"• {at:%H:%M} {score}/5{tail}")
+    if workouts:
+        blocks["workouts"].append("<b>Тренировки</b>")
+        for at, title, duration, kcal in workouts:
+            spent = f" · ≈ {kcal:.0f} ккал" if kcal else ""
+            length = f" · {duration:.0f} мин" if duration else ""
+            blocks["workouts"].append(f"• {at:%H:%M} {escape(title)}{length}{spent}")
+
+    lines = [f"📅 <b>{day:%d.%m.%Y}</b>", ""]
+    filled = False
+    for section in goals_mod.report_order(focus, TODAY_SECTIONS):
+        if not blocks[section]:
+            continue
+        lines.extend(blocks[section])
+        lines.append("")
+        filled = True
+    if not filled:
+        lines.append("Сегодня записей пока нет.")
+        hints = goals_mod.empty_hints(focus)
+        # Подсказка по названной цели, а не общее «пришлите фото»: человек
+        # сказал, зачем пришёл, — незачем спрашивать это заново.
+        lines.extend(hints[:2] or ["Пришлите фото еды или показание сахара."])
+    if progress:
+        lines.append(progress)
+    return "\n".join(lines)
+
+
+#: разделы недельного дайджеста в порядке по умолчанию; цели могут поднять
+#: свои наверх (`src/goals.py` § report_order)
+DIGEST_SECTIONS = ("glucose", "components", "meals", "steps", "weight")
+
+
+def format_weekly_digest(
+    digest: WeeklyDigest, *, unit: str = "mmol/L", focus: Sequence[str] = ()
+) -> str:
     """Неделя против прошлой недели — что сдвинулось, и ничего про причины.
 
     Каждая строка — сравнение человека с самим собой (`spec/clinical.md`).
     Ни «из-за», ни «повышает»: только «средний подъём стал выше/ниже».
+    `focus` — цели знакомства: они меняют **порядок** разделов и ничего больше,
+    ни одна строка не появляется и не исчезает из-за цели.
     """
-    lines = ["🗓 <b>Неделя в сравнении с прошлой</b>", ""]
-    body: list[str] = []
+    blocks: dict[str, list[str]] = {name: [] for name in DIGEST_SECTIONS}
 
     mean_shift = digest.mean_shift
     if mean_shift is not None and abs(mean_shift) >= MEANINGFUL_MEAN_SHIFT:
         word = "выше" if mean_shift > 0 else "ниже"
-        body.append(
+        blocks["glucose"].append(
             f"• Средний сахар за неделю {word} на "
             f"{format_delta(abs(mean_shift), unit)}: "
             f"{format_value(digest.glucose_now.mean, unit)} "
@@ -566,18 +637,18 @@ def format_weekly_digest(digest: WeeklyDigest, *, unit: str = "mmol/L") -> str:
     tir_shift = digest.tir_shift
     if tir_shift is not None and abs(tir_shift) >= MEANINGFUL_TIR_SHIFT:
         word = "больше" if tir_shift > 0 else "меньше"
-        body.append(
+        blocks["glucose"].append(
             f"• Времени в диапазоне 3.9–10.0 {word} на {abs(tir_shift):.0f} п.п.: "
             f"{digest.glucose_now.tir:.0f}% против {digest.glucose_before.tir:.0f}%."
         )
 
     for change in digest.risen[:3]:
-        body.append(_digest_key_line(change, unit))
+        blocks["components"].append(_digest_key_line(change, unit))
     for change in digest.calmed[:2]:
-        body.append(_digest_key_line(change, unit))
+        blocks["components"].append(_digest_key_line(change, unit))
 
     if digest.meals_now:
-        body.append(
+        blocks["meals"].append(
             f"• Записей о еде: {digest.meals_now} "
             f"(неделей раньше {digest.meals_before}), "
             f"дней с записями — {digest.days_with_meals} из 7."
@@ -585,11 +656,15 @@ def format_weekly_digest(digest: WeeklyDigest, *, unit: str = "mmol/L") -> str:
     steps = digest.steps_shift
     if steps is not None and abs(steps) >= 5000:
         word = "больше" if steps > 0 else "меньше"
-        body.append(f"• Шагов за неделю на {abs(steps)} {word}: {digest.steps_now}.")
+        blocks["steps"].append(f"• Шагов за неделю на {abs(steps)} {word}: {digest.steps_now}.")
     weight = digest.weight_shift
     if weight is not None and abs(weight) >= 0.3:
         word = "больше" if weight > 0 else "меньше"
-        body.append(f"• Вес на {abs(weight):.1f} кг {word}: {digest.weight_now:.1f} кг.")
+        blocks["weight"].append(f"• Вес на {abs(weight):.1f} кг {word}: {digest.weight_now:.1f} кг.")
+
+    body: list[str] = []
+    for section in goals_mod.report_order(focus, DIGEST_SECTIONS):
+        body.extend(blocks[section])
 
     if not body:
         return (
@@ -598,8 +673,7 @@ def format_weekly_digest(digest: WeeklyDigest, *, unit: str = "mmol/L") -> str:
             "Чтобы сравнение было о чём, нужны записи о еде и замеры сахара "
             "в обе недели."
         )
-    lines.extend(body)
-    lines.append("")
+    lines = ["🗓 <b>Неделя в сравнении с прошлой</b>", "", *body, ""]
     lines.append(
         "<i>Это сравнение двух недель, а не объяснение. Что именно стоит за "
         "сдвигом, по этим числам не видно.</i>"
@@ -1600,6 +1674,7 @@ __all__ = [
     "format_sleep",
     "format_sleep_short",
     "format_stats",
+    "format_today",
     "format_weekly_digest",
     "format_symptoms",
     "format_weight_saved",

@@ -68,6 +68,10 @@ format_remembered_macros(draft, names:[str]) -> str   # «📌 Запомнил 
 format_product(draft, mode="eaten"|"check") -> str
 format_product_verdict(draft, matches:[KeyStats], unit) -> str
 format_stats(stats, unit, window, limit=8) -> str
+format_today(day, meals, readings, checkins, workouts, unit, focus, progress) -> str
+format_weekly_digest(digest, unit, focus) -> str   # `focus` меняет только порядок
+format_cgm_import(result, added) / format_cgm_import_failed(reason) -> str
+format_barcode_found(draft) -> str                 # источник карточки назван
 format_plate_score(score) / format_plate_advice(advice, with_rule=False) -> str
 format_plate_settings(enabled, meals_per_day, measured, session_min) -> str
 format_lab_value(value) / format_food_hint(hint) -> str

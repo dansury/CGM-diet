@@ -13,8 +13,13 @@
  * spec: spec/web.md § Неделя в сравнении.
  */
 
+import { reportOrder } from './goals.js';
+
 const DAY_MS = 86400000;
 export const WEEK_DAYS = 7;
+
+/** Разделы карточки в порядке по умолчанию; цели поднимают свои наверх. */
+export const SECTIONS = ['glucose', 'components', 'meals', 'steps', 'weight'];
 
 /** Порог, ниже которого сдвиг — дрожание выборки, а не новость. */
 export const MEANINGFUL_MEAN_SHIFT = 0.5;   // ммоль/л
@@ -97,36 +102,41 @@ function lastIn(rows, from, to) {
     return inside.length ? inside[inside.length - 1].kg : null;
 }
 
-/** Строки для карточки. Пустой список — значит, говорить не о чем. */
-export function digestLines(digest) {
-    const lines = [];
+/**
+ * Строки для карточки. Пустой список — значит, говорить не о чем.
+ * `focus` — цели знакомства: меняют порядок разделов и ничего больше.
+ */
+export function digestLines(digest, focus = []) {
+    const blocks = { glucose: [], components: [], meals: [], steps: [], weight: [] };
     if (digest.glucose) {
         const shift = digest.glucose.now - digest.glucose.before;
         if (Math.abs(shift) >= MEANINGFUL_MEAN_SHIFT) {
-            lines.push(`Средний сахар за неделю ${shift > 0 ? 'выше' : 'ниже'} на ${Math.abs(shift).toFixed(1)} ммоль/л: `
+            blocks.glucose.push(`Средний сахар за неделю ${shift > 0 ? 'выше' : 'ниже'} на ${Math.abs(shift).toFixed(1)} ммоль/л: `
                 + `${digest.glucose.now.toFixed(1)} против ${digest.glucose.before.toFixed(1)}.`);
         }
         const tirShift = digest.tir.now - digest.tir.before;
         if (Math.abs(tirShift) >= MEANINGFUL_TIR_SHIFT) {
-            lines.push(`Времени в диапазоне 3.9–10.0 ${tirShift > 0 ? 'больше' : 'меньше'} на ${Math.abs(tirShift).toFixed(0)} п.п.: `
+            blocks.glucose.push(`Времени в диапазоне 3.9–10.0 ${tirShift > 0 ? 'больше' : 'меньше'} на ${Math.abs(tirShift).toFixed(0)} п.п.: `
                 + `${digest.tir.now.toFixed(0)}% против ${digest.tir.before.toFixed(0)}%.`);
         }
     }
     if (digest.meals && digest.meals.now) {
-        lines.push(`Записей о еде: ${digest.meals.now} (неделей раньше ${digest.meals.before}), `
+        blocks.meals.push(`Записей о еде: ${digest.meals.now} (неделей раньше ${digest.meals.before}), `
             + `дней с записями — ${digest.meals.days} из 7.`);
     }
     if (digest.steps) {
         const shift = digest.steps.now - digest.steps.before;
         if (Math.abs(shift) >= MEANINGFUL_STEPS_SHIFT) {
-            lines.push(`Шагов за неделю на ${Math.abs(shift)} ${shift > 0 ? 'больше' : 'меньше'}: ${digest.steps.now}.`);
+            blocks.steps.push(`Шагов за неделю на ${Math.abs(shift)} ${shift > 0 ? 'больше' : 'меньше'}: ${digest.steps.now}.`);
         }
     }
     if (digest.weight) {
         const shift = digest.weight.now - digest.weight.before;
         if (Math.abs(shift) >= MEANINGFUL_WEIGHT_SHIFT) {
-            lines.push(`Вес на ${Math.abs(shift).toFixed(1)} кг ${shift > 0 ? 'больше' : 'меньше'}: ${digest.weight.now.toFixed(1)} кг.`);
+            blocks.weight.push(`Вес на ${Math.abs(shift).toFixed(1)} кг ${shift > 0 ? 'больше' : 'меньше'}: ${digest.weight.now.toFixed(1)} кг.`);
         }
     }
+    const lines = [];
+    for (const section of reportOrder(focus, SECTIONS)) lines.push(...blocks[section]);
     return lines;
 }

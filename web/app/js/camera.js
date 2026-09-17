@@ -7,6 +7,7 @@
 import { getKV, addRecord, getAll } from './db.js';
 import { recognizeMeal, fileToCompressedDataUrl } from './recognize.js';
 import { readBarcodes, normalize, lookupProduct, draftFromProduct } from './barcode.js';
+import { emptyHints } from './goals.js';
 import { bumpDictionaryFromMeal, suggest, draftFromEntry, exampleLabels, matchDish } from './dictionary.js';
 import { el, showToast, formatTime, round1 } from './utils.js';
 import { showThinking } from './thinking.js';
@@ -111,7 +112,16 @@ async function renderListView(container) {
 
     wrap.appendChild(el('<div class="section-title">Приёмы пищи сегодня</div>'));
     if (todays.length === 0) {
-        wrap.appendChild(el('<div class="empty-hint">Пока ничего не записано — сфотографируйте еду или добавьте текстом.</div>'));
+        // Подсказка по названной цели, а не общее «сфотографируйте еду»:
+        // человек уже сказал, зачем пришёл (spec/onboarding.md § Цели).
+        const profile = await getKV('profile', {});
+        const hints = emptyHints((profile && profile.focus) || []).slice(0, 2);
+        const text = hints.length
+            ? 'Пока ничего не записано. ' + hints.join(' ')
+            : 'Пока ничего не записано — сфотографируйте еду или добавьте текстом.';
+        const hint = el('<div class="empty-hint"></div>');
+        hint.textContent = text;
+        wrap.appendChild(hint);
     } else {
         const list = el('<div class="list"></div>');
         for (const meal of todays) {

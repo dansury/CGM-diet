@@ -122,13 +122,15 @@ focus_picker(selected, skippable?)  # цели: ☑️/▫️ + «Свой ва�
 подтверждает.
 
 ```
-Goal(key, title, features:[ключи src/features.py])
+Goal(key, title, features:[ключи src/features.py], sections:[раздел], empty_hint)
 GOALS = weight, sugar, energy, habits, symptoms, labs, muscle, sport
 CUSTOM = "custom" ; NOTE_LIMIT = 200 ; WEIGHT_GOALS = {weight, muscle}
 decode(raw)->(key,…)          # порядок каталога, чужие ключи отброшены
 encode(keys)->str             # "" = спросили, целей не назвал; NULL = не спрашивали
 titles(keys, note?)->[str]    # свой вариант — как написан
 wants_weight_goal(keys)->bool ; feature_order(keys)->(feature_key,…)
+report_order(keys, default)->(раздел,…)   # разделы цели вперёд, остальные как были
+empty_hints(keys)->[str]                  # чем заполнить пустой день
 normalize_note(text)->str|None
 ```
 
@@ -140,10 +142,25 @@ normalize_note(text)->str|None
 - очередь анкеты — целевой вес спрашивается не у всех (см. выше);
 - порядок подсказок о возможностях — `features.pick_hint(priority=…)`
   (`spec/features.md`);
-- строку «Цели: …» в карточке `/body` (`reporting._focus_line`).
+- строку «Цели: …» в карточке `/body` (`reporting._focus_line`);
+- **порядок разделов** в `/today` (`TODAY_SECTIONS` = meals, glucose,
+  wellbeing, workouts) и в недельном дайджесте (`DIGEST_SECTIONS` = glucose,
+  components, meals, steps, weight) — `goals.report_order`;
+- **подсказку пустого дня**: `/today` без записей зовёт к тому, за чем человек
+  пришёл (`goals.empty_hints`, максимум две фразы), а не к общему «пришлите
+  фото».
+
+Набор строк от целей не зависит: `report_order` только переставляет разделы,
+никогда не добавляет и не убирает. Проверено тестом
+(`tests/test_goals.py::test_the_digest_puts_the_goal_first` сравнивает
+отсортированные строки двух порядков).
 
 Список целей — не диагноз и не сегментация здоровья: он влияет только на
 порядок сказанного, никогда — на клинические границы (`spec/clinical.md`).
+
+Паритет tg/web: `web/app/js/goals.js` — тот же каталог, `reportOrder` и
+`emptyHints`; порядок строк карточки «Неделя в сравнении» и подсказка пустого
+дня на главной. Проверка — `node web/tests/goals.mjs`.
 
 ## Сахарный трек (`src/sugar.py`, `src/handlers/sugar.py`)
 

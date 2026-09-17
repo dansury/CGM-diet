@@ -27,7 +27,7 @@ web/
     css/app.css
     js/ app.js theme.js db.js onboarding.js camera.js recognize.js thinking.js
        dictionary.js charts.js settings.js telemetry.js push.js sync.js notify.js
-       cgmcsv.js barcode.js digest.js
+       cgmcsv.js barcode.js digest.js goals.js
   admin/                    закрыто паролем, доступно только по /admin
     index.php login.php logout.php lib.php
   api/                      JSON-эндпоинты, без сессий кроме sync/register
@@ -60,6 +60,8 @@ web/
                             разбор ответа Open Food Facts
   tests/digest.mjs          `node web/tests/digest.mjs` — «неделя в сравнении»:
                             пороги и что попадает в карточку
+  tests/goals.mjs           `node web/tests/goals.mjs` — что цели меняют дальше
+                            первого экрана: порядок разделов и пустой день
   data/                     legacy-расположение app.db; используется, только если
                             каталог рядом с корнем деплоя недоступен на запись
   README.md                 инструкция по деплою
@@ -214,6 +216,10 @@ MEANINGFUL_STEPS_SHIFT=5000 · MEANINGFUL_WEIGHT_SHIFT=0.3
 средний сахар, время в диапазоне 3.9–10.0, записи о еде и дни с записями, шаги,
 вес. Те же пороги, тот же хвост «это сравнение двух недель, а не объяснение».
 
+Порядок строк задают цели знакомства (`js/goals.js` — зеркало `src/goals.py`):
+`digestLines(digest, focus)`. Цель переставляет разделы и ничего больше. Тот же
+каталог даёт подсказку пустого дня на главной (`emptyHints`).
+
 `[WEB-ONLY GAP: сравнение по компонентам]` — «после чего подъём стал выше» в
 web нет: для этого нужен весь движок экскурсий и статистики
 (`src/analytics/windows.py`, `stats.py`), а второй его экземпляр на JavaScript
@@ -309,7 +315,8 @@ Health (`DEV_PLAN.md` фаза 9): код собран и соответству
 `php -l` зелёный, `php web/tests/notifications.php`, `php web/tests/auto_pull.php`,
 `php web/tests/llm_chain.php`, `php web/tests/model_hints.php` и
 `node web/tests/cgm_csv.mjs`, `node web/tests/barcode.mjs` и
-`node web/tests/digest.mjs` зелёные, живой пуш не прогонялся.
+`node web/tests/digest.mjs` и `node web/tests/goals.mjs` зелёные, живой пуш не
+прогонялся.
 
 ## Регистрация и синхронизация (`js/sync.js`, `api/register.php`, `api/sync.php`)
 

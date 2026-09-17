@@ -12,7 +12,7 @@ export const GOALS = [
     {
         key: 'weight', title: 'Изменить вес',
         sections: ['weight', 'meals'],
-        emptyHint: 'Запишите, что съели, — из этого складывается дневной коридор.',
+        emptyHint: 'Запишите, что съели, и вес — так видно, куда он едет.',
     },
     {
         key: 'sugar', title: 'Держать сахар в норме',

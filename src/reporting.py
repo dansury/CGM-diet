@@ -16,6 +16,12 @@ from html import escape
 
 from src.analytics.activity import ActivityContrast
 from src.analytics.cgm_metrics import CGMSummary
+from src.analytics.digest import (
+    MEANINGFUL_MEAN_SHIFT,
+    MEANINGFUL_TIR_SHIFT,
+    KeyChange,
+    WeeklyDigest,
+)
 from src.analytics.labs import FoodHint, LabReview, LabValue
 from src.analytics.plate import TARGET_SHARES, PlateAdvice, PlateScore, category_label
 from src.analytics.sleep import (
@@ -537,6 +543,90 @@ def format_cgm_summary(summary: CGMSummary, *, unit: str = "mmol/L") -> str:
     lines.append("")
     lines.append("<i>Это описательные метрики, не диагноз.</i>")
     return "\n".join(lines)
+
+
+def format_weekly_digest(digest: WeeklyDigest, *, unit: str = "mmol/L") -> str:
+    """Неделя против прошлой недели — что сдвинулось, и ничего про причины.
+
+    Каждая строка — сравнение человека с самим собой (`spec/clinical.md`).
+    Ни «из-за», ни «повышает»: только «средний подъём стал выше/ниже».
+    """
+    lines = ["🗓 <b>Неделя в сравнении с прошлой</b>", ""]
+    body: list[str] = []
+
+    mean_shift = digest.mean_shift
+    if mean_shift is not None and abs(mean_shift) >= MEANINGFUL_MEAN_SHIFT:
+        word = "выше" if mean_shift > 0 else "ниже"
+        body.append(
+            f"• Средний сахар за неделю {word} на "
+            f"{format_delta(abs(mean_shift), unit)}: "
+            f"{format_value(digest.glucose_now.mean, unit)} "
+            f"против {format_value(digest.glucose_before.mean, unit)}."
+        )
+    tir_shift = digest.tir_shift
+    if tir_shift is not None and abs(tir_shift) >= MEANINGFUL_TIR_SHIFT:
+        word = "больше" if tir_shift > 0 else "меньше"
+        body.append(
+            f"• Времени в диапазоне 3.9–10.0 {word} на {abs(tir_shift):.0f} п.п.: "
+            f"{digest.glucose_now.tir:.0f}% против {digest.glucose_before.tir:.0f}%."
+        )
+
+    for change in digest.risen[:3]:
+        body.append(_digest_key_line(change, unit))
+    for change in digest.calmed[:2]:
+        body.append(_digest_key_line(change, unit))
+
+    if digest.meals_now:
+        body.append(
+            f"• Записей о еде: {digest.meals_now} "
+            f"(неделей раньше {digest.meals_before}), "
+            f"дней с записями — {digest.days_with_meals} из 7."
+        )
+    steps = digest.steps_shift
+    if steps is not None and abs(steps) >= 5000:
+        word = "больше" if steps > 0 else "меньше"
+        body.append(f"• Шагов за неделю на {abs(steps)} {word}: {digest.steps_now}.")
+    weight = digest.weight_shift
+    if weight is not None and abs(weight) >= 0.3:
+        word = "больше" if weight > 0 else "меньше"
+        body.append(f"• Вес на {abs(weight):.1f} кг {word}: {digest.weight_now:.1f} кг.")
+
+    if not body:
+        return (
+            "🗓 <b>Неделя в сравнении с прошлой</b>\n\n"
+            "Заметных сдвигов нет — и это тоже ответ. "
+            "Чтобы сравнение было о чём, нужны записи о еде и замеры сахара "
+            "в обе недели."
+        )
+    lines.extend(body)
+    lines.append("")
+    lines.append(
+        "<i>Это сравнение двух недель, а не объяснение. Что именно стоит за "
+        "сдвигом, по этим числам не видно.</i>"
+    )
+    return "\n".join(lines)
+
+
+def _digest_key_line(change: KeyChange, unit: str) -> str:
+    label = tag_label(change.key) if change.key_type == "tag" else change.key
+    label = escape(str(label))
+    if change.kind == "new":
+        return (
+            f"• <b>{label}</b> — новое в наблюдениях: средний подъём "
+            f"{format_delta(change.now, unit)} ({change.n_now} набл.)."
+        )
+    if change.kind == "gone":
+        return (
+            f"• <b>{label}</b> на этой неделе не набралось наблюдений — "
+            f"неделей раньше средний подъём был {format_delta(change.before, unit)}."
+        )
+    word = "выше" if change.kind == "up" else "ниже"
+    return (
+        f"• <b>{label}</b> — средний подъём {word}: "
+        f"{format_delta(change.now, unit)} против "
+        f"{format_delta(change.before, unit)} "
+        f"({change.n_now} набл. против {change.n_before})."
+    )
 
 
 def format_barcode_found(draft: ProductDraft) -> str:
@@ -1510,6 +1600,7 @@ __all__ = [
     "format_sleep",
     "format_sleep_short",
     "format_stats",
+    "format_weekly_digest",
     "format_symptoms",
     "format_weight_saved",
     "format_workout_draft",

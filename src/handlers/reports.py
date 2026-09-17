@@ -9,7 +9,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import BufferedInputFile, CallbackQuery, Message
 
-from src import food_stats
+from src import digest, food_stats
 from src.analytics import activity as activity_mod
 from src.analytics import cgm_metrics
 from src.analytics import symptoms as symptoms_mod
@@ -35,6 +35,7 @@ from src.reporting import (
     format_sleep_short,
     format_stats,
     format_symptoms,
+    format_weekly_digest,
 )
 from src.vision.schemas import ProductDraft
 
@@ -140,6 +141,9 @@ async def on_stats_callback(callback: CallbackQuery, bot: Bot) -> None:
     if kind == "chart":
         await _send_ranking_chart(callback.message, window="1h", key_type="tag")
         return
+    if kind == "week":
+        await cmd_week(callback.message)
+        return
     window = value if kind == "w" else "1h"
     key_type = value if kind == "k" else "tag"
     await _send_stats(callback.message, window=window, key_type=key_type, edit=True)
@@ -185,6 +189,19 @@ async def _send_stats(message: Message, *, window: str, key_type: str, edit: boo
         except Exception:
             pass
     await message.answer(text, reply_markup=keyboard)
+
+
+# ------------------------------------------------------------------ /week
+
+@router.message(Command("week"))
+async def cmd_week(message: Message) -> None:
+    """Что сдвинулось за неделю. `/stats` про тридцать дней и меняется медленно."""
+    await mark_used(message.chat.id, "week")
+    async with session_scope() as session:
+        user = await repo.get_or_create_user(session, message.chat.id)
+        report = await digest.build(session, user)
+        unit = user.glucose_unit
+    await message.answer(format_weekly_digest(report, unit=unit))
 
 
 # ------------------------------------------------------------------ /graph
@@ -506,4 +523,4 @@ async def product_verdict_text(tg_id: int, draft: ProductDraft) -> str:
     return format_product_verdict(draft, matches, unit) + "\n\n" + DISCLAIMER
 
 
-__all__ = ["cmd_stats", "cmd_today", "product_verdict_text", "router"]
+__all__ = ["cmd_stats", "cmd_today", "cmd_week", "product_verdict_text", "router"]

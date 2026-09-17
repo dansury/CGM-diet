@@ -27,7 +27,7 @@ web/
     css/app.css
     js/ app.js theme.js db.js onboarding.js camera.js recognize.js thinking.js
        dictionary.js charts.js settings.js telemetry.js push.js sync.js notify.js
-       cgmcsv.js barcode.js
+       cgmcsv.js barcode.js digest.js
   admin/                    закрыто паролем, доступно только по /admin
     index.php login.php logout.php lib.php
   api/                      JSON-эндпоинты, без сессий кроме sync/register
@@ -58,6 +58,8 @@ web/
                             живёт в браузере, PHP её не видит)
   tests/barcode.mjs         `node web/tests/barcode.mjs` — контрольная цифра и
                             разбор ответа Open Food Facts
+  tests/digest.mjs          `node web/tests/digest.mjs` — «неделя в сравнении»:
+                            пороги и что попадает в карточку
   data/                     legacy-расположение app.db; используется, только если
                             каталог рядом с корнем деплоя недоступен на запись
   README.md                 инструкция по деплою
@@ -199,6 +201,26 @@ IndexedDB по `label` (префикс, затем подстрока), рота
 (`/meds`, `WellbeingFlow`), которого в web MVP ещё нет вовсе. Задача на
 реализацию — `TODO.md` T071.
 
+## Неделя в сравнении (`js/digest.js`, карточка над графиками)
+
+```
+buildDigest({glucose, meals, weight, activity}, now=Date.now()) -> digest
+digestLines(digest) -> [строка]          # пустой список = говорить не о чем
+WEEK_DAYS=7 · MIN_WEEK_POINTS=20 · MEANINGFUL_MEAN_SHIFT=0.5 · MEANINGFUL_TIR_SHIFT=5
+MEANINGFUL_STEPS_SHIFT=5000 · MEANINGFUL_WEIGHT_SHIFT=0.3
+```
+
+Зеркало `src/analytics/digest.py` бота в той части, которую web умеет посчитать:
+средний сахар, время в диапазоне 3.9–10.0, записи о еде и дни с записями, шаги,
+вес. Те же пороги, тот же хвост «это сравнение двух недель, а не объяснение».
+
+`[WEB-ONLY GAP: сравнение по компонентам]` — «после чего подъём стал выше» в
+web нет: для этого нужен весь движок экскурсий и статистики
+(`src/analytics/windows.py`, `stats.py`), а второй его экземпляр на JavaScript
+разошёлся бы с первым ровно там, где проекту это дороже всего. Задача — T085.
+
+Проверяется офлайн: `node web/tests/digest.mjs`.
+
 ## Штрихкод (`js/barcode.js`)
 
 Зеркало `src/ingest/barcode.py` и `src/ingest/openfoodfacts.py` бота. Снимок не
@@ -286,8 +308,8 @@ AES-128-GCM через `openssl_pkey_derive`/`hash_hkdf`/`openssl_encrypt`, PHP 
 Health (`DEV_PLAN.md` фаза 9): код собран и соответствует спецификации,
 `php -l` зелёный, `php web/tests/notifications.php`, `php web/tests/auto_pull.php`,
 `php web/tests/llm_chain.php`, `php web/tests/model_hints.php` и
-`node web/tests/cgm_csv.mjs` и `node web/tests/barcode.mjs` зелёные, живой пуш
-не прогонялся.
+`node web/tests/cgm_csv.mjs`, `node web/tests/barcode.mjs` и
+`node web/tests/digest.mjs` зелёные, живой пуш не прогонялся.
 
 ## Регистрация и синхронизация (`js/sync.js`, `api/register.php`, `api/sync.php`)
 

@@ -146,8 +146,17 @@ FEATURES: tuple[Feature, ...] = (
         menu_button="📊 Статистика",
     ),
     Feature(
+        key="week",
+        title="Неделя в сравнении",
+        blurb=(
+            "Что сдвинулось с прошлой недели: сахар, компоненты, шаги и вес. "
+            "Статистика за месяц меняется медленно, неделя — быстро."
+        ),
+        command="/week",
+    ),
+    Feature(
         key="health",
-        title="Samsung Health",
+        title="Данные с телефона",
         blurb="Шаги, сон и тренировки приезжают сами — сравню приёмы пищи с прогулкой и без.",
         command="/health",
         counter="activity",

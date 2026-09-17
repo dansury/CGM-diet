@@ -440,7 +440,10 @@ def stats_windows(active: str = "1h") -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🏷 По компонентам", callback_data="stats:k:tag"),
                 InlineKeyboardButton(text="🍲 По блюдам", callback_data="stats:k:item"),
             ],
-            [InlineKeyboardButton(text="📈 График", callback_data="stats:chart")],
+            [
+                InlineKeyboardButton(text="📈 График", callback_data="stats:chart"),
+                InlineKeyboardButton(text="🗓 Неделя", callback_data="stats:week"),
+            ],
         ]
     )
 
